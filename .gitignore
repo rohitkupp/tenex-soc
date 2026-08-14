@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.eslintcache
+
+# Secrets & local config
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# Generated data — regenerate with `make gen-data`
+backend/data/corpus/
+backend/data/eval/
+backend/data/demo/
+backend/data/models/
+backend/evals/results.md
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Runtime
+*.log
+frontend/next-env.d.ts

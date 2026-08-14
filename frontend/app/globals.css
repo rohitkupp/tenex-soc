@@ -1,0 +1,57 @@
+@import "tailwindcss";
+
+/* Design tokens — docs/10-FRONTEND.md.
+   The discipline: colour is reserved exclusively for severity encoding.
+   Chrome, type, borders and backgrounds are neutral. When something is
+   coloured on this screen, it means something. */
+@theme {
+  --color-surface-0: #0e1116; /* page */
+  --color-surface-1: #161a21; /* cards */
+  --color-surface-2: #1f242d; /* raised / hover */
+  --color-border: #2a303b;
+
+  --color-text-hi: #e6e9ef;
+  --color-text-mid: #9ba3b0;
+  --color-text-lo: #6b7280;
+
+  --color-severity-critical: #e5484d;
+  --color-severity-high: #e5822d;
+  --color-severity-medium: #d4a72c;
+  --color-severity-low: #4b7ba8;
+
+  /* Citation-verified only. Never decorative. */
+  --color-accent-verified: #3fa37a;
+
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+  --font-serif: "IBM Plex Serif", ui-serif, Georgia, serif;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background-color: var(--color-surface-0);
+  color: var(--color-text-hi);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* The one orchestrated moment is the pipeline funnel. Everything else is
+   instant, and nothing moves for a reader who asked it not to. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-text-mid);
+  outline-offset: 2px;
+}

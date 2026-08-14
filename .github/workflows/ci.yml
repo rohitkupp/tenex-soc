@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # CI must never require an ANTHROPIC_API_KEY. Agent tests replay recorded
+  # fixtures from tests/fixtures/llm/ — see docs/07-AGENT.md.
+  DEMO_MODE: "true"
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: tenex
+          POSTGRES_PASSWORD: tenex
+          POSTGRES_DB: tenex
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tenex -d tenex"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql+psycopg://tenex:tenex@localhost:5432/tenex
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Lint
+        run: |
+          ruff check app datagen evals tests
+          ruff format --check app datagen evals tests
+
+      - name: Type-check the layers that carry the argument
+        run: mypy app/detection app/agent app/graph
+
+      - name: Migrate
+        run: alembic upgrade head
+
+      - name: Test
+        run: pytest -q --cov=app --cov-report=term-missing
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        run: npm ci || npm install
+
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run build
+
+  # Enabled at M16. A regression beyond tolerance fails the build — see docs/12.
+  eval-gate:
+    runs-on: ubuntu-latest
+    if: false
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - name: Golden dataset regression gate
+        run: python -m evals.run

@@ -1,0 +1,103 @@
+[project]
+name = "tenex-soc-backend"
+version = "0.1.0"
+description = "AI SOC analyst pipeline — ingest, detect, correlate, triage, respond, learn"
+requires-python = ">=3.11"
+
+dependencies = [
+  # API
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.32",
+  "pydantic>=2.9",
+  "pydantic-settings>=2.6",
+  "python-multipart>=0.0.12",
+  "sse-starlette>=2.1",
+  "slowapi>=0.1.9",
+  # Auth
+  "argon2-cffi>=23.1",
+  "pyjwt>=2.9",
+  # Persistence
+  "sqlalchemy>=2.0.36",
+  "psycopg[binary,pool]>=3.2",
+  "alembic>=1.14",
+  "pgvector>=0.3.6",
+  # Infra
+  "aio-pika>=9.4",
+  "redis>=5.2",
+  "boto3>=1.35",
+  # Detection / ML
+  "numpy>=1.26",
+  "scipy>=1.14",
+  "pandas>=2.2",
+  "scikit-learn>=1.5",
+  "torch>=2.5",
+  "lightgbm>=4.5",
+  "optuna>=4.1",
+  "shap>=0.46",
+  "networkx>=3.4",
+  "python-louvain>=0.16",
+  "drain3>=0.9.11",
+  # Parsing / enrichment
+  "pyyaml>=6.0",
+  "ua-parser>=1.0",
+  "geoip2>=4.8",
+  "tldextract>=5.1",
+  # Agent
+  "anthropic>=0.40",
+  "sqlglot>=25.30",
+  # Observability
+  "structlog>=24.4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "pytest-cov>=6.0",
+  "httpx>=0.28",
+  "ruff>=0.8",
+  "mypy>=1.13",
+  "types-pyyaml",
+  "faker>=33.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["app*", "datagen*", "evals*"]
+
+# ---------------------------------------------------------------- ruff
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "C4", "SIM", "RUF", "ASYNC", "S", "T20"]
+ignore = [
+  "E501",    # line length is enforced by the formatter
+  "B008",    # FastAPI Depends() in defaults is the idiom
+  "S101",    # assert is fine in tests
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S", "T20"]
+"datagen/**" = ["S311"]  # non-cryptographic RNG is the point
+"evals/**" = ["T20"]
+
+# ---------------------------------------------------------------- mypy
+# Strict on the layers the reviewer will read closely. The rest is checked loosely.
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["app.detection.*", "app.agent.*", "app.graph.*"]
+strict = true
+
+# ---------------------------------------------------------------- pytest
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["error::DeprecationWarning:app.*"]
