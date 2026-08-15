@@ -48,6 +48,34 @@ export interface LoginResponse {
   user: AuthUser;
 }
 
+// ---- Signup & email verification ----
+//
+// Not yet in docs/09 (its Auth section only lists login/logout/me) — hand-derived from the
+// signup flow contract this milestone was built against, same PLACEHOLDER caveat as the rest
+// of this file. The 201 on signup is deliberately identical whether or not the email is
+// already registered (an API that disclosed account existence would be a privacy leak), so
+// `SignupResponse` carries no "created" vs. "already existed" distinction — the UI must not
+// invent one either.
+
+export interface SignupRequest {
+  email: string;
+  password: string;
+  org_name: string;
+}
+
+export interface SignupResponse {
+  status: "verification_sent";
+  email: string;
+}
+
+export interface ResendVerificationRequest {
+  email: string;
+}
+
+// Same shape as `SignupResponse` (202 instead of 201) — kept as a distinct alias so call
+// sites read by intent rather than by reused type name.
+export type ResendVerificationResponse = SignupResponse;
+
 export interface MeResponse {
   user: AuthUser;
   tenant: AuthTenant;

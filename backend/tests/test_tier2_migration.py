@@ -63,12 +63,22 @@ def test_tier2_readonly_role_is_granted_select_on_exactly_the_allowlisted_views(
 
 def test_migration_downgrade_then_upgrade_round_trips_cleanly() -> None:
     """Runs the real `alembic` CLI machinery (`alembic.command`, the same entry point
-    `alembic upgrade head`/`alembic downgrade -1` use, which is how this migration was
+    `alembic upgrade head`/`alembic downgrade <rev>` use, which is how this migration was
     actually applied and verified during development) against the live database — not a
     dry run, and not a hand-rolled re-invocation of `upgrade()`/`downgrade()` that skips
     Alembic's own `op` context setup. Restores the upgraded state afterwards regardless of
     outcome, since every other `tests/test_tier2_*.py` module depends on the role/views
-    existing."""
+    existing.
+
+    Targets the tier2 migration's own revision id (`c59cf17b44e7`, its `down_revision`)
+    rather than the relative `-1`/`+1` offsets this test originally used. Relative offsets
+    are only correct while the tier2 migration happens to be the current head; the signup
+    work's `88fcc9caf4ea` (`users.email_verified_at`) landed on top of it, and `-1` from head now
+    downgrades *that* migration instead, leaving the tier2 role/views untouched and this
+    test asserting against the wrong revision entirely. Pinning to `c59cf17b44e7` for the
+    downgrade target and `head` for the upgrade target is future-proof against every
+    migration added after this one, not just that one.
+    """
     from alembic.config import Config
 
     from alembic import command
@@ -86,7 +96,7 @@ def test_migration_downgrade_then_upgrade_round_trips_cleanly() -> None:
     # connection that actually matches whichever role currently exists.
     get_readonly_engine().dispose()
 
-    command.downgrade(cfg, "-1")
+    command.downgrade(cfg, "c59cf17b44e7")
     try:
         with get_engine().connect() as conn:
             role_gone = conn.execute(
@@ -101,7 +111,7 @@ def test_migration_downgrade_then_upgrade_round_trips_cleanly() -> None:
         assert role_gone is None
         assert views_gone == 0
     finally:
-        command.upgrade(cfg, "+1")
+        command.upgrade(cfg, "head")
         get_readonly_engine().dispose()
 
     # Re-verify the restored state independently of the try/finally above.

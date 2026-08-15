@@ -207,8 +207,59 @@ registrable domains — that is standard, well-documented browser behaviour per 
 not something this codebase controls, but it is worth being explicit that it was taken on
 authority rather than re-derived empirically here.
 
+## Self-serve signup and email verification
+
+This section reverses part of the "out of scope" decision below, and says so rather than quietly
+rewriting history: the original scope was credentials-only login against a seeded user. Self-serve
+signup with email verification was added afterwards, deliberately.
+
+**Supabase Auth is the email-ownership oracle; this application remains the identity and
+authorization layer.** We never authenticate against Supabase and never store a second password
+there. The reason for the split is that Supabase's built-in email sender is only reachable through
+Supabase Auth — there is no standalone transactional-send API, and the admin `generate_link`
+endpoint returns a link *without* sending it. `POST /auth/v1/invite` is the one built-in-sender
+primitive that actually delivers mail, so that is what `app/core/verification.py` calls.
+
+Confirmation state comes back without a webhook or a polling worker: in production `DATABASE_URL`
+points at the same Supabase Postgres that Supabase Auth writes to, so `auth.users.email_confirmed_at`
+is a plain `SELECT` away. On the first successful read, login stamps our own
+`users.email_verified_at` and stops consulting upstream — the app ends up owning a durable record
+rather than depending on another system's schema forever. That cross-schema read is the one real
+coupling this design introduces, and it is isolated to a single function.
+
+**Enumeration.** `POST /api/auth/signup` returns the identical `201 {"status": "verification_sent"}`
+whether or not the address is already registered, and creates nothing on the second call.
+`POST /api/auth/resend-verification` returns `202` for every address, known or not. This extends
+the same rule login already followed ("never reveal whether an email exists").
+
+**Ordering of the login checks is load-bearing.** Password is verified *first*; only then can a
+request receive `403 email_not_verified`. A caller who does not hold the credentials gets the same
+generic `401 invalid_credentials` as always and learns nothing about whether the account exists or
+what state it is in. A caller who does hold them has already proven it, so telling them their
+address is unverified discloses nothing new.
+
+**Degradation.** When `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` are unset, verification is
+disabled: signup marks the account verified immediately and logs a warning. That keeps `make up`
+usable with no Supabase account and keeps CI free of network calls. It is a development
+affordance, not an auth bypass to be reached in production — `ENVIRONMENT=production` deployments
+set both, and the warning exists so an operator who misconfigures one notices.
+
+**Known limits, stated rather than discovered later.** Supabase's built-in sender is documented as
+being "for development and testing purposes… best-effort… subject to hourly rate limits";
+production volume needs custom SMTP. Deliverability is therefore not guaranteed under load, which
+is why the signup response never promises delivery and why a resend path exists. Email is also
+*only* an ownership check here — it is not a second authentication factor, and this system has no
+MFA (see below).
+
 ## Out of scope, deliberately
 
-No password reset, no email verification, no OAuth, no MFA, no RBAC beyond tenant scoping.
-The brief says basic authentication. Note in the README that these are known omissions rather
-than oversights.
+No password reset, no OAuth, no MFA, no RBAC beyond tenant scoping. The brief says basic
+authentication. Note in the README that these are known omissions rather than oversights.
+
+**On MFA specifically.** The obvious next request is "email a code on every login." That was
+considered and rejected on the merits, not on effort: email is normally the account-recovery
+channel, so a code sent there is not meaningfully a *second* factor — compromising the mailbox
+compromises both. NIST SP 800-63B does not accept email as an out-of-band authenticator. Supabase
+Auth's own MFA supports TOTP and phone, and pointedly not email. If MFA is added here it should be
+TOTP, which is stronger, needs no mail infrastructure on the login path, and is what a reader of
+this document would expect to find.

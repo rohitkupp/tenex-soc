@@ -15,9 +15,18 @@ hand-write. All routes except auth require a valid JWT cookie and are tenant-sco
 
 | Method | Path | Body | Returns |
 |---|---|---|---|
+| POST | `/api/auth/signup` | `{email, password, org_name}` | 201 `{status, email}` |
+| POST | `/api/auth/resend-verification` | `{email}` | 202 `{status, email}` |
 | POST | `/api/auth/login` | `{email, password}` | sets cookie, `{user}` |
 | POST | `/api/auth/logout` | — | 204 |
 | GET | `/api/auth/me` | — | `{user, tenant}` |
+
+`signup` returns the same 201 for an address that is already registered, and `resend-verification`
+returns 202 for every address, known or not — neither may disclose whether an account exists
+(docs/06). `login` gains one new failure, `403 email_not_verified`, which is only reachable *after*
+the password check passes; a caller without valid credentials still gets the generic
+`401 invalid_credentials`. All three are exempt from the double-submit CSRF check for the reason
+login always was: there is no session yet from which to derive a token.
 
 Rate limited to 5/min. Generic failure message — never reveal whether the email exists.
 

@@ -17,7 +17,15 @@
  * about it — including `login`/`logout` below and `lib/api/upload.ts`'s
  * separate XHR-based upload path, which reads the same cookie the same way.
  */
-import { isApiErrorBody, type LoginRequest, type LoginResponse } from "./types";
+import {
+  isApiErrorBody,
+  type LoginRequest,
+  type LoginResponse,
+  type ResendVerificationRequest,
+  type ResendVerificationResponse,
+  type SignupRequest,
+  type SignupResponse,
+} from "./types";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -97,4 +105,20 @@ export function login(body: LoginRequest): Promise<LoginResponse> {
 
 export function logout(): Promise<void> {
   return apiFetch<void>("/api/auth/logout", { method: "POST" });
+}
+
+export function signup(body: SignupRequest): Promise<SignupResponse> {
+  return apiFetch<SignupResponse>("/api/auth/signup", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
+export function resendVerification(
+  body: ResendVerificationRequest,
+): Promise<ResendVerificationResponse> {
+  return apiFetch<ResendVerificationResponse>("/api/auth/resend-verification", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
 }

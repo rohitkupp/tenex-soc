@@ -65,7 +65,8 @@ log file to start." Errors say what broke and what to do.
 
 | Route | Purpose |
 |---|---|
-| `/login` | Credentials. Nothing else. |
+| `/login` | Credentials, a link to `/signup`, and the post-verification banner Supabase's email link redirects to (`?verified=1`). Nothing else. |
+| `/signup` | Self-serve account creation: org name, email, password. Added after the original scope — see docs/06 "Self-serve signup and email verification". |
 | `/` | Analysis list + aggregate funnel |
 | `/upload` | Drop zone, format detection preview, live SSE stage progress |
 | `/analyses/[id]` | Overview: funnel, event volume over time with anomaly overlay, top entities, severity distribution, parse quality |

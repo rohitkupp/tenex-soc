@@ -85,6 +85,27 @@ def test_demo_mode_disables_the_llm_even_with_a_key() -> None:
     assert cfg.llm_enabled is False
 
 
+def test_email_verification_disabled_without_supabase_config() -> None:
+    """No `.env` in this repo sets `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` -- this
+    is the state the entire test suite (and a fresh `make up`) actually runs in."""
+    assert make_settings(environment="local").email_verification_enabled is False
+    assert (
+        make_settings(
+            environment="local", supabase_url="", supabase_service_role_key=SecretStr("")
+        ).email_verification_enabled
+        is False
+    )
+
+
+def test_email_verification_enabled_once_both_supabase_settings_are_set() -> None:
+    cfg = make_settings(
+        environment="local",
+        supabase_url="https://project.supabase.co",
+        supabase_service_role_key=SecretStr("service-role-key"),
+    )
+    assert cfg.email_verification_enabled is True
+
+
 def test_cors_origins_accepts_a_comma_delimited_string() -> None:
     """docker-compose can only pass one env var, so the string form has to work."""
     cfg = make_settings(environment="local", cors_origins="http://a.test, http://b.test")

@@ -24,6 +24,10 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const LOGIN_PATH = "/login";
+// Unauthenticated-only pages: an anonymous visitor must be able to reach
+// both without first having a session, and an already-authenticated visitor
+// is bounced to "/" from either one.
+const PUBLIC_PATHS = new Set([LOGIN_PATH, "/signup"]);
 
 async function hasValidSession(cookieHeader: string): Promise<boolean> {
   try {
@@ -42,9 +46,9 @@ async function hasValidSession(cookieHeader: string): Promise<boolean> {
 export async function middleware(request: NextRequest) {
   const cookieHeader = request.headers.get("cookie");
   const isAuthed = cookieHeader ? await hasValidSession(cookieHeader) : false;
-  const isLoginPage = request.nextUrl.pathname === LOGIN_PATH;
+  const isPublicPage = PUBLIC_PATHS.has(request.nextUrl.pathname);
 
-  if (isLoginPage) {
+  if (isPublicPage) {
     if (isAuthed) {
       return NextResponse.redirect(new URL("/", request.url));
     }
@@ -60,6 +64,6 @@ export async function middleware(request: NextRequest) {
 
 export const config = {
   // Everything except static assets and the favicon goes through the auth
-  // check above; /login is handled inside the middleware itself.
+  // check above; /login and /signup are handled inside the middleware itself.
   matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };

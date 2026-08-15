@@ -13,6 +13,7 @@ from __future__ import annotations
 import secrets
 import uuid
 from collections.abc import Iterator
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -71,13 +72,35 @@ def make_tenant(*, name: str = "Test Tenant") -> Tenant:
         session.close()
 
 
-def make_user(*, tenant_id: uuid.UUID, email: str, password: str = "correct horse battery") -> User:
+# M15: default `make_user` to an already-verified account. Computed once, at import
+# time, rather than freshly per call — every consumer only ever asserts NULL-ness
+# (never recency), so a fixed real timestamp is exactly as good as a live one and
+# avoids a datetime.now() call on every one of this fixture's (many) call sites.
+# Almost every existing test that calls `make_user` predates M15 and only cares about
+# authenticating, not about the verification gate itself — defaulting to verified is
+# what keeps all of them passing unchanged. Pass `email_verified_at=None` explicitly
+# to build the unverified account tests/test_auth_signup.py's login tests need.
+_DEFAULT_VERIFIED_AT = datetime.now(UTC)
+
+
+def make_user(
+    *,
+    tenant_id: uuid.UUID,
+    email: str,
+    password: str = "correct horse battery",
+    email_verified_at: datetime | None = _DEFAULT_VERIFIED_AT,
+) -> User:
     session = get_session_factory()()
     try:
         # session.refresh() below issues a SELECT, and User is tenant-scoped
         # (app.models.base) — same rule as any other code, test helpers included.
         with tenant_scope(session, tenant_id):
-            user = User(tenant_id=tenant_id, email=email, password_hash=hash_password(password))
+            user = User(
+                tenant_id=tenant_id,
+                email=email,
+                password_hash=hash_password(password),
+                email_verified_at=email_verified_at,
+            )
             session.add(user)
             session.commit()
             session.refresh(user)

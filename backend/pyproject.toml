@@ -16,6 +16,10 @@ dependencies = [
   # Auth
   "argon2-cffi>=23.1",
   "pyjwt>=2.9",
+  # Was only a transitive dep (via anthropic) until app.core.verification started
+  # importing it directly for the Supabase Auth admin call -- a direct import on a
+  # transitive dependency is a landmine for whenever anthropic's own pin moves.
+  "httpx>=0.28",
   # Persistence
   "sqlalchemy>=2.0.36",
   "psycopg[binary,pool]>=3.2",
@@ -56,7 +60,6 @@ dev = [
   "pytest>=8.3",
   "pytest-asyncio>=0.24",
   "pytest-cov>=6.0",
-  "httpx>=0.28",
   "ruff>=0.8",
   "mypy>=1.13",
   "types-pyyaml",

@@ -35,12 +35,15 @@ change or key rotation never silently doubles as (or is blocked by) a CSRF-key
 rotation, without provisioning a second secret.
 
 **Why Origin/Referer validation on top of the token.** Defense in depth, and the only
-defense available on `/api/auth/login`: at the moment a login request arrives there is
-no session yet, so there is nothing to derive a double-submit token from and nothing
-in the client's cookie jar to echo back. Login is instead covered by the Origin check
-below (which needs no pre-existing session) plus the existing 5/min rate limit
-(`app.core.rate_limit`) — the standard shape of the "login CSRF" trade-off. See
-docs/06-PRIVACY-SECURITY.md, "SameSite decision record".
+defense available on `/api/auth/login`, `/api/auth/signup`, and
+`/api/auth/resend-verification`: at the moment any of these three requests arrives
+there is no session yet, so there is nothing to derive a double-submit token from and
+nothing in the client's cookie jar to echo back (signup and resend-verification never
+issue a session cookie at all — only login does, and only on success). All three are
+instead covered by the Origin check below (which needs no pre-existing session) plus
+their own rate limits (`app.core.rate_limit`) — the standard shape of the "pre-session
+CSRF" trade-off login already made. See docs/06-PRIVACY-SECURITY.md, "SameSite
+decision record".
 
 GET/HEAD/OPTIONS are exempt everywhere: they must stay safe and side-effect-free by
 construction, so there is nothing here for them to protect against. If a GET route
@@ -69,10 +72,14 @@ CSRF_HEADER_NAME = "X-CSRF-Token"
 # around a route that shouldn't be mutating in the first place — fix the route.
 _SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
-# Login is the one state-changing route the double-submit token cannot cover — see
-# the module docstring. Exact path match on purpose (no prefix/regex matching that
-# could accidentally widen this later).
-_TOKEN_CHECK_EXEMPT_PATHS = frozenset({"/api/auth/login"})
+# Login, signup, and resend-verification are the state-changing routes the
+# double-submit token cannot cover — see the module docstring. All three run before
+# any session cookie exists (signup and resend-verification never issue one at all),
+# so there is nothing to derive or echo a token from. Exact path matches on purpose
+# (no prefix/regex matching that could accidentally widen this later).
+_TOKEN_CHECK_EXEMPT_PATHS = frozenset(
+    {"/api/auth/login", "/api/auth/signup", "/api/auth/resend-verification"}
+)
 
 _CSRF_KEY_LABEL = b"tenex-csrf-token-v1"
 
@@ -141,8 +148,9 @@ def _forbidden(code: str, detail: str) -> JSONResponse:
 
 class CSRFMiddleware(BaseHTTPMiddleware):
     """Enforces, on every non-safe request: (1) `Origin` (or `Referer` fallback) is in
-    the CORS allowlist, and (2) except for login, a double-submit CSRF token bound to
-    the caller's session. See the module docstring for the full reasoning.
+    the CORS allowlist, and (2) except for the pre-session auth routes in
+    `_TOKEN_CHECK_EXEMPT_PATHS`, a double-submit CSRF token bound to the caller's
+    session. See the module docstring for the full reasoning.
 
     Registered in `app.main` *inside* `CORSMiddleware` (added before it, so it ends up
     the inner layer — Starlette wraps middleware such that the last one added via

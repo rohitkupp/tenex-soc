@@ -12,6 +12,7 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -54,3 +55,44 @@ class LoginResponse(BaseModel):
 class MeResponse(BaseModel):
     user: UserOut
     tenant: TenantOut
+
+
+class SignupRequest(BaseModel):
+    email: str
+    password: str
+    org_name: str
+
+    @field_validator("email")
+    @classmethod
+    def _validate_email(cls, value: str) -> str:
+        if not _EMAIL_RE.match(value):
+            raise ValueError("Not a valid email address.")
+        return value.strip().lower()
+
+    @field_validator("org_name")
+    @classmethod
+    def _validate_org_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Organization name is required.")
+        return value
+
+
+class ResendVerificationRequest(BaseModel):
+    email: str
+
+    @field_validator("email")
+    @classmethod
+    def _validate_email(cls, value: str) -> str:
+        if not _EMAIL_RE.match(value):
+            raise ValueError("Not a valid email address.")
+        return value.strip().lower()
+
+
+class VerificationSentResponse(BaseModel):
+    """Shared response shape for signup (201) and resend-verification (202) — both
+    endpoints return this exact body regardless of whether the account already
+    existed or was already verified (docs/06's enumeration guarantee)."""
+
+    status: Literal["verification_sent"]
+    email: str

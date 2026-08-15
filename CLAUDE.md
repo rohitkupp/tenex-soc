@@ -140,7 +140,10 @@ Read the relevant doc before implementing. Do not infer a design that a doc alre
 
 - Do not add libraries not listed in the stack table without asking.
 - Do not build UI beyond the routes in `docs/10-FRONTEND.md`.
-- Do not add auth features beyond credentials login (no reset, no OAuth, no verification).
+- Do not add auth features beyond credentials login, self-serve signup, and email verification
+  (no password reset, no OAuth, no MFA). Signup and verification were added after the original
+  scope was set — `docs/06` records the design, why Supabase Auth is only an email-ownership
+  oracle rather than the identity provider, and why email MFA was rejected on the merits.
 - Do not "improve" a detector's math without updating `docs/04-DETECTION.md` and re-running `make eval`.
 - Do not write hardcoded rule logic in Python — rules are Sigma YAML.
 - Do not fabricate ATT&CK technique IDs. They come from the corpus in `backend/data/mitre/`.

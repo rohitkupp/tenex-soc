@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import secrets
+from datetime import UTC, datetime
 
 from sqlalchemy import select
 
@@ -45,7 +46,19 @@ def seed() -> None:
         session.add(tenant)
         session.flush()  # assign tenant.id before the user row references it
 
-        user = User(tenant_id=tenant.id, email=email, password_hash=hash_password(password))
+        # Born verified: the demo user must be able to log in immediately on a fresh
+        # `make up` + `make migrate` + `make seed`, and there is no pre-existing row
+        # for alembic/versions/88fcc9caf4ea_users_email_verified_at.py's backfill to
+        # have caught (that migration only backfills rows that already exist at
+        # migrate time). This is the same "no Supabase configured locally" fallback
+        # app.api.auth.signup applies, applied here for the one account this script
+        # ever creates.
+        user = User(
+            tenant_id=tenant.id,
+            email=email,
+            password_hash=hash_password(password),
+            email_verified_at=datetime.now(UTC),
+        )
         session.add(user)
         session.commit()
 

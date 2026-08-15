@@ -74,6 +74,22 @@ class Settings(BaseSettings):
     agent_timeout_seconds: int = 120
     demo_mode: bool = False
 
+    # --- Auth: self-serve signup email verification (M15, app.core.verification) ---
+    # Supabase Auth's built-in email sender is the transport; our own Postgres row is
+    # the durable record of the outcome. Deliberately *not* in `_SENTINELS` below --
+    # unlike jwt_secret/pseudonym_salt/etc, an unset value here is not an unsafe state
+    # to boot in. It just leaves `email_verification_enabled` False, and
+    # `app.api.auth.signup` falls back to auto-verifying every new account (loudly
+    # logged there) instead of refusing to start. That fallback is what keeps a fresh
+    # `make up` — no Supabase project, no keys — usable, and what keeps the existing
+    # test suite green without every test needing to know about Supabase.
+    supabase_url: str = ""
+    supabase_service_role_key: SecretStr = SecretStr("")
+    # Where Supabase redirects the browser after the user clicks the verification
+    # link (`?verified=1` on the login route lets the frontend show a confirmation
+    # toast instead of a bare login form).
+    frontend_base_url: str = "http://localhost:3000"
+
     # --- Tier 2 (docs/06 "Text-to-SQL safety", app/tier2) ---
     # Deliberately *shared* across every tenant -- see app/tier2/__init__.py for why this
     # is the one salt in the whole system that is not per-tenant.
@@ -129,6 +145,13 @@ class Settings(BaseSettings):
     def llm_enabled(self) -> bool:
         """The pipeline runs end to end without a key; only agentic triage is skipped."""
         return bool(self.anthropic_api_key.get_secret_value()) and not self.demo_mode
+
+    @property
+    def email_verification_enabled(self) -> bool:
+        """Both Supabase settings must be present. See `app.core.verification` and the
+        `supabase_url`/`supabase_service_role_key` fields above for what happens on
+        either side of this flag."""
+        return bool(self.supabase_url) and bool(self.supabase_service_role_key.get_secret_value())
 
 
 @lru_cache

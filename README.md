@@ -136,6 +136,16 @@ These are in [CLAUDE.md](CLAUDE.md) and each one is load-bearing, not aspiration
 - **Cross-domain auth.** Vercel and the API VM are different registrable domains, so `SameSite=Lax`
   cookies are never sent. Chose `SameSite=None` + double-submit CSRF (`hmac.compare_digest`) +
   Origin validation, with the decision recorded in [docs/06](docs/06-PRIVACY-SECURITY.md).
+- **Signup discloses nothing.** `POST /api/auth/signup` returns the identical
+  `201 {"status": "verification_sent"}` whether or not the address is already registered, and
+  creates nothing on the second call — extending the rule login already followed. On login, the
+  password is checked *first*, so only a caller who already holds valid credentials can ever
+  receive `403 email_not_verified`; everyone else gets the same generic 401 as always.
+- **Supabase Auth is an email-ownership oracle, not the identity provider.** Verification email is
+  sent through Supabase's built-in sender, but this app keeps its own users, argon2id hashes, JWTs,
+  and tenant binding. Confirmation comes back with no webhook and no polling worker: production's
+  `DATABASE_URL` already points at the Supabase Postgres, so `auth.users.email_confirmed_at` is one
+  `SELECT` away, and login stamps our own record on first read.
 - **Streaming uploads.** `app/storage/streaming_upload.py` drives `python-multipart`'s parser
   against `Request.stream()` rather than FastAPI's `UploadFile`, which spools to disk. A 150 MB
   upload grows RSS by 17.5 MB.
@@ -179,7 +189,13 @@ Nothing here is hidden in a footnote. Each is a real limitation of what shipped.
    than fixed, because changing the generator would invalidate every number in
    `backend/evals/results.md` for a realism detail no detector reads.
 6. **The enforcement plane is deliberately simulated** and stateful. Everything else runs for real.
-7. **`GET /api/models` is not implemented.** The `/models` page therefore renders the committed
+7. **Verification email delivery is best-effort.** It goes through Supabase's built-in sender,
+   which Supabase documents as "for development and testing purposes… best-effort… subject to
+   hourly rate limits." Fine for a reviewer signing up once; it will throttle under real volume.
+   Moving to custom SMTP is a dashboard change, not a code change. With `SUPABASE_URL` /
+   `SUPABASE_SERVICE_ROLE_KEY` unset — local dev and CI — verification is disabled, signup marks
+   the account verified immediately, and the API logs a warning saying so.
+8. **`GET /api/models` is not implemented.** The `/models` page therefore renders the committed
    benchmark tables from `backend/evals/results.md` as a clearly-labeled static report rather than
    a live call. The numbers are the real ones; the delivery mechanism is not the live one. Every
    other page in the UI is driven by a working endpoint.
