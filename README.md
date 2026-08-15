@@ -56,6 +56,7 @@ cp .env.example .env     # optional: add ANTHROPIC_API_KEY for the agent layer
 make up                  # postgres, rabbitmq, minio, redis, api, web
 make migrate             # apply schema
 make seed                # demo user + seeded feedback history
+make train               # fit the five L3 models (~165 s, seeded — see note below)
 ```
 
 | Service | URL |
@@ -69,10 +70,15 @@ make seed                # demo user + seeded feedback history
 `make help` lists everything else.
 
 **The pipeline runs end to end without an Anthropic API key** — only agentic triage is skipped.
-`DEMO_MODE=true` serves precomputed verdicts, making zero API calls.
+`DEMO_MODE=true` serves the recorded verdicts in `backend/data/demo/verdicts/` (checked in, 44 KB)
+and makes zero API calls, so the agent layer is inspectable with no key and no spend.
 
-**Fitted model artifacts are committed.** A reviewer's first five minutes should not be a training
-run. `make train` reproduces them from scratch (~165 s) if you want to.
+**Model artifacts are not committed, and `make train` is a real prerequisite.** They total 171 MB,
+dominated by `ecod.joblib` at 125 MB and `lof.joblib` at 33 MB. Both models are instance-based —
+ECOD keeps the training matrix to evaluate its per-dimension ECDFs, LOF keeps it for neighbour
+lookups — so the artifact *is* the training set and no serialization trick makes it small. GitHub
+hard-rejects any single file over 100 MB, so `ecod.joblib` could not be committed regardless.
+Training is seeded and deterministic: same corpus, same models, ~165 s.
 
 ---
 
