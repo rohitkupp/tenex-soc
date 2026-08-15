@@ -54,14 +54,18 @@ __all__ = [
     "LabeledSession",
     "ScenarioBenchmark",
     "ThresholdResult",
+    "benchmark_labeled_sessions",
     "benchmark_scenario",
     "best_f1",
+    "collect_labeled_sessions",
     "discover_files",
     "label_sessions",
     "load_malicious_lines",
     "main",
     "render_table",
 ]
+
+_AGGREGATE_SCENARIO_KEY = "aggregate (pooled)"
 
 
 # ---------------------------------------------------------------------------- labeling
@@ -246,30 +250,44 @@ def _subsample_benign(
     return kept
 
 
-def benchmark_scenario(
+def collect_labeled_sessions(
     scenario_key: str,
     files: Sequence[tuple[Path, Path]],
-    markov_model: markov.MarkovModel,
-    trained_logbert: logbert.TrainedLogBert,
     *,
     max_benign_per_file: int | None = 1500,
     subsample_seed: int = 0,
-) -> ScenarioBenchmark:
+) -> list[LabeledSession]:
+    """Read, session-ize, label, and subsample every file for one scenario. Split out of
+    `benchmark_scenario` so `main()` can also pool several scenarios' sessions into one
+    aggregate threshold sweep without re-reading anything."""
     all_labeled: list[LabeledSession] = []
     for log_path, labels_path in files:
         events = read_okta_file(log_path)
         sessions = build_sessions(events)
         malicious_lines = load_malicious_lines(labels_path)
-        # Qualified by parent directory (the per-seed subdirectory, module docstring's
+        # Qualified by scenario + parent directory (the per-seed subdirectory, module docstring's
         # `seed_7/scenario_...jsonl` layout), not just the basename -- every seed's file shares
         # the same basename, and `_subsample_benign`'s per-file cap needs a key that actually
         # distinguishes them or it silently caps the whole pooled set once instead of per file.
-        source_file = f"{log_path.parent.name}/{log_path.name}"
+        source_file = f"{scenario_key}/{log_path.parent.name}/{log_path.name}"
         all_labeled.extend(label_sessions(sessions, malicious_lines, source_file=source_file))
 
-    all_labeled = _subsample_benign(
+    return _subsample_benign(
         all_labeled, max_benign_per_file=max_benign_per_file, seed=subsample_seed
     )
+
+
+def benchmark_labeled_sessions(
+    scenario_key: str,
+    all_labeled: list[LabeledSession],
+    n_files: int,
+    markov_model: markov.MarkovModel,
+    trained_logbert: logbert.TrainedLogBert,
+) -> ScenarioBenchmark:
+    """Score already-collected `all_labeled` sessions with both models and report the best-F1
+    operating point for each -- the shared tail of both `benchmark_scenario` (one scenario) and
+    the pooled cross-scenario aggregate `main()` computes when more than one `--scenario` is
+    given."""
     labels = [ls.malicious for ls in all_labeled]
     sessions_only = [ls.session for ls in all_labeled]
 
@@ -292,7 +310,7 @@ def benchmark_scenario(
 
     return ScenarioBenchmark(
         scenario=scenario_key,
-        n_files=len(files),
+        n_files=n_files,
         n_sessions=len(all_labeled),
         n_malicious_sessions=sum(labels),
         markov_result=markov_best,
@@ -300,6 +318,23 @@ def benchmark_scenario(
         winner=winner,
         markov_examples=_top_examples(all_labeled, markov_scores, markov_explanations),
         logbert_examples=_top_examples(all_labeled, logbert_scores, logbert_explanations),
+    )
+
+
+def benchmark_scenario(
+    scenario_key: str,
+    files: Sequence[tuple[Path, Path]],
+    markov_model: markov.MarkovModel,
+    trained_logbert: logbert.TrainedLogBert,
+    *,
+    max_benign_per_file: int | None = 1500,
+    subsample_seed: int = 0,
+) -> ScenarioBenchmark:
+    all_labeled = collect_labeled_sessions(
+        scenario_key, files, max_benign_per_file=max_benign_per_file, subsample_seed=subsample_seed
+    )
+    return benchmark_labeled_sessions(
+        scenario_key, all_labeled, len(files), markov_model, trained_logbert
     )
 
 
@@ -351,6 +386,8 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     results: list[ScenarioBenchmark] = []
+    all_pooled: list[LabeledSession] = []
+    total_files = 0
     for scenario_key in args.scenarios:
         files = discover_files(args.eval_root, scenario_key)
         if not files:
@@ -358,15 +395,18 @@ def main(argv: list[str] | None = None) -> int:
                 "sequence.benchmark.no_files", scenario=scenario_key, eval_root=str(args.eval_root)
             )
             continue
-        result = benchmark_scenario(
+        labeled = collect_labeled_sessions(
             scenario_key,
             files,
-            markov_model,
-            trained_logbert,
             max_benign_per_file=max_benign_per_file,
             subsample_seed=args.subsample_seed,
         )
+        result = benchmark_labeled_sessions(
+            scenario_key, labeled, len(files), markov_model, trained_logbert
+        )
         results.append(result)
+        all_pooled.extend(labeled)
+        total_files += len(files)
         log.info(
             "sequence.benchmark.scenario_done",
             scenario=scenario_key,
@@ -376,6 +416,24 @@ def main(argv: list[str] | None = None) -> int:
             markov_f1=result.markov_result.f1,
             logbert_f1=result.logbert_result.f1,
             winner=result.winner,
+        )
+
+    # A single pooled cross-scenario sweep, not just the per-scenario rows -- docs/04's "must beat
+    # the Markov baseline on eval F1 to ship as primary" is a verdict about the layer overall, and
+    # a model can win one scenario's own F1 while losing badly enough on the other that picking
+    # per-scenario winners would hide the real aggregate answer (see the M9 report).
+    if len(results) > 1:
+        aggregate = benchmark_labeled_sessions(
+            _AGGREGATE_SCENARIO_KEY, all_pooled, total_files, markov_model, trained_logbert
+        )
+        results.append(aggregate)
+        log.info(
+            "sequence.benchmark.aggregate_done",
+            n_sessions=aggregate.n_sessions,
+            n_malicious=aggregate.n_malicious_sessions,
+            markov_f1=aggregate.markov_result.f1,
+            logbert_f1=aggregate.logbert_result.f1,
+            winner=aggregate.winner,
         )
 
     table = render_table(results)

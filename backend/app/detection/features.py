@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import math
 import statistics
+from collections import Counter
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Final, Protocol
@@ -53,6 +54,7 @@ __all__ = [
     "WorkHoursLike",
     "is_off_hours",
     "robust_z",
+    "shannon_entropy",
 ]
 
 
@@ -126,6 +128,37 @@ def robust_z(values: Sequence[float], x: float) -> float:
     if mad == 0:
         return 0.0 if x == median else math.inf
     return 0.6745 * (x - median) / mad
+
+
+# ---------------------------------------------------------------------------- Shannon entropy
+
+
+def shannon_entropy(symbols: Sequence[object]) -> float:
+    """Shannon entropy, in bits, of the frequency distribution of `symbols`.
+
+    A second shared primitive, added at M8 for the same reason `is_off_hours`/`robust_z` live
+    here rather than in the module that first needed them: `app/detection/signal/dga_features.py`
+    already has its own character-distribution entropy (docs/04 L2 "Domain entropy / DGA"), but
+    that copy is scoped to a fixed 38-symbol domain-label alphabet and lives in the L2 signal
+    package, which `app/detection/ml/**` deliberately does not import (a concurrently-developed
+    sibling — see `app/detection/signal/constants.py`'s own note on the same boundary). Rather
+    than reintroduce a *third* entropy formula narrowly shaped for one caller, this is the
+    general form — entropy of any discrete symbol sequence, characters or otherwise — that
+    `app/detection/ml/features.py` uses for both `mean_domain_entropy`/`max_domain_entropy`
+    (entropy over a domain label's characters) and `hour_entropy` (entropy over which sub-bucket
+    of the analysis hour an entity's events land in). Empty input returns `0.0` (no distribution,
+    no uncertainty) rather than raising, since a caller scoring an entity with zero events for a
+    given sub-dimension is a normal, not exceptional, case.
+    """
+    n = len(symbols)
+    if n == 0:
+        return 0.0
+    counts = Counter(symbols)
+    entropy = 0.0
+    for count in counts.values():
+        p = count / n
+        entropy -= p * math.log2(p)
+    return entropy
 
 
 # ---------------------------------------------------------------------------- feature names

@@ -138,6 +138,22 @@ categorical and are never fed to these models directly.
 *Device:* `n_unique_user_agents`, `automation_ua_ratio`, `n_unique_asns`, `n_unique_countries`, `hosting_provider_ratio`
 *Identity (joined):* `n_auth_failures`, `n_auth_successes`, `auth_failure_ratio`, `n_mfa_challenges`, `n_distinct_geos`, `privilege_events`
 
+**Absolute vs entity-relative features — a measured defect in this list.** As first written, 47
+of these 50 features are absolute (population-level); only `n_events_z_vs_own_history`,
+`n_events_z_vs_cohort` and `bytes_out_z_vs_own` are entity-relative. The M8 benchmark showed the
+consequence: **no L3 model detects scenario 8** (autoencoder AUC-PR 0.008, Isolation Forest 0.002).
+
+The cause is a mismatch between two definitions of "anomalous". `docs/11`'s scenario-8 acceptance
+gate guarantees separability *relative to the victim's own benign hours*; a model trained on
+absolute features learns the *org-wide* manifold, and a low-and-slow campaign built to look normal
+for its victim sits comfortably inside that manifold. Both definitions are internally correct and
+they do not compose.
+
+Commercial UEBA baselines per entity and per peer group for exactly this reason. Entity-relative
+variants of the volume, transfer and domain features are therefore required, not optional — an
+L3 layer that can only answer "is this unusual for anyone" cannot answer "is this unusual for
+this user", which is the question the layer exists to ask.
+
 Feature code lives in `detection/ml/features.py`. Every feature needs a docstring stating what
 attack behavior it is meant to expose.
 
