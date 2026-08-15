@@ -50,31 +50,33 @@ export default async function AnalysesPage() {
       ) : (
         <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)]">
           {analyses.map((analysis) => (
-            <li
-              key={analysis.id}
-              className="flex flex-wrap items-center justify-between gap-3 px-5 py-4"
-            >
-              <div className="flex flex-col gap-1">
-                <span className="font-mono text-sm text-[var(--color-text-hi)]">
-                  {analysis.id}
-                </span>
-                <span className="text-xs text-[var(--color-text-lo)]">
-                  {analysis.created_at ? formatDate(analysis.created_at) : "—"}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {analysis.detected_sources?.map((source) => (
-                  <span
-                    key={source}
-                    className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-xs text-[var(--color-text-mid)]"
-                  >
-                    {source}
+            <li key={analysis.id}>
+              <Link
+                href={`/analyses/${analysis.id}`}
+                className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 transition-colors hover:bg-[var(--color-surface-2)]"
+              >
+                <div className="flex flex-col gap-1">
+                  <span className="font-mono text-sm text-[var(--color-text-hi)]">
+                    {analysis.id}
                   </span>
-                ))}
-                <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-1 text-xs text-[var(--color-text-mid)]">
-                  {analysis.status ?? "queued"}
-                </span>
-              </div>
+                  <span className="text-xs text-[var(--color-text-lo)]">
+                    {analysis.created_at ? formatDate(analysis.created_at) : "—"}
+                  </span>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {analysis.detected_sources?.map((source) => (
+                    <span
+                      key={source}
+                      className="rounded-full border border-[var(--color-border)] px-2.5 py-1 text-xs text-[var(--color-text-mid)]"
+                    >
+                      {source}
+                    </span>
+                  ))}
+                  <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-1 text-xs text-[var(--color-text-mid)]">
+                    {analysis.status ?? "queued"}
+                  </span>
+                </div>
+              </Link>
             </li>
           ))}
         </ul>

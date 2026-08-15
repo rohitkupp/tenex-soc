@@ -22,8 +22,10 @@ from app.core.csrf import CSRF_COOKIE_NAME, CSRF_HEADER_NAME, derive_csrf_token
 from app.core.db import get_engine, get_session_factory
 from app.core.rate_limit import limiter
 from app.core.security import COOKIE_NAME, create_access_token, hash_password
+from app.models.analysis import Analysis
 from app.models.base import tenant_scope
 from app.models.tenant import Tenant
+from app.models.upload import Upload
 from app.models.user import User
 
 # The default (and, in these tests, only) entry in Settings.cors_origins — see
@@ -80,6 +82,42 @@ def make_user(*, tenant_id: uuid.UUID, email: str, password: str = "correct hors
             session.commit()
             session.refresh(user)
         return user
+    finally:
+        session.close()
+
+
+def make_analysis(
+    *,
+    tenant_id: uuid.UUID,
+    user_id: uuid.UUID,
+    filename: str = "events.log",
+    detected_sources: list[str] | None = None,
+    storage_ref: str | None = None,
+) -> Analysis:
+    """A real `uploads` + `analyses` row pair, for M4's pipeline tests
+    (`tests/test_pipeline_*.py`, `tests/test_ops_*.py`) — the same 1:1 creation
+    `app.api.uploads.create_upload` does, without going through the HTTP layer or
+    actually touching MinIO (pipeline tests exercise the queue/DB/Redis side; the parse
+    stage's own tests are responsible for real MinIO objects)."""
+    session = get_session_factory()()
+    try:
+        with tenant_scope(session, tenant_id):
+            upload = Upload(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                filename=filename,
+                size_bytes=1,
+                sha256="a" * 64,
+                storage_ref=storage_ref or f"{tenant_id}/{uuid.uuid4()}",
+                detected_sources=detected_sources or [],
+            )
+            session.add(upload)
+            session.flush()
+            analysis = Analysis(tenant_id=tenant_id, upload_id=upload.id, status="queued")
+            session.add(analysis)
+            session.commit()
+            session.refresh(analysis)
+        return analysis
     finally:
         session.close()
 

@@ -15,3 +15,23 @@ export function formatDate(iso: string): string {
     timeStyle: "short",
   }).format(date);
 }
+
+export function formatPercent(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+// llm_cost_usd is a Postgres NUMERIC (backend/app/models/analysis.py), which
+// Pydantic v2 can serialize as either a JSON number or a decimal string
+// depending on config — accept both rather than assuming.
+export function formatUsd(value: number | string | null | undefined): string {
+  if (value === null || value === undefined) return "—";
+  const numeric = typeof value === "string" ? Number(value) : value;
+  if (Number.isNaN(numeric)) return "—";
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 4,
+  }).format(numeric);
+}

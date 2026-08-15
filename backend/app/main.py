@@ -13,12 +13,14 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 
-from app.api import analyses, auth, events, health, uploads
+from app.api import analyses, auth, events, health, ops, stream, uploads
 from app.core.config import get_settings
 from app.core.csrf import CSRFMiddleware
 from app.core.errors import ApiError, api_error_handler
 from app.core.logging import configure_logging, get_logger
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
+from app.queue import dispatch
+from app.queue.topology import declare_topology_on_new_channel, get_connection
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -33,7 +35,21 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         llm_enabled=settings.llm_enabled,
         model=settings.anthropic_model,
     )
+    # Idempotent (app.queue.topology.declare_topology's docstring) — safe alongside
+    # every worker doing the same at its own startup, in any order. Best-effort: a
+    # broker that's briefly unreachable at boot shouldn't crash-loop the API process
+    # (uploads/pipeline kickoff would fail loudly per-request instead, which is the
+    # right place for that failure to surface).
+    try:
+        warmup_connection = await get_connection()
+        try:
+            await declare_topology_on_new_channel(warmup_connection)
+        finally:
+            await warmup_connection.close()
+    except Exception:
+        log.warning("api.topology_declare_failed", exc_info=True)
     yield
+    await dispatch.close()
     log.info("api.shutdown")
 
 
@@ -83,4 +99,6 @@ app.include_router(health.router, prefix="/api", tags=["ops"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(uploads.router, prefix="/api", tags=["uploads"])
 app.include_router(analyses.router, prefix="/api", tags=["analyses"])
+app.include_router(stream.router, prefix="/api", tags=["analyses"])
 app.include_router(events.router, prefix="/api", tags=["events"])
+app.include_router(ops.router, prefix="/api", tags=["ops"])

@@ -2,8 +2,13 @@
 
 Streams the file straight to MinIO (see `app.storage.streaming_upload` for how, and
 why the usual `UploadFile` parameter cannot be used here), sniffs source types from
-the first ~50 lines, and writes the `uploads` + `analyses` rows. Does **not** kick off
-the pipeline or open the SSE stream — that is M4.
+the first ~50 lines, and writes the `uploads` + `analyses` rows. M4 addition: also
+kicks off the pipeline (docs/09: "Kicks off the pipeline") by publishing the `ingest`
+`StageMessage` to `q.orchestrator` (`app.queue.dispatch.kickoff_pipeline`) — after an
+explicit `db.commit()`, not the request-scoped session's usual end-of-request commit
+(`app.core.db.get_db`), because the orchestrator worker can pick the message up and
+query these rows within milliseconds; publishing before they are durably committed
+would be a race. The SSE stream is `app.api.stream`, not this module.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ from app.core.security import CurrentUser, require_user
 from app.models.analysis import Analysis
 from app.models.upload import Upload
 from app.parsers.registry import detect_source_types
+from app.queue.dispatch import kickoff_pipeline
 from app.schemas.uploads import UploadCreateResponse
 from app.storage.client import ensure_bucket
 from app.storage.streaming_upload import new_storage_key, stream_upload_to_storage
@@ -97,6 +103,11 @@ async def create_upload(
     )
     db.add(analysis)
 
+    # Explicit commit, ahead of `get_db`'s own end-of-request commit — see the module
+    # docstring. Without this, `kickoff_pipeline` below could publish a message the
+    # orchestrator worker picks up and queries before this transaction is durable.
+    db.commit()
+
     log.info(
         "uploads.created",
         upload_id=str(upload_id),
@@ -105,6 +116,8 @@ async def create_upload(
         size_bytes=result.size_bytes,
         detected_sources=detected_sources,
     )
+
+    await kickoff_pipeline(analysis_id=analysis_id, tenant_id=current.tenant.id)
 
     return UploadCreateResponse(
         upload_id=upload_id, detected_sources=detected_sources, analysis_id=analysis_id

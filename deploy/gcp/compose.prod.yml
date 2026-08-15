@@ -31,6 +31,19 @@ x-worker-env: &worker-env
   DEMO_MODE: ${DEMO_MODE:-false}
   LOG_LEVEL: info
 
+# Same shared shape as docker-compose.yml's x-worker-defaults — see that file's comment.
+# No source bind-mount here (prod images are the artifact, per this file's header).
+x-worker-defaults: &worker-defaults
+  build:
+    context: ../../backend
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  environment: *worker-env
+  depends_on:
+    rabbitmq: {condition: service_healthy}
+    minio: {condition: service_healthy}
+    redis: {condition: service_healthy}
+
 services:
   caddy:
     image: caddy:2-alpine
@@ -94,8 +107,57 @@ services:
       timeout: 5s
       retries: 20
 
-  # Worker process groups land here at M4, one service per queue per docs/01.
-  # They share *worker-env and differ only in their entrypoint module.
+  # Worker process groups, one service per queue per docs/01 — same topology as
+  # docker-compose.yml, deliberately (see this file's header comment). They share
+  # *worker-env and *worker-defaults and differ only in their entrypoint module.
+
+  orchestrator:
+    <<: *worker-defaults
+    command: python -m app.workers.orchestrator
+
+  parser-zscaler:
+    <<: *worker-defaults
+    command: python -m app.workers.parser_zscaler
+
+  parser-okta:
+    <<: *worker-defaults
+    command: python -m app.workers.parser_okta
+
+  parser-cloudtrail:
+    <<: *worker-defaults
+    command: python -m app.workers.parser_cloudtrail
+
+  enricher:
+    <<: *worker-defaults
+    command: python -m app.workers.enricher
+
+  anonymizer:
+    <<: *worker-defaults
+    command: python -m app.workers.anonymizer
+
+  detector:
+    <<: *worker-defaults
+    command: python -m app.workers.detector
+
+  correlator:
+    <<: *worker-defaults
+    command: python -m app.workers.correlator
+
+  agent:
+    <<: *worker-defaults
+    command: python -m app.workers.agent
+
+  responder:
+    <<: *worker-defaults
+    command: python -m app.workers.responder
+
+  tier2-sync:
+    <<: *worker-defaults
+    command: python -m app.workers.tier2_sync
+
+  dead-letter-sink:
+    <<: *worker-defaults
+    command: python -m app.workers.dead_letter_sink
 
 volumes:
   caddy_data:

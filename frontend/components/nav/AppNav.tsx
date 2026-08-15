@@ -30,6 +30,12 @@ export async function AppNav() {
           >
             Upload
           </Link>
+          <Link
+            href="/ops"
+            className="text-[var(--color-text-mid)] transition-colors hover:text-[var(--color-text-hi)]"
+          >
+            Ops
+          </Link>
           {me && (
             <span className="hidden font-mono text-xs text-[var(--color-text-lo)] sm:inline">
               {me.user.email}

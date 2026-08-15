@@ -3,7 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import Link from "next/link";
 import { DropZone } from "./DropZone";
-import { FunnelPreview } from "./FunnelPreview";
+import { FunnelProgress } from "@/components/pipeline/FunnelProgress";
 import { ApiError } from "@/lib/api/client";
 import { uploadLogFile, type UploadHandle } from "@/lib/api/upload";
 import type { UploadResponse } from "@/lib/api/types";
@@ -141,15 +141,18 @@ export function UploadFlow() {
             </dd>
           </dl>
           <div className="flex flex-wrap gap-3">
-            <Link href="/" className={primaryButton}>
-              View analyses
+            <Link href={`/analyses/${phase.result.analysis_id}`} className={primaryButton}>
+              View analysis
+            </Link>
+            <Link href="/" className={secondaryButton}>
+              All analyses
             </Link>
             <button type="button" className={secondaryButton} onClick={reset}>
               Upload another file
             </button>
           </div>
         </div>
-        <FunnelPreview />
+        <FunnelProgress analysisId={phase.result.analysis_id} />
       </div>
     );
   }

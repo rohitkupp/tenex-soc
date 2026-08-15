@@ -20,6 +20,24 @@ x-backend-env: &backend-env
   CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
   LOG_LEVEL: ${LOG_LEVEL:-info}
 
+# Shared shape for every pipeline worker (docs/01-ARCHITECTURE.md services table) — one
+# container per queue, all built from the same backend image, differing only in the
+# `command:` module they run. `depends_on` on all four infra services (not just
+# rabbitmq) because every worker touches Postgres and most touch Redis/MinIO too.
+x-worker-defaults: &worker-defaults
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+  environment: *backend-env
+  volumes:
+    - ./backend:/app
+  depends_on:
+    postgres: {condition: service_healthy}
+    rabbitmq: {condition: service_healthy}
+    minio: {condition: service_healthy}
+    redis: {condition: service_healthy}
+  restart: unless-stopped
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -96,6 +114,63 @@ services:
       NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
     ports: ["3000:3000"]
     depends_on: [api]
+
+  # --- Pipeline workers (docs/01-ARCHITECTURE.md services table) -------------------
+  # One container per queue, one queue per worker (docs/01: "Each worker is a separate
+  # container with its own queue... it demonstrates horizontal scale-out"). Every
+  # command below is `python -m app.workers.<module>` — see backend/app/workers/.
+
+  orchestrator:
+    <<: *worker-defaults
+    command: python -m app.workers.orchestrator
+
+  parser-zscaler:
+    <<: *worker-defaults
+    command: python -m app.workers.parser_zscaler
+
+  parser-okta:
+    <<: *worker-defaults
+    command: python -m app.workers.parser_okta
+
+  parser-cloudtrail:
+    <<: *worker-defaults
+    command: python -m app.workers.parser_cloudtrail
+
+  enricher:
+    <<: *worker-defaults
+    command: python -m app.workers.enricher
+
+  anonymizer:
+    <<: *worker-defaults
+    command: python -m app.workers.anonymizer
+
+  detector:
+    <<: *worker-defaults
+    command: python -m app.workers.detector
+
+  correlator:
+    <<: *worker-defaults
+    command: python -m app.workers.correlator
+
+  agent:
+    <<: *worker-defaults
+    command: python -m app.workers.agent
+
+  responder:
+    <<: *worker-defaults
+    command: python -m app.workers.responder
+
+  tier2-sync:
+    <<: *worker-defaults
+    command: python -m app.workers.tier2_sync
+
+  # Not one of docs/01's eleven named services — see
+  # backend/app/pipeline/dead_letter_sink.py for why this process exists: it is the
+  # single place `dead_letters` Postgres rows get written, for both app-level
+  # exhausted-retry dead-letters and broker-native (killed-worker) ones.
+  dead-letter-sink:
+    <<: *worker-defaults
+    command: python -m app.workers.dead_letter_sink
 
 volumes:
   pgdata:

@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 
 class UploadCreateResponse(BaseModel):
@@ -30,6 +30,24 @@ class AnalysisOut(BaseModel):
     error: str | None
     started_at: datetime | None
     finished_at: datetime | None
+
+    @field_validator("counters", mode="before")
+    @classmethod
+    def _drop_internal_counter_keys(cls, value: object) -> object:
+        """`analyses.counters` (docs/02) is the pipeline's only place to keep a running
+        per-analysis tally, so the parse stage's own cross-parser bookkeeping — a key
+        like `_parse_failed_lines`, needed to aggregate `parse_failure_rate` correctly
+        across concurrently-finishing parsers without a last-write-wins race; see
+        `app.pipeline.stages.parse` — lives in the same JSONB column as the four public
+        counters (`events`/`signals`/`incidents`/`needs_attention`, docs/09). This
+        endpoint is the one place besides the SSE stream that surfaces `counters`
+        externally (`app.api.stream` already filters via
+        `app.pipeline.contracts.public_counters`), so it applies the same underscore
+        convention here rather than leaking pipeline-internal keys into the API
+        response."""
+        if isinstance(value, dict):
+            return {k: v for k, v in value.items() if not str(k).startswith("_")}
+        return value
 
 
 class AnalysisListResponse(BaseModel):
