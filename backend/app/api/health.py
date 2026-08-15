@@ -36,5 +36,13 @@ def health() -> dict[str, Any]:
         "version": "0.1.0",
         "demo_mode": settings.demo_mode,
         "llm_enabled": settings.llm_enabled,
+        # Reported for the same reason as the two flags above: this is a mode the app can
+        # silently be in, and the failure is quiet. When false, `POST /api/auth/signup`
+        # stamps new accounts verified on creation instead of emailing a confirmation link
+        # (app/api/auth.py) — a deliberate fallback so `make up` works with no Supabase
+        # project, but one that fails *open*. A production deploy that lost SUPABASE_URL or
+        # SUPABASE_SERVICE_ROLE_KEY looks entirely healthy from the outside otherwise; this
+        # field is what makes it visible without reading the logs.
+        "email_verification_enabled": settings.email_verification_enabled,
         "dependencies": dependencies,
     }
