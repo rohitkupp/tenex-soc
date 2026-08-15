@@ -197,7 +197,7 @@ def test_signals_evidence_event_ids_array_and_explanation_jsonb_round_trip(
             signal = Signal(
                 analysis_id=analysis.id,
                 tenant_id=tenant.id,
-                detector_key="sigma.okta_mfa_fatigue",
+                detector_key="sigma.non_browser_user_agent",
                 detector_layer="rule",
                 raw_score=0.91,
                 confidence=0.73,
@@ -699,7 +699,7 @@ def test_tier2_signatures_arrays_and_vector_round_trip() -> None:
             tenant_hash="h_shared_salt_abc123",
             incident_type="c2_beacon",
             mitre_techniques=["T1071", "T1041"],
-            source_types=["zscaler", "okta"],
+            source_types=["zscaler", "endpoint"],
             confidence=0.82,
             indicator_hashes=["h_domain_1", "h_ip_1"],
             observed_at=datetime.now(UTC),
@@ -711,7 +711,7 @@ def test_tier2_signatures_arrays_and_vector_round_trip() -> None:
         sig_id = sig.id
 
         assert sig.mitre_techniques == ["T1071", "T1041"]
-        assert sig.source_types == ["zscaler", "okta"]
+        assert sig.source_types == ["zscaler", "endpoint"]
         assert sig.indicator_hashes == ["h_domain_1", "h_ip_1"]
         assert sig.embedding is not None
         assert len(sig.embedding) == 1024

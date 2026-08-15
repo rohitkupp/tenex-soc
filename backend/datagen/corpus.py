@@ -25,14 +25,15 @@ to `benign` and `scenario` still gets two `Org` instances with different `finger
 sharing this guards against is structurally impossible, not just discouraged.
 
 **Multi-source scenarios split into one file pair per source.** `LabelSet.log_file` is a single
-string naming one physical file (docs/11's ground-truth schema), but several scenarios (3, 10)
-legitimately touch both ZScaler and Okta — that is the point of the cross-source rules in
-docs/04. Vendor formats cannot share one file (tab-delimited NSS vs. Okta JSON Lines), so
-`write_labeled_files` emits one log + one `.labels.json` per source the injected stream actually
-touches, each carrying only the `GroundTruth` entries whose events landed in that file. For a
-single-source scenario this reduces to exactly the docs/11 example (`scenario_c2_beaconing.log`
-+ `scenario_c2_beaconing.labels.json`); demo and multi-source scenario files instead get
-`_{source}` suffixed pairs (e.g. `scenario_password_spray_okta.jsonl`).
+string naming one physical file (docs/11's ground-truth schema). ZScaler is the only registered
+source today (Okta and CloudTrail were removed, along with the cross-source rules that read both
+identity and proxy logs), so this reduces to exactly the docs/11 example
+(`scenario_c2_beaconing.log` + `scenario_c2_beaconing.labels.json`) for every scenario. The
+splitting machinery (`write_labeled_files` grouping by source and suffixing multi-source output
+`_{source}`) is left in place rather than collapsed to a single-file writer: a source touches
+vendor-specific formats that cannot share one file (tab-delimited NSS vs. a JSON-Lines identity
+export, were one registered again), and this is the one place that split has to happen regardless
+of how many sources are registered.
 """
 
 from __future__ import annotations
@@ -46,8 +47,6 @@ from typing import TYPE_CHECKING, Any, TextIO
 
 from app.core.logging import get_logger
 
-from .emitters.cloudtrail import CloudTrailEmitter
-from .emitters.okta import OktaEmitter
 from .emitters.zscaler import ZScalerEmitter
 from .org import Org
 from .realism import DEFAULT_OFFICE_CODES
@@ -100,13 +99,12 @@ ROLE_DEMO = "demo"
 
 _DEFAULT_CHUNK = 200_000
 
-# Same ratio the docs/11 volume targets imply for the full corpus (~2M : ~200k, i.e. 10:1), plus a
-# thin CloudTrail slice — CloudTrail exists "mainly to prove the parser interface generalizes"
-# (docs/03) so it gets a token share, not a third of the budget.
+# ZScaler is the only registered source (Okta and CloudTrail were removed), so the full budget
+# goes to it. Kept as a weight table rather than collapsed to a constant: `split_volume` below
+# renormalizes over whichever sources are actually present in a given call, which is what lets a
+# second source rejoin later as one more entry here rather than a rewrite of the splitting logic.
 _SOURCE_WEIGHTS: dict[SourceType, float] = {
-    SourceType.ZSCALER: 0.90,
-    SourceType.OKTA: 0.09,
-    SourceType.CLOUDTRAIL: 0.01,
+    SourceType.ZSCALER: 1.0,
 }
 
 
@@ -148,10 +146,6 @@ def make_emitter(source: SourceType) -> LogEmitter:
     """A freshly constructed, default-configured emitter for `source`."""
     if source is SourceType.ZSCALER:
         return ZScalerEmitter()
-    if source is SourceType.OKTA:
-        return OktaEmitter()
-    if source is SourceType.CLOUDTRAIL:
-        return CloudTrailEmitter()
     raise ValueError(f"no emitter for {source!r}")  # pragma: no cover — exhaustive over the enum
 
 
@@ -161,18 +155,18 @@ def make_emitter(source: SourceType) -> LogEmitter:
 @dataclass(frozen=True, slots=True)
 class SourceVolumes:
     zscaler: int = 0
-    okta: int = 0
-    cloudtrail: int = 0
 
     def get(self, source: SourceType) -> int:
         return getattr(self, source.value)
 
 
 def split_volume(total: int, sources: Sequence[SourceType]) -> SourceVolumes:
-    """Divide `total` across `sources` using the corpus-wide proxy:okta:cloudtrail ratio.
+    """Divide `total` across `sources` using the corpus-wide `_SOURCE_WEIGHTS` ratio.
 
-    Restricted to whichever sources are actually present and renormalized, so a proxy-only
-    scenario gets the full budget on ZScaler rather than losing 10% to a source it never emits.
+    Restricted to whichever sources are actually present and renormalized. With ZScaler the only
+    registered source this always resolves to the full budget on it, but the renormalization is
+    what would let a proxy-only scenario keep doing that without losing a share to a source it
+    never emits, if a second source were registered again.
     """
     present = [s for s in sources if s in _SOURCE_WEIGHTS]
     if not present or total <= 0:
@@ -199,22 +193,20 @@ def write_benign_corpus(
     out_dir: Path,
     *,
     proxy_events: int,
-    okta_events: int,
-    cloudtrail_events: int,
     chunk_size: int = _DEFAULT_CHUNK,
 ) -> dict[str, int]:
     """Write the large unlabeled benign corpus. Bounded memory regardless of total volume.
 
     `root` should be a fresh `SeededRandom(role_seed(cli_seed, ROLE_BENIGN))` — the `"benign"`
     sub-stream key below matches the canonical `root.substream("benign").substream("zscaler")`
-    shape documented for the driver, just parameterized over all three sources.
+    shape documented for the driver. ZScaler is the only source in `plan` today (Okta and
+    CloudTrail were removed); `plan` stays a tuple of `(source, events, filename)` triples rather
+    than collapsing to a single call so a source added back is one more entry, not a rewrite.
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     benign_root = root.substream("benign")
     plan: tuple[tuple[SourceType, int, str], ...] = (
         (SourceType.ZSCALER, proxy_events, "benign_zscaler.log"),
-        (SourceType.OKTA, okta_events, "benign_okta.jsonl"),
-        (SourceType.CLOUDTRAIL, cloudtrail_events, "benign_cloudtrail.jsonl"),
     )
     counts: dict[str, int] = {}
     for source, n_events, filename in plan:
@@ -472,13 +464,14 @@ def run_scenario(
     )
 
 
-# Default demo cast: one proxy-only signal-layer attack, one cross-source correlation attack, one
-# sequence-model attack, and the mandatory false-positive control — a spread across L1/L2/L4 and
-# both log sources rather than four proxy scenarios that would all exercise the same detectors.
+# Default demo cast: one L1/L2 signal-layer attack (beaconing), one L2 volumetric/ratio attack
+# (data exfiltration), one attack only the L3 autoencoder can see (low-and-slow exfil, no single
+# feature out of range), and the mandatory false-positive control — a spread across detection
+# layers rather than four scenarios that would all exercise the same detector.
 DEFAULT_DEMO_SCENARIOS: tuple[tuple[str, dict[str, Any]], ...] = (
     ("c2_beaconing", {}),
-    ("password_spray", {}),
-    ("account_takeover_chain", {}),
+    ("data_exfiltration", {}),
+    ("low_and_slow_exfil", {}),
     ("benign_but_weird", {}),
 )
 
@@ -505,13 +498,14 @@ def run_demo(
 
     instances: list[Scenario] = [get_scenario(key)(**kw) for key, kw in scenarios]
 
-    # Fixed, scenario-cast-independent split: always the full `_SOURCE_WEIGHTS` triple, never the
+    # Fixed, scenario-cast-independent split: always the full `_SOURCE_WEIGHTS` set, never the
     # union of whichever scenarios happen to be in this particular cast. `split_volume` renormalizes
-    # over whatever `sources` it is given, so an okta-only scenario joining or leaving the demo mix
-    # must not change ZScaler's (or any other source's) benign event *count* -- and therefore must
-    # not consume a different number of RNG draws generating it. A source nobody's scenario touches
-    # simply produces benign-only output that `write_labeled_files` already omits from the output
-    # (no `GroundTruth` references it), so generating it unconditionally is harmless, just fixed.
+    # over whatever `sources` it is given, so a scenario touching a different source joining or
+    # leaving the demo mix must not change ZScaler's (or any other source's) benign event *count*
+    # -- and therefore must not consume a different number of RNG draws generating it. A source
+    # nobody's scenario touches simply produces benign-only output that `write_labeled_files`
+    # already omits from the output (no `GroundTruth` references it), so generating it
+    # unconditionally is harmless, just fixed.
     stream = generate_scenario_background(
         org, root.substream("benign"), window, tuple(_SOURCE_WEIGHTS), total_events
     )

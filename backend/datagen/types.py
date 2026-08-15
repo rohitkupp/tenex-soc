@@ -51,11 +51,15 @@ __all__ = [
 
 
 class SourceType(StrEnum):
-    """Matches `LogParser.source_type` in docs/03 — the value a parser advertises."""
+    """Matches `LogParser.source_type` in docs/03 — the value a parser advertises.
+
+    ZScaler is the only member today. Okta and CloudTrail were removed (this project is narrowed
+    to ZScaler web proxy logs only); kept as an enum rather than collapsed to a bare string
+    constant so a future source is "add one more member here", not a type change at every call
+    site that names `SourceType`.
+    """
 
     ZSCALER = "zscaler"
-    OKTA = "okta"
-    CLOUDTRAIL = "cloudtrail"
 
 
 EntityType = Literal["user", "src_ip", "domain", "dst_ip", "asn", "country", "session"]
@@ -80,39 +84,30 @@ ML_MAHALANOBIS = "ml.mahalanobis"
 ML_PEER_GROUP = "ml.peer_group"
 ML_LIGHTGBM = "ml.lightgbm"
 
-SEQUENCE_MARKOV = "sequence.markov"
-SEQUENCE_LOGBERT = "sequence.logbert"
-
 GRAPH_FAN_OUT = "graph.fan_out"
 GRAPH_SHARED_INFRA = "graph.shared_infra"
 
-SIGMA_IMPOSSIBLE_TRAVEL = "sigma.impossible_travel"
-SIGMA_PASSWORD_SPRAY = "sigma.password_spray"  # noqa: S105 — a detector key, not a secret
-SIGMA_BRUTE_FORCE = "sigma.brute_force"
-SIGMA_MFA_FATIGUE = "sigma.okta_mfa_fatigue"
-SIGMA_NEW_COUNTRY = "sigma.first_login_new_country"
-SIGMA_MFA_DEACTIVATED = "sigma.mfa_factor_deactivated"
-SIGMA_API_TOKEN_OFF_HOURS = "sigma.api_token_created_off_hours"  # noqa: S105
-SIGMA_PRIVILEGE_GRANT = "sigma.privilege_grant"
+# The seven ZScaler-only Sigma rules under `app/detection/rules/`. The identity-only and
+# cross-source rules (impossible-travel, password-spray, brute-force, okta-mfa-fatigue,
+# first-login-new-country, mfa-factor-deactivated, api-token-created-off-hours, privilege-grant,
+# and the three xsrc-* rules) were deleted along with Okta.
 SIGMA_NON_BROWSER_UA = "sigma.non_browser_user_agent"
 SIGMA_LARGE_POST_NRD = "sigma.large_post_to_new_domain"
 SIGMA_DIRECT_TO_IP = "sigma.direct_to_ip_request"
 SIGMA_CREDS_IN_URL = "sigma.credentials_in_url"
 SIGMA_BLOCKED_THEN_ALLOWED = "sigma.blocked_then_allowed"
 SIGMA_THREAT_CATEGORY = "sigma.malicious_url_category"
-SIGMA_XSRC_AUTH_AND_RARE_DOMAIN = "sigma.xsrc_auth_burst_and_rare_domain"
-SIGMA_XSRC_LOGIN_NO_PROXY_HISTORY = "sigma.xsrc_login_without_proxy_history"
-SIGMA_XSRC_RESET_THEN_UPLOAD = "sigma.xsrc_credential_reset_then_upload"
 
 DETECTOR_KEYS: frozenset[str] = frozenset(
     v
     for k, v in dict(globals()).items()
-    if k.startswith(("SIGNAL_", "ML_", "SEQUENCE_", "GRAPH_", "SIGMA_")) and isinstance(v, str)
+    if k.startswith(("SIGNAL_", "ML_", "GRAPH_", "SIGMA_")) and isinstance(v, str)
 )
 
 
 def sigma_key(rule_id: str) -> str:
-    """`detector_key` for a Sigma rule id, e.g. `okta-mfa-fatigue` -> `sigma.okta_mfa_fatigue`."""
+    """`detector_key` for a Sigma rule id, e.g. `large-post-to-new-domain` ->
+    `sigma.large_post_to_new_domain`."""
     return f"sigma.{rule_id.strip().lower().replace('-', '_')}"
 
 
@@ -178,10 +173,10 @@ class EventRecord:
     """One log event, pre-serialization.
 
     `fields` holds the vendor-native record using exactly the field names docs/03 maps from —
-    `host`, `requestsize`, `useragent` for ZScaler; `eventType`, `outcome`, `client` for Okta.
-    Nothing downstream of the emitter reinterprets them; the emitter's `serialize` renders them
-    and the real parser reads them back. That round trip is the point: if a scenario is not
-    parseable it is not detectable, and the eval would be measuring nothing.
+    `host`, `requestsize`, `useragent` for ZScaler, the only registered source. Nothing downstream
+    of the emitter reinterprets them; the emitter's `serialize` renders them and the real parser
+    reads them back. That round trip is the point: if a scenario is not parseable it is not
+    detectable, and the eval would be measuring nothing.
 
     `scenario_id` and `malicious` are generator-side labels. They never appear in the emitted
     line — writing the label into the file would leak the answer into the detectors.
@@ -333,7 +328,8 @@ class LogEmitter(Protocol):
     file_suffix: ClassVar[str]
 
     def header(self) -> str | None:
-        """First line of the file, if the format has one (ZScaler NSS does; Okta JSONL does not)."""
+        """First line of the file, if the format has one (ZScaler NSS does; a JSON Lines format
+        would not)."""
         ...
 
     def generate_benign(self, ctx: BenignContext) -> Iterator[EventRecord]:

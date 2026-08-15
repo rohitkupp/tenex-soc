@@ -28,9 +28,7 @@ def _write_corpus(tmp_path: Path, *, events: int = 400) -> Path:
     org = corpus.build_org(11, corpus.ROLE_BENIGN, _ORG_SPEC)
     root = corpus.SeededRandom(corpus.role_seed(11, corpus.ROLE_BENIGN))
     window = TimeWindow.of_days(3)
-    corpus.write_benign_corpus(
-        org, root, window, tmp_path, proxy_events=events, okta_events=0, cloudtrail_events=0
-    )
+    corpus.write_benign_corpus(org, root, window, tmp_path, proxy_events=events)
     return tmp_path / "benign_zscaler.log"
 
 

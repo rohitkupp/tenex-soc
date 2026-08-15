@@ -1,15 +1,18 @@
-"""docs/13 M6 acceptance: "Rules detect scenarios 3, 4, 6 end to end." Generates each scenario
-with the real `datagen` generator, parses it with the real `app/parsers/` registry (the same code
-`app/pipeline/stages/parse.py` runs), enriches it with the real `app/enrichment` (so
-`events.enrichment`-dependent fields are populated exactly as a real pipeline run would leave
-them), bulk-loads it into a real `events` table, and runs every rule in `app/detection/rules/`
-against it — no shortcuts, no synthetic-fixture substitutes.
+"""docs/13 M6 acceptance, adapted: end-to-end Sigma rule coverage against the real `datagen`
+generator. Generates a scenario with the real generator, parses it with the real `app/parsers/`
+registry (the same code `app/pipeline/stages/parse.py` runs), enriches it with the real
+`app/enrichment` (so `events.enrichment`-dependent fields are populated exactly as a real pipeline
+run would leave them), bulk-loads it into a real `events` table, and runs every rule in
+`app/detection/rules/` against it — no shortcuts, no synthetic-fixture substitutes.
 
-`test_scenario_9_prompt_injection_canary_carrier_rule_fires` and
-`test_scenario_10_benign_but_weird_false_positive_report` round out the acceptance picture:
-scenario 9 proves the rules react to the carrier traffic's real shape (not the injected text —
-that is docs/06's job, out of this package's scope) and scenario 10 is the false-positive control
-docs/11 says "matters as much as the attacks."
+The original M6 acceptance line named identity scenarios 3, 4, and 6 (password spray, impossible
+travel, MFA fatigue) — all Okta-only, and deleted along with that source (this project is
+narrowed to ZScaler web proxy logs only; see `app/detection/rules/` for the seven surviving
+ZScaler rules). `test_scenario_9_prompt_injection_canary_carrier_rule_fires` and
+`test_scenario_10_benign_but_weird_false_positive_report` are what remain of the original
+acceptance picture: scenario 9 proves the rules react to the carrier traffic's real shape (not the
+injected text — that is docs/06's job, out of this package's scope) and scenario 10 is the
+false-positive control docs/11 says "matters as much as the attacks."
 """
 
 from __future__ import annotations
@@ -47,11 +50,12 @@ def _raw_connection() -> psycopg.Connection:
 
 
 def _source_type_for(path: Path) -> str:
-    if path.suffix == ".jsonl":
-        # Both Okta and CloudTrail serialize as JSON Lines; every scenario this module drives
-        # is Okta-only or Okta+ZScaler, so a `.jsonl` file here is always Okta.
-        return "okta"
-    return "zscaler"
+    # Every scenario this module drives is ZScaler-only (the only registered source), so a
+    # `.log` file here is always ZScaler. Kept as a suffix dispatch rather than a bare constant so
+    # a future second source only needs a new branch, not a rewrite of `_load_log_file`.
+    if path.suffix == ".log":
+        return "zscaler"
+    raise ValueError(f"no known source type for {path!r}")
 
 
 def _load_log_file(analysis: Analysis, path: Path) -> int:
@@ -98,7 +102,7 @@ def _generate_and_load(
     written_paths = run_scenario(
         name, seed, tmp_path, total_events=_TOTAL_EVENTS, window_days=_WINDOW_DAYS
     )
-    log_paths = [p for p in written_paths if p.suffix in {".jsonl", ".log"}]
+    log_paths = [p for p in written_paths if p.suffix == ".log"]
     label_paths = [p for p in written_paths if p.name.endswith(".labels.json")]
     assert log_paths and label_paths, f"unexpected run_scenario output for {name}: {written_paths}"
 
@@ -106,8 +110,11 @@ def _generate_and_load(
     for log_path in log_paths:
         total_written += _load_log_file(analysis, log_path)
 
-    # Multiple label files (one per source, for a cross-source scenario) share one scenario_id;
-    # merge them for a single "what should have fired" view.
+    # `label_paths` is a single file today (ZScaler is the only registered source, so
+    # `write_labeled_files` never splits a scenario's output across more than one); still merged
+    # into one `LabelSet` here rather than indexed directly, so a source registered back in later
+    # (which would again split cross-source scenario output across several label files sharing one
+    # scenario_id) needs no change to this helper.
     label_sets = [LabelSet.from_json(p.read_text()) for p in label_paths]
     merged = label_sets[0]
     for extra in label_sets[1:]:
@@ -132,74 +139,8 @@ def _expected_sigma_detectors(label_set: LabelSet) -> set[str]:
     return keys
 
 
-# ---------------------------------------------------------------------------- scenario 3
-
-
-def test_scenario_3_password_spray_end_to_end(tmp_path: Path, analysis_factory: Any) -> None:
-    analysis = analysis_factory("password-spray")
-    label_set, written = _generate_and_load(tmp_path, analysis, name="password_spray", seed=103)
-    assert written > 0
-
-    fired, drafts = _fired_sigma_keys(analysis)
-    expected = _expected_sigma_detectors(label_set)
-    assert expected, "scenario fixture drift: password_spray now expects no sigma.* detectors"
-
-    missing = expected - fired
-    assert not missing, (
-        f"scenario 3 (password spray): expected sigma detectors not fired: {missing}. "
-        f"Fired: {sorted(fired)}"
-    )
-
-    for d in drafts:
-        if d.detector_key in expected:
-            print(
-                f"  FIRED {d.detector_key}: entity={d.entity_value} evidence={d.evidence_event_ids[:5]}..."
-            )
-
-
-# ---------------------------------------------------------------------------- scenario 4
-
-
-def test_scenario_4_impossible_travel_end_to_end(tmp_path: Path, analysis_factory: Any) -> None:
-    analysis = analysis_factory("impossible-travel")
-    label_set, written = _generate_and_load(tmp_path, analysis, name="impossible_travel", seed=104)
-    assert written > 0
-
-    fired, drafts = _fired_sigma_keys(analysis)
-    expected = _expected_sigma_detectors(label_set)
-    assert expected
-
-    missing = expected - fired
-    assert not missing, f"scenario 4 (impossible travel): expected detectors not fired: {missing}"
-
-    for d in drafts:
-        if d.detector_key in expected:
-            print(
-                f"  FIRED {d.detector_key}: entity={d.entity_value} explanation.match={d.explanation['match']}"
-            )
-
-
-# ---------------------------------------------------------------------------- scenario 6
-
-
-def test_scenario_6_mfa_fatigue_end_to_end(tmp_path: Path, analysis_factory: Any) -> None:
-    analysis = analysis_factory("mfa-fatigue")
-    label_set, written = _generate_and_load(tmp_path, analysis, name="mfa_fatigue", seed=106)
-    assert written > 0
-
-    fired, drafts = _fired_sigma_keys(analysis)
-    expected = _expected_sigma_detectors(label_set)
-    assert expected
-
-    missing = expected - fired
-    assert not missing, f"scenario 6 (MFA fatigue): expected detectors not fired: {missing}"
-
-    for d in drafts:
-        if d.detector_key in expected:
-            print(
-                f"  FIRED {d.detector_key}: entity={d.entity_value} evidence_n={len(d.evidence_event_ids)}"
-            )
-
+# Scenarios 3 (password spray), 4 (impossible travel), and 6 (MFA fatigue) — the original M6
+# acceptance targets — were Okta-only and deleted along with that source. See module docstring.
 
 # ---------------------------------------------------------------------------- scenario 9 / 10
 
@@ -236,11 +177,10 @@ def test_scenario_10_benign_but_weird_false_positive_report(
     verification instructions: **report the false-positive count per rule, honestly, and never let
     a `critical`-level rule (this evaluator's highest-confidence tier) fire on it.**
 
-    Every count below is printed (`pytest -s`) rather than hidden, and the rules whose YAML
-    already documents an expected context-blind false-positive mode
-    (`non-browser-user-agent.yml`, `privilege-grant.yml`, `xsrc-login-without-proxy-history.yml`,
-    `mfa-factor-deactivated.yml` — all `level: low` or `level: medium`) are exactly the ones
-    allowed to fire here.
+    Every count below is printed (`pytest -s`) rather than hidden, and the rule whose YAML already
+    documents an expected context-blind false-positive mode (`non-browser-user-agent.yml`,
+    `level: low` — the org's own catalogued automation, service accounts and the pen-test
+    scanner, all genuinely non-browser) is exactly the one allowed to fire here.
     """
     analysis = analysis_factory("benign-but-weird")
     label_set, written = _generate_and_load(tmp_path, analysis, name="benign_but_weird", seed=110)

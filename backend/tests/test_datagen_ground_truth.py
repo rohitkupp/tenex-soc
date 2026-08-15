@@ -110,44 +110,11 @@ def test_c2_beaconing_line_numbers_match_the_domain_the_scenario_reports(tmp_pat
     assert len(found) > 0, "sanity: the domain must appear somewhere in the file"
 
 
-def test_impossible_travel_hostile_ip_only_appears_on_labelled_lines(tmp_path: Path) -> None:
-    written = _write("impossible_travel", tmp_path)
-    labels_path = next(p for p in written if p.suffix == ".json")
-    log_path = next(p for p in written if p.suffix == ".jsonl")
-    labels = json.loads(labels_path.read_text())
-    scenario = labels["scenarios"][0]
-
-    # notes: "... hostile sign-on from <city>, <country> (<ip>, AS<asn>) ..."
-    notes = scenario["notes"]
-    marker = "hostile sign-on from "
-    idx = notes.index(marker)
-    paren = notes.index("(", idx)
-    ip = notes[paren + 1 :].split(",")[0].strip()
-
-    found = _malicious_lines_containing(log_path, ip)
-    assert found == set(scenario["malicious_line_numbers"]), (
-        f"lines containing the hostile src_ip {ip!r} do not match malicious_line_numbers exactly"
-    )
-
-
-def test_password_spray_primary_entity_ip_matches_both_source_files(tmp_path: Path) -> None:
-    """Scenario 3 is the cross-source scenario: `primary_entity` is the src_ip that has to be the
-    join key between the okta and zscaler files docs/04's cross-source rules key on."""
-    written = _write("password_spray", tmp_path)
-    labels_paths = [p for p in written if p.suffix == ".json"]
-    assert len(labels_paths) == 2, "password_spray must emit one labels file per source"
-
-    for labels_path in labels_paths:
-        labels = json.loads(labels_path.read_text())
-        scenario = labels["scenarios"][0]
-        assert scenario["primary_entity"]["type"] == "src_ip"
-        ip = scenario["primary_entity"]["value"]
-        log_path = labels_path.with_name(labels["log_file"])
-        found = _malicious_lines_containing(log_path, ip)
-        assert found == set(scenario["malicious_line_numbers"]), (
-            f"{labels_path.name}: lines containing primary_entity src_ip {ip!r} do not match "
-            "malicious_line_numbers exactly"
-        )
+# `test_impossible_travel_hostile_ip_only_appears_on_labelled_lines` and `test_password_spray_
+# primary_entity_ip_matches_both_source_files` used to live here. Both scenarios were Okta-only
+# (password_spray was also the cross-source scenario, joining Okta and ZScaler on a shared
+# src_ip) and were deleted along with that source -- this project is narrowed to ZScaler web
+# proxy logs only.
 
 
 # ---------------------------------------------------------------------------- the two controls
@@ -158,7 +125,7 @@ def test_benign_but_weird_is_the_false_positive_control(tmp_path: Path) -> None:
     false_positive, and explicitly not required to correlate into one incident."""
     written = _write("benign_but_weird", tmp_path)
     labels_paths = [p for p in written if p.suffix == ".json"]
-    assert len(labels_paths) == 2, "benign_but_weird touches both proxy and identity (docs/11)"
+    assert len(labels_paths) == 1, "benign_but_weird is ZScaler-only now that Okta is removed"
     for labels_path in labels_paths:
         labels = json.loads(labels_path.read_text())
         scenario = labels["scenarios"][0]

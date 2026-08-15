@@ -12,9 +12,10 @@ class LogParser(Protocol):
         ...
 ```
 
-Every parser in this package (`app/parsers/zscaler.py`, `okta.py`, `cloudtrail.py`) implements
-this structurally — `LogParser` is `@runtime_checkable` so `isinstance(parser, LogParser)` works,
-but nothing here requires subclassing it.
+`app/parsers/zscaler.py` implements this structurally — `LogParser` is `@runtime_checkable` so
+`isinstance(parser, LogParser)` works, but nothing here requires subclassing it. ZScaler is the
+only registered parser today (Okta and CloudTrail were removed); the Protocol -- not a base class
+-- is what lets `app/parsers/registry.py` add a second one later without touching this file.
 """
 
 from __future__ import annotations

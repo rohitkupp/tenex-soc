@@ -7,10 +7,13 @@ This is the one stage this milestone makes **real**, per the assignment brief: s
 the object out of MinIO, parse with M3's registry (`app.parsers.registry.iter_events`),
 `COPY` into `events` (`app.storage.event_writer.bulk_copy_events`), record
 `analyses.parse_failure_rate`. One `StageWorker` instance runs per source type
-(`app/workers/parser_{zscaler,okta,cloudtrail}.py`), each bound to its own `q.parse.
-<source>` queue — matching docs/01's services table, where `parser-zscaler`,
-`parser-okta`, and `parser-cloudtrail` are three separate containers/queues, not one
-worker branching on `source_type`.
+(`app/workers/parser_zscaler.py` today — Okta and CloudTrail's sibling worker modules
+were removed along with those sources), each bound to its own `q.parse.<source>` queue
+— matching docs/01's services table, where each `parser-<source>` is its own
+container/queue, not one worker branching on `source_type`. Trivially one worker with
+one source registered, but nothing here is hardcoded to that count: adding a source
+back means adding its own `app/workers/parser_<source>.py` and a `PARSER_QUEUES` entry
+(`app.pipeline.contracts`), not restructuring this module.
 
 ## The fan-in
 
@@ -20,13 +23,13 @@ be the one that publishes the single `q.enrich` message once all of them are don
 `app.pipeline.state.decrement_pending_parsers`'s docstring is the correctness argument
 for why an atomic `UPDATE ... RETURNING` makes "the parser whose decrement observes the
 counter hit zero" a safe, race-free gate under real concurrency (proved live in
-`tests/test_pipeline_fanout.py`).
+`tests/test_pipeline_fanout.py`, N=1 today).
 
 ## Aggregating `parse_failure_rate` across concurrent parsers
 
-`analyses.parse_failure_rate` is one column, but up to three parsers write to it. A
-naive "each parser sets its own local failure rate" is a last-write-wins race that
-throws away whichever parsers finished first. Instead every parser atomically
+`analyses.parse_failure_rate` is one column, but potentially several parsers write to
+it. A naive "each parser sets its own local failure rate" is a last-write-wins race
+that throws away whichever parsers finished first. Instead every parser atomically
 accumulates its *line counts* into two `analyses.counters` keys — the public `events`
 key (lines successfully written) and an internal `_parse_failed_lines` key (lines that
 failed to parse) — using the same race-free `UPDATE ... RETURNING` pattern as the

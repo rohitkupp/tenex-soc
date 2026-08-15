@@ -106,8 +106,6 @@ def _cmd_benign(args: argparse.Namespace) -> int:
         seed=args.seed,
         org_fingerprint=org.fingerprint(),
         proxy_events=args.events,
-        okta_events=args.okta_events,
-        cloudtrail_events=args.cloudtrail_events,
         out=str(args.out),
     )
     t0 = time.perf_counter()
@@ -117,10 +115,6 @@ def _cmd_benign(args: argparse.Namespace) -> int:
         window,
         args.out,
         proxy_events=args.events,
-        okta_events=args.okta_events if args.okta_events is not None else max(1, args.events // 10),
-        cloudtrail_events=args.cloudtrail_events
-        if args.cloudtrail_events is not None
-        else max(1, args.events // 100),
         chunk_size=args.chunk_size,
     )
     elapsed = time.perf_counter() - t0
@@ -216,8 +210,6 @@ def _cmd_all(args: argparse.Namespace) -> int:
         window,
         corpus_dir,
         proxy_events=args.benign_events,
-        okta_events=max(1, args.benign_events // 10),
-        cloudtrail_events=max(1, args.benign_events // 100),
     )
     log.info("all.benign.done", counts=counts)
 
@@ -254,10 +246,6 @@ def build_parser() -> argparse.ArgumentParser:
     _add_org_args(p_benign)
     p_benign.add_argument(
         "--events", type=int, default=_DEFAULT_BENIGN_EVENTS, help="Target proxy event count"
-    )
-    p_benign.add_argument("--okta-events", type=int, default=None, help="Default: events // 10")
-    p_benign.add_argument(
-        "--cloudtrail-events", type=int, default=None, help="Default: events // 100"
     )
     p_benign.add_argument("--window-days", type=int, default=corpus.DEFAULT_WINDOW_DAYS)
     p_benign.add_argument(

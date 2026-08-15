@@ -7,8 +7,6 @@
 from __future__ import annotations
 
 from app.parsers.base import LogParser, ParseFailure, excerpt
-from app.parsers.cloudtrail import CloudTrailParser
-from app.parsers.okta import OktaParser
 from app.parsers.registry import (
     DEFAULT_PARSERS,
     DEFAULT_REGISTRY,
@@ -27,9 +25,7 @@ __all__ = [
     "DEFAULT_REGISTRY",
     "SNIFF_LINE_LIMIT",
     "SNIFF_THRESHOLD",
-    "CloudTrailParser",
     "LogParser",
-    "OktaParser",
     "ParseFailure",
     "ParseStats",
     "ParserRegistry",

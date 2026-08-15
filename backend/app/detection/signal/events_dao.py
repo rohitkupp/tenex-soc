@@ -46,10 +46,11 @@ def fetch_event_rows(session: Session, analysis_id: uuid.UUID) -> list[EventRow]
     """All events for one analysis, ordered by `ts` -- every detector needs its own group
     sorted chronologically, so sorting once here saves each of the four from re-sorting.
 
-    No `source_type` filter: `domain`/`src_ip` are proxy-only hot columns (docs/02) and are
-    simply `NULL` on identity/CloudTrail rows, so beaconing/DGA/rarity's `domain IS NOT NULL`
-    grouping and burst's per-`src_ip` pass naturally see only proxy traffic without this query
-    having to know that.
+    No `source_type` filter: `domain` is a proxy-only hot column (docs/02) and would simply be
+    `NULL` on a non-proxy source's rows if one were ever registered again (Okta and CloudTrail,
+    the only two this pipeline ever had, are both removed today), so beaconing/DGA/rarity's
+    `domain IS NOT NULL` grouping and burst's per-`src_ip` pass naturally see only proxy traffic
+    without this query having to know that.
     """
     stmt = (
         select(

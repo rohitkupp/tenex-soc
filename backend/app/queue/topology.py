@@ -73,13 +73,13 @@ from app.core.config import get_settings
 
 STAGES_EXCHANGE = "stages"
 
-# The eleven queues in docs/01's services table, named exactly as the "Consumes" column
-# gives them (minus the `q.` prefix, which every helper below adds back).
+# The queues in docs/01's services table, named exactly as the "Consumes" column gives
+# them (minus the `q.` prefix, which every helper below adds back). One parse queue today
+# (`parse.zscaler` — Okta and CloudTrail's sibling queues were removed along with those
+# sources); adding a source back means adding one more `parse.<source>` entry here.
 QUEUE_NAMES: tuple[str, ...] = (
     "orchestrator",
     "parse.zscaler",
-    "parse.okta",
-    "parse.cloudtrail",
     "enrich",
     "anonymize",
     "detect",

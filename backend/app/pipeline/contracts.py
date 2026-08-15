@@ -73,14 +73,15 @@ SKELETON_MESSAGE: dict[str, str] = {
     "tier2": "Tier 2 sync — pass-through skeleton, real signature sync lands at M14.",
 }
 
-# The `analyses.stage` value each queue's traffic represents. The three parser queues
-# all collapse to the single "parse" stage label — from the pipeline's perspective
-# (and the UI's) they are one stage fanned out across source types, not three stages.
+# The `analyses.stage` value each queue's traffic represents. The parser queue(s) all collapse to
+# the single "parse" stage label — from the pipeline's perspective (and the UI's) they are one
+# stage fanned out across source types, not one stage per source. ZScaler is the only source
+# today (Okta and CloudTrail were removed), so this collapses to one entry, but the label stays
+# keyed by queue name rather than hardcoded to "parse.zscaler" so adding a source back is "add one
+# more `parse.<source>` key here", not a structural change.
 QUEUE_STAGE_LABEL: dict[str, str] = {
     "orchestrator": "ingest",
     "parse.zscaler": "parse",
-    "parse.okta": "parse",
-    "parse.cloudtrail": "parse",
     "enrich": "enrich",
     "anonymize": "anonymize",
     "detect": "detect",
@@ -90,10 +91,13 @@ QUEUE_STAGE_LABEL: dict[str, str] = {
     "tier2": "tier2",
 }
 
+# Source type -> its parse queue. One entry today (ZScaler); this is the fan-out table
+# `app.pipeline.stages.orchestrator` iterates to publish one `StageMessage` per detected source
+# type, and `app.pipeline.stages.parse`'s fan-in gate (`pending_parsers`) is sized off its length
+# for a given upload -- both keep working unchanged with one entry, which is what makes adding a
+# second source back a one-line addition here rather than a redesign.
 PARSER_QUEUES: dict[str, str] = {
     "zscaler": "parse.zscaler",
-    "okta": "parse.okta",
-    "cloudtrail": "parse.cloudtrail",
 }
 
 DEFAULT_COUNTERS: dict[str, int] = {

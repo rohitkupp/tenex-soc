@@ -69,11 +69,11 @@ async def test_stages_exchange_exists(channel: AbstractChannel) -> None:
 
 
 async def test_queue_names_cover_docs_01_services_table() -> None:
+    # One parse queue today (`parse.zscaler`) -- Okta and CloudTrail's sibling queues were
+    # removed along with those sources; this project is narrowed to ZScaler web proxy logs only.
     assert set(QUEUE_NAMES) == {
         "orchestrator",
         "parse.zscaler",
-        "parse.okta",
-        "parse.cloudtrail",
         "enrich",
         "anonymize",
         "detect",

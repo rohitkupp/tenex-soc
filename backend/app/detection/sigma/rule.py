@@ -1,28 +1,29 @@
 """The Sigma rule schema: what a `*.yml` file in `app/detection/rules/` must contain, and how it
 loads into the small typed model `app.detection.sigma.compiler` compiles to SQL.
 
-docs/04's worked example is the schema this follows, field for field:
+docs/04's worked example is the schema this follows, field for field — one of the seven real
+ZScaler rules under `app/detection/rules/` (`large-post-to-new-domain.yml`), not a hypothetical:
 
 ```yaml
-title: Okta MFA fatigue
-id: okta-mfa-fatigue
-status: experimental
+title: Large POST to uncategorized or newly-registered domain
+id: large-post-to-new-domain
+status: stable
 logsource:
-  product: okta
-  service: system
+  product: zscaler
+  service: web
 detection:
-  failures:
-    activity_name: 'user.authentication.auth_via_mfa'
-    status: 'FAILURE'
-  success:
-    activity_name: 'user.authentication.auth_via_mfa'
-    status: 'SUCCESS'
-  timeframe: 15m
-  condition: failures | count() by principal >= 5 and success
+  large_upload:
+    http_method: 'POST'
+    bytes_out|gte: 10000000
+  uncategorized_or_nrd:
+    url_category:
+      - 'Miscellaneous or Unknown'
+      - 'Newly Registered and Revived Domains'
+  condition: large_upload and uncategorized_or_nrd
 level: high
 tags:
-  - attack.credential_access
-  - attack.t1621
+  - attack.exfiltration
+  - attack.t1567
 ```
 
 Two keys this pipeline adds on top of upstream Sigma, because docs/02's `signals` table needs
@@ -114,7 +115,7 @@ class DetectionBlock:
 
 @dataclass(frozen=True, slots=True)
 class LogSource:
-    product: str  # "okta" | "zscaler" | "okta+zscaler" (cross-source)
+    product: str  # "zscaler" -- the only registered source; Okta and CloudTrail were removed
     service: str | None = None
 
 

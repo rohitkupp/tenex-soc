@@ -6,7 +6,7 @@ class StageMessage(BaseModel):
     tenant_id: UUID
     stage: str
     storage_ref: str | None      # s3://bucket/key for raw or parsed artifacts
-    source_type: str | None      # zscaler | okta | cloudtrail
+    source_type: str | None      # zscaler (the only registered source; Okta/CloudTrail removed)
     attempt: int = 0
     emitted_at: datetime
 ```

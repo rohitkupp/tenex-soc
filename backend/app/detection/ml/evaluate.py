@@ -63,17 +63,15 @@ from app.detection.ml.features import build_entity_window_features
 
 log = get_logger(__name__)
 
-# docs/11's ten scenarios, verbatim key order from that doc's table. Hardcoded rather than
+# docs/11's six scenarios (down from ten -- password_spray, impossible_travel,
+# account_takeover_chain, and mfa_fatigue were Okta/identity-only and removed along with that
+# source), verbatim key order from that doc's table. Hardcoded rather than
 # `datagen.scenarios.scenario_keys()` -- `app.detection.ml` does not import `datagen` (module
 # docstrings across this package explain why); `tests/test_ml_evaluate.py` asserts this tuple
 # stays in sync with the registered scenario keys as an independent audit.
 SCENARIO_KEYS: tuple[str, ...] = (
     "c2_beaconing",
     "data_exfiltration",
-    "password_spray",
-    "impossible_travel",
-    "account_takeover_chain",
-    "mfa_fatigue",
     "insider_mass_download",
     "low_and_slow_exfil",
     "prompt_injection_canary",
@@ -121,7 +119,7 @@ def _load_scenario(
 ) -> tuple[pd.DataFrame, npt.NDArray[np.int64], dict[str, Any]]:
     """`(df, y, ground_truth_summary)` for one scenario directory. `ground_truth_summary` carries
     `expected_detectors`/`technique`/notes, straight from `.labels.json`, for the report."""
-    log_files = sorted(scenario_dir.glob("*.log")) + sorted(scenario_dir.glob("*.jsonl"))
+    log_files = sorted(scenario_dir.glob("*.log"))
     label_files = sorted(scenario_dir.glob("*.labels.json"))
 
     malicious_by_file: dict[str, set[int]] = {}
@@ -141,7 +139,7 @@ def _load_scenario(
                 }
             )
 
-    paths = {("zscaler" if p.suffix == ".log" else "okta"): p for p in log_files}
+    paths = {"zscaler": log_files[0]} if log_files else {}
     events = load_ml_events(paths)
     df = build_entity_window_features(events)
     all_malicious: set[int] = set()

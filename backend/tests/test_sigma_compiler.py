@@ -21,13 +21,13 @@ from app.detection.sigma.rule import RuleLoadError, load_rule_file
 from app.models.analysis import Analysis
 from app.storage.event_writer import bulk_copy_events
 from tests.conftest import make_analysis, make_tenant, make_user
-from tests.fixtures.rules.events import T0, okta_event
+from tests.fixtures.rules.events import T0, zscaler_event
 
 _MINIMAL_RULE = """
 title: t
 id: minimal-presence
 status: experimental
-logsource: {{product: okta}}
+logsource: {{product: zscaler}}
 detection:
   sel:
     activity_name: '{event_type}'
@@ -65,7 +65,7 @@ def test_rule_referencing_unknown_field_raises_at_evaluation(
 title: t
 id: bad-field
 status: experimental
-logsource: {product: okta}
+logsource: {product: zscaler}
 detection:
   sel:
     this_field_does_not_exist: 'x'
@@ -87,10 +87,10 @@ def test_condition_referencing_undefined_block_raises(tmp_path: Path, analysis: 
 title: t
 id: bad-block
 status: experimental
-logsource: {product: okta}
+logsource: {product: zscaler}
 detection:
   sel:
-    activity_name: 'user.session.start'
+    activity_name: 'allowed'
   condition: not_a_real_block
 level: medium
 tags: [attack.t1078]
@@ -111,14 +111,14 @@ def test_unsupported_condition_shape_raises(tmp_path: Path, analysis: Analysis) 
 title: t
 id: double-agg
 status: experimental
-logsource: {product: okta}
+logsource: {product: zscaler}
 detection:
   a:
-    activity_name: 'user.session.start'
-    status: 'FAILURE'
+    activity_name: 'blocked'
+    status: 'blocked'
   b:
-    activity_name: 'user.authentication.auth_via_mfa'
-    status: 'FAILURE'
+    activity_name: 'allowed'
+    status: 'allowed'
   timeframe: 15m
   condition: a | count() by principal >= 3 and b | count() by principal >= 3
 level: medium
@@ -139,12 +139,15 @@ def test_evaluation_is_a_single_sql_round_trip_regardless_of_event_count(
     real SQLAlchemy event hook rather than trusting the implementation not to have snuck in a
     second query: evaluating a presence rule over 500 events takes exactly one round trip."""
     rule_path = tmp_path / "presence.yml"
-    rule_path.write_text(_MINIMAL_RULE.format(event_type="user.session.start"))
+    rule_path.write_text(_MINIMAL_RULE.format(event_type="allowed"))
     rule = load_rule_file(rule_path)
 
     rows = [
-        okta_event(
-            "same.user@corp.example", T0 + timedelta(seconds=i), "user.session.start", "SUCCESS"
+        zscaler_event(
+            "same.user@corp.example",
+            T0 + timedelta(seconds=i),
+            "example.com",
+            disposition="allowed",
         )
         for i in range(500)
     ]

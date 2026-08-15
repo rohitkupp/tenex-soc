@@ -1,15 +1,15 @@
 """Synthetic-but-realistic `events` rows for the Sigma rule fixtures (docs/04: "Each rule needs a
 positive and a negative fixture in tests/fixtures/rules/").
 
-These builders produce the same shape `app/parsers/{okta,zscaler}.py` + `hot_columns()` +
+`zscaler_event` produces the same shape `app/parsers/zscaler.py` + `hot_columns()` +
 `model_dump(mode="json")` actually write into `events.ocsf` (per `app/pipeline/stages/parse.py`:
 `ocsf=result.model_dump(mode="json")`) — every key a rule's YAML can reference through
 `app.detection.sigma.fields` is present here under its real OCSF path, not a shortcut shape a
-fixture-only code path would accept but production data never would. Building them by hand
-(rather than running the real parser over a hand-written log line) is a deliberate simplification
-this test package owns the right to make — `tests/test_parsers_okta.py`/`test_parsers_zscaler.py`
-already cover the parser's own line -> OCSF fidelity; what these fixtures need to prove is that
-the *evaluator* reacts correctly to a given OCSF shape, not that the parser produces it.
+fixture-only code path would accept but production data never would. Building it by hand (rather
+than running the real parser over a hand-written log line) is a deliberate simplification this
+test package owns the right to make — `tests/test_parsers_zscaler.py` already covers the parser's
+own line -> OCSF fidelity; what these fixtures need to prove is that the *evaluator* reacts
+correctly to a given OCSF shape, not that the parser produces it.
 """
 
 from __future__ import annotations
@@ -23,52 +23,6 @@ from app.storage.event_writer import SimpleEventRecord
 # without importing `datetime.now()` (determinism, per CLAUDE.md's "seeded RNG... same input
 # file must produce the same signals").
 T0 = datetime.fromisoformat("2026-03-02T12:00:00+00:00")
-
-
-def okta_event(
-    principal: str,
-    ts: datetime,
-    event_type: str,
-    status: str,
-    *,
-    src_ip: str = "203.0.113.5",
-    country: str | None = None,
-    city: str | None = None,
-    lat: float | None = None,
-    lon: float | None = None,
-    reason: str | None = None,
-) -> SimpleEventRecord:
-    """One Okta System Log event, in `Authentication` (3002) OCSF shape."""
-    src_endpoint: dict[str, Any] = {"ip": src_ip}
-    if country is not None or city is not None or lat is not None:
-        location: dict[str, Any] = {"country": country, "city": city}
-        if lat is not None or lon is not None:
-            location["coordinates"] = {"lat": lat, "lon": lon}
-        src_endpoint["location"] = location
-    ocsf: dict[str, Any] = {
-        "class_uid": 3002,
-        "category_uid": 3,
-        "activity_name": event_type,
-        "time": ts.isoformat(),
-        "source_type": "okta",
-        "line_no": 1,
-        "event_key": f"{event_type}:{status}",
-        "actor": {"user": {"email_addr": principal}},
-        "src_endpoint": src_endpoint,
-        "unmapped": {},
-        "status": status,
-        "status_detail": reason,
-    }
-    return SimpleEventRecord(
-        ts=ts,
-        source_type="okta",
-        raw_line_no=1,
-        ocsf_class_uid=3002,
-        ocsf=ocsf,
-        principal=principal,
-        src_ip=src_ip,
-        action=status,
-    )
 
 
 _DEFAULT_UA = (

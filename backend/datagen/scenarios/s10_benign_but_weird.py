@@ -4,11 +4,16 @@ Every other scenario in this package answers "can the pipeline find the attack".
 answers the question docs/11 says matters just as much: "does the pipeline leave sanctioned,
 merely-unusual behavior alone". `expected_detectors` is empty and `expected_disposition` is
 `false_positive` on purpose — the eval's `fp_rate` (docs/12) is measured against exactly this
-kind of traffic, and a detection stack that cannot tell it apart from the other nine scenarios
-has not learned the attack, it has learned "unusual == malicious".
+kind of traffic, and a detection stack that cannot tell it apart from the other scenarios has not
+learned the attack, it has learned "unusual == malicious".
 
 Three independent, unrelated motifs are bundled into one scenario because each one targets a
-different layer and none of them should correlate with either of the others:
+different layer and none of them should correlate with either of the others. All three are now
+expressed purely over the ZScaler proxy — Okta (the identity source the onboarding and pen-test
+motifs used to also carry) was removed, narrowing this project to ZScaler web proxy logs only;
+each motif keeps its original shape translated onto proxy traffic rather than being dropped, so
+this is still a three-pronged, genuinely hard false-positive control, not a weaker one-and-a-half
+prong version of it.
 
 * **Regular-interval backup job** — machine-regular interval, automation user agent, large
   outbound transfer to one host, anchored at a nightly start hour. That is the *literal* feature
@@ -21,24 +26,20 @@ different layer and none of them should correlate with either of the others:
   slow-cadence account. If a detector needs the destination to be rare or the actor to be human
   to stay quiet, it will fire here — that is the point of shipping this alongside scenario 1
   (`c2_beaconing`) rather than instead of it.
-* **New-hire onboarding burst** — an IT admin runs a provisioning checklist (app assignments,
-  a privilege grant) against one employee in a few minutes, and that employee's own browser then
-  visits a couple dozen popular, org-wide-common domains it has never touched before. Every
-  ingredient of account-takeover-after-privilege-escalation is present *except* the one thing
-  that makes it an attack: the grants originate from an admin department member's own normal
-  device and address (docs/04's rule inventory keys admin events on `ADMIN_DEPARTMENTS`
-  specifically so this stays quiet), and the "new" domains are popular sites the *user* has not
-  visited, not sites the *organization* has not visited — `signal.rarity` and
-  `signal.newly_registered_domain` are calibrated on org-wide history, not one employee's, so
-  neither should trip.
-* **Scheduled pen-test window** — an authorized tester in `ADMIN_DEPARTMENTS` runs failed
-  sign-on attempts against a handful of principals from their own known workstation. Shaped like
-  `sigma.password_spray` on every axis it can be shaped on without becoming an actual attack: it
-  deliberately sits under *two* of the three thresholds docs/04 states for that rule
-  (`>= 10 distinct principals` and `<= 30m window`) rather than one, so a knob sweep that nudges
-  either margin does not accidentally cross into "should have fired". It also never succeeds, so
-  there is no compromised session for `sigma.first_login_new_country` or the no-prior-proxy-
-  history cross-source rule to key on either.
+* **New-hire onboarding burst** — a burst of new-domain browsing that looks like reconnaissance
+  but is a new hire's first week: a couple dozen popular, org-wide-common domains a specific
+  employee has never personally visited before, browsed in a short session from their own device
+  and address. The "new" domains are sites the *user* has not visited, not sites the
+  *organization* has not visited — `signal.rarity` and `signal.newly_registered_domain` are
+  calibrated on org-wide history, not one employee's, so neither should trip on a burst of
+  otherwise-ordinary browsing.
+* **Scheduled pen-test window** — an automated scan pattern that looks like a bot but is a
+  scheduled, authorized security assessment: a tester in `_TESTER_DEPARTMENTS` sweeps a handful
+  of the org's own sanctioned hosts with a security-scanner user agent, many distinct paths in a
+  tight burst, mixed 200/403/404 responses — shaped like `signal.burst` and
+  `non-browser-user-agent` on purpose, but every target is already a SaaS app the org runs (never
+  a rare, newly-registered, or security-category destination) and the whole sweep runs from the
+  tester's own known address inside a pre-approved change window.
 
 All three sub-cases are `ctx.add(..., malicious=False)`: the events are real, scenario-tagged log
 lines an eval harness can inspect, but none of them is ground truth for an attack, so
@@ -54,7 +55,6 @@ import math
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
-from datagen.emitters.okta import ADMIN_DEPARTMENTS, OktaEmitter, app_target, user_target
 from datagen.emitters.zscaler import ZScalerEmitter
 from datagen.scenarios import register_scenario
 from datagen.types import EntityRef, GroundTruth, Scenario, ScenarioContext, SourceType
@@ -67,19 +67,17 @@ if TYPE_CHECKING:
 
 __all__ = ["BenignButWeirdScenario"]
 
-# Onboarding checklist apps an IT admin assigns to a new hire, cycled in order so the notes are
-# reproducible regardless of how many grants are requested.
-_ONBOARDING_APPS: tuple[str, ...] = (
-    "Slack",
-    "Google Workspace",
-    "Workday",
-    "Zoom",
-    "Atlassian",
-    "GitHub",
-)
+# Departments whose members plausibly run IT-admin or authorized security-test traffic. This used
+# to live on the Okta emitter (`ADMIN_DEPARTMENTS`, gating which principals' admin events stayed
+# quiet against the identity rules); kept here, locally, now that only the pen-test sub-case below
+# still needs an "authorized tester" concept and Okta itself is gone.
+_TESTER_DEPARTMENTS: frozenset[str] = frozenset({"IT", "Security"})
 
 # A file extension mix a real backup agent actually writes, so the URL is not a giveaway either.
 _BACKUP_EXTENSIONS: tuple[str, ...] = ("tar.zst", "sql.gz", "img.zst")
+
+_SCAN_STATUS_CODES: tuple[int, ...] = (200, 403, 404)
+_SCAN_STATUS_WEIGHTS: tuple[float, ...] = (0.55, 0.25, 0.20)
 
 
 def _local_start(
@@ -104,14 +102,14 @@ def _local_start(
 class BenignButWeirdScenario(Scenario):
     key = "benign_but_weird"
     technique = None
-    sources = (SourceType.ZSCALER, SourceType.OKTA)
+    sources = (SourceType.ZSCALER,)
     expected_detectors = ()
     expected_disposition = "false_positive"
     must_correlate_into_one_incident = False
     description = (
-        "Three unrelated sanctioned motifs shaped like attacks — a nightly backup job, a "
-        "new-hire onboarding burst, and a scheduled pen-test window. None of it is malicious; "
-        "this is the docs/11 false-positive control."
+        "Three unrelated sanctioned motifs shaped like attacks, all over the proxy — a nightly "
+        "backup job, a new-hire onboarding browsing burst, and a scheduled pen-test scan. None "
+        "of it is malicious; this is the docs/11 false-positive control."
     )
 
     def __init__(
@@ -126,15 +124,14 @@ class BenignButWeirdScenario(Scenario):
         backup_local_hour: float = 2.0,
         backup_mean_chunk_mb: float = 90.0,
         backup_chunk_sigma: float = 0.55,
-        # new-hire onboarding (account-takeover shape)
+        # new-hire onboarding browsing burst (reconnaissance shape)
         onboarding_domains: int = 24,
-        onboarding_grants: int = 6,
         onboarding_duration_h: float = 2.0,
         onboarding_start_fraction: float = 0.5,
         onboarding_local_hour: float = 10.0,
-        # scheduled pen-test window (spray shape)
-        pentest_principals: int = 8,
-        pentest_attempts: int = 2,
+        # scheduled pen-test scan (bot/scan shape)
+        pentest_paths: int = 16,
+        pentest_passes: int = 2,
         pentest_duration_min: float = 90.0,
         pentest_start_fraction: float = 0.72,
         pentest_local_hour: float = 11.0,
@@ -145,12 +142,11 @@ class BenignButWeirdScenario(Scenario):
         self.backup_mean_chunk_mb = backup_mean_chunk_mb
         self.backup_chunk_sigma = backup_chunk_sigma
         self.onboarding_domains = onboarding_domains
-        self.onboarding_grants = onboarding_grants
         self.onboarding_duration_h = onboarding_duration_h
         self.onboarding_start_fraction = onboarding_start_fraction
         self.onboarding_local_hour = onboarding_local_hour
-        self.pentest_principals = pentest_principals
-        self.pentest_attempts = pentest_attempts
+        self.pentest_paths = pentest_paths
+        self.pentest_passes = pentest_passes
         self.pentest_duration_min = pentest_duration_min
         self.pentest_start_fraction = pentest_start_fraction
         self.pentest_local_hour = pentest_local_hour
@@ -251,77 +247,34 @@ class BenignButWeirdScenario(Scenario):
     # ------------------------------------------------------------------ (2) new-hire onboarding
 
     def _onboarding(self, ctx: ScenarioContext) -> str:
-        """IT provisions one employee, who then browses domains new to them but not to the org.
+        """A new hire's own browser visits domains new to them but not to the org.
 
-        The admin side stays quiet because it comes from an `ADMIN_DEPARTMENTS` member's own
-        device and address — the exact discriminator docs/04 gives that rule. The browsing side
-        stays quiet because `signal.rarity` and NRD are org-wide statistics: popular sites the
-        organization already knows are not rare just because this one employee is new.
+        Stays quiet because `signal.rarity` and NRD are org-wide statistics: popular sites the
+        organization already knows are not rare just because this one employee is new to them.
         """
         rng = ctx.rng.substream("benign_but_weird:onboarding")
-        admin_pool = [u for u in ctx.org.users if u.department in ADMIN_DEPARTMENTS] or list(
-            ctx.org.users
-        )
-        admin = rng.choice(admin_pool)
-        new_hire = rng.choice([u for u in ctx.org.users if u != admin] or list(ctx.org.users))
+        new_hire = rng.choice(ctx.org.users)
+        new_hire_rng = ctx.user_rng(new_hire)
 
-        okta = OktaEmitter()
-        admin_rng = ctx.user_rng(admin)
-        admin_client = okta.client_for(admin, admin_rng)
         start = _local_start(
             ctx,
-            admin,
+            new_hire,
             start_fraction=self.onboarding_start_fraction,
             local_hour=self.onboarding_local_hour,
             duration_h=self.onboarding_duration_h,
         )
-        step = (self.onboarding_duration_h * 3600.0) / max(self.onboarding_grants, 1)
-
-        grant_events = []
-        ts = start
-        for i in range(self.onboarding_grants):
-            if i == self.onboarding_grants - 1:
-                event_type, targets = "user.account.privilege.grant", (user_target(new_hire),)
-            else:
-                app = _ONBOARDING_APPS[i % len(_ONBOARDING_APPS)]
-                event_type = "application.user_membership.add"
-                targets = (user_target(new_hire), app_target(app))
-            grant_events.append(
-                okta.build_event(
-                    user=admin,
-                    ts=ctx.window.clamp(ts),
-                    event_type=event_type,
-                    rng=admin_rng,
-                    client=admin_client,
-                    targets=targets,
-                )
-            )
-            ts += timedelta(seconds=admin_rng.jitter(step, 0.3))
-        okta.inject(ctx, grant_events, malicious=False)
-
-        new_hire_rng = ctx.user_rng(new_hire)
-        session = okta.login_session(
-            new_hire,
-            start=ctx.window.clamp(start + timedelta(minutes=5)),
-            rng=new_hire_rng,
-            mfa=True,
-            n_sso=2,
-            failures=0,
-        )
-        okta.inject(ctx, session, malicious=False)
 
         proxy = ZScalerEmitter()
         candidates = [d for d in ctx.models.domains.head(400) if d not in new_hire.domain_affinity]
         picked = new_hire_rng.sample(candidates, self.onboarding_domains)
-        browse_start = start + timedelta(minutes=20)
-        span_s = max(self.onboarding_duration_h * 3600.0 - 1200.0, 60.0)
+        span_s = max(self.onboarding_duration_h * 3600.0 - 60.0, 60.0)
         offsets = sorted(new_hire_rng.uniform(0.0, span_s) for _ in picked)
         for domain, offset in zip(picked, offsets, strict=True):
             kind = ctx.models.response_sizes.sample_kind(new_hire_rng)
             proxy.inject(
                 ctx,
                 user=new_hire,
-                ts=ctx.window.clamp(browse_start + timedelta(seconds=offset)),
+                ts=ctx.window.clamp(start + timedelta(seconds=offset)),
                 host=domain,
                 url="/",
                 method="GET",
@@ -331,33 +284,30 @@ class BenignButWeirdScenario(Scenario):
             )
 
         return (
-            f"{admin.username} ({admin.department}) provisioned {new_hire.username} with "
-            f"{self.onboarding_grants} grants from {admin_client.ip}; {new_hire.username} then "
-            f"visited {len(picked)} org-common domains new to them starting "
-            f"{browse_start.isoformat()}"
+            f"{new_hire.username} ({new_hire.department}) visited {len(picked)} org-common "
+            f"domains new to them starting {start.isoformat()}, own device and address"
         )
 
     # ------------------------------------------------------------------ (3) scheduled pen-test
 
     def _pentest(self, ctx: ScenarioContext) -> str:
-        """Failed sign-ons against a handful of principals from a known internal address.
-
-        Stays under two independent margins of the `sigma.password_spray` threshold
-        (`< 10 distinct principals` *and* `> 30m window`) rather than one, and never succeeds, so
-        there is no compromised session for the new-country or no-prior-proxy-history rules to
-        key on either.
+        """A scheduled, authorized web-app scan: many distinct paths in a short burst from a
+        known security-team address, automation UA, mixed status codes -- shaped like
+        `signal.burst` and `non-browser-user-agent` but never touching a rare, newly-registered,
+        or security-category destination, and confined to a pre-approved change window.
         """
         rng = ctx.rng.substream("benign_but_weird:pentest")
-        okta = OktaEmitter()
-        tester_pool = [u for u in ctx.org.users if u.department in ADMIN_DEPARTMENTS] or list(
+        tester_pool = [u for u in ctx.org.users if u.department in _TESTER_DEPARTMENTS] or list(
             ctx.org.users
         )
         tester = rng.choice(tester_pool)
         tester_rng = ctx.user_rng(tester)
-        client = okta.client_for(tester, tester_rng)
+        proxy = ZScalerEmitter()
+        scanner_ua = ctx.models.user_agents.sample_automation(
+            tester_rng.fresh("pentest-ua")
+        ).user_agent
 
-        n_principals = min(self.pentest_principals, len(ctx.org.users))
-        victims = ctx.org.pick_users(rng, n_principals)
+        targets = [a.domain for a in ctx.org.saas_apps] or [ctx.models.domains.sample(tester_rng)]
         start = _local_start(
             ctx,
             tester,
@@ -365,31 +315,35 @@ class BenignButWeirdScenario(Scenario):
             local_hour=self.pentest_local_hour,
             duration_h=self.pentest_duration_min / 60.0,
         )
-
-        total = max(1, self.pentest_attempts * len(victims))
+        total = max(1, self.pentest_paths * self.pentest_passes)
         step = (self.pentest_duration_min * 60.0) / total
-        events = []
-        at = start
-        for _ in range(self.pentest_attempts):
-            for victim in victims:
-                ts = ctx.window.clamp(at + timedelta(seconds=rng.uniform(0.0, step * 0.6)))
-                events.append(
-                    okta.build_event(
-                        user=victim,
-                        ts=ts,
-                        event_type="user.session.start",
-                        outcome="FAILURE",
-                        rng=rng,
-                        client=client,
-                        reason="Authorized penetration test — pre-approved change CR",
-                    )
+
+        ts = start
+        n_requests = 0
+        for _ in range(self.pentest_passes):
+            for i in range(self.pentest_paths):
+                host = targets[i % len(targets)]
+                status = tester_rng.weighted_choice(_SCAN_STATUS_CODES, _SCAN_STATUS_WEIGHTS)
+                proxy.inject(
+                    ctx,
+                    user=tester,
+                    ts=ctx.window.clamp(ts),
+                    host=host,
+                    url=f"/scan/{tester_rng.hex_token(4)}",
+                    method="GET",
+                    status=status,
+                    user_agent=scanner_ua,
+                    bytes_out=tester_rng.randint(200, 900),
+                    bytes_in=tester_rng.randint(200, 3000),
+                    malicious=False,
                 )
-                at += timedelta(seconds=step)
-        okta.inject(ctx, events, malicious=False)
+                n_requests += 1
+                ts += timedelta(seconds=tester_rng.uniform(0.0, step * 0.6))
 
         return (
-            f"{tester.username} ({tester.department}) ran {self.pentest_attempts} attempts "
-            f"against {len(victims)} principals from {client.ip} (own address) over "
-            f"{self.pentest_duration_min:.0f}m starting {start.isoformat()}: under both the "
-            "principal-count and time-window spray margins, no successes"
+            f"{tester.username} ({tester.department}) ran {self.pentest_passes} scan pass(es) "
+            f"({n_requests} requests) across {len(targets)} sanctioned hosts from "
+            f"{tester.office_ip} with a security-scanner UA, over {self.pentest_duration_min:.0f}m "
+            f"starting {start.isoformat()}: pre-approved change window, no security-category or "
+            "malicious traffic"
         )

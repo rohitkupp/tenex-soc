@@ -152,11 +152,11 @@ class ZScalerParser:
 
         # No header in this block (a mid-file chunk of a mixed export, or a header outside the
         # sniff window) -- fall back to a structural ratio over data rows. Only delimited rows
-        # with enough fields count as *candidates* at all (the denominator): a JSON line from a
-        # mixed sample (Okta/CloudTrail) or a short unrelated line must not dilute this ratio the
-        # way an unconditional `total += 1` over every sample line would -- see
-        # `app/parsers/_json_lines.py`'s docstring for the mixed-export failure mode this
-        # avoids, which is the same shape of bug on the delimited side.
+        # with enough fields count as *candidates* at all (the denominator): a JSON line, or a
+        # short unrelated line, must not dilute this ratio the way an unconditional `total += 1`
+        # over every sample line would -- the mixed-export failure mode a JSON-line-based source
+        # (Okta, CloudTrail; both removed) used to guard against symmetrically on its own side,
+        # now only relevant here since ZScaler is the only registered parser.
         hits, total = 0, 0
         for line in lines:
             if _looks_like_json_object(line):
@@ -310,8 +310,9 @@ def _parse_datetime(raw: str) -> datetime | None:
 
 
 def _looks_like_json_object(line: str) -> bool:
-    """Cheap-then-exact check that `line` is a JSON object line (an Okta/CloudTrail candidate,
-    never a ZScaler one) -- used to keep such lines out of the sniff fallback's denominator."""
+    """Cheap-then-exact check that `line` is a JSON object line (never a ZScaler one -- a
+    JSON-line source's candidate, back when Okta/CloudTrail were registered parsers) -- used to
+    keep such lines out of the sniff fallback's denominator."""
     stripped = line.strip()
     if not (stripped.startswith("{") and stripped.endswith("}")):
         return False

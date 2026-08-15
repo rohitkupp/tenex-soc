@@ -9,10 +9,11 @@ so every rule gets it for free and no rule file ever embeds a `->>'foo'` operato
 Three tiers, cheapest first:
 
 1. **Hot columns** (`app.models.event.Event`) — indexed, and several OCSF fields are already
-   projected onto one by `hot_columns()` at parse time (docs/03): `action` carries the Okta
-   `status` (SUCCESS/FAILURE/...) *and* the ZScaler `disposition` (allowed/blocked/...) — two
-   OCSF field names, one indexed column — so `status`/`disposition` both resolve to `action`
-   rather than a slower `ocsf->>'status'` lookup.
+   projected onto one by `hot_columns()` at parse time (docs/03): `action` carries the ZScaler
+   `disposition` (allowed/blocked/...) — and, before Okta was removed, carried its `status`
+   (SUCCESS/FAILURE/...) the same way, which is why `status`/`disposition` still both resolve to
+   `action` below rather than a slower `ocsf->>'status'` lookup, and why the mapping stays
+   name-for-name rather than collapsed to a single alias now that only one source feeds it.
 2. **`ocsf` JSONB paths** — anything docs/03's mappers put in the OCSF-fidelity blob but not in a
    hot column: geo coordinates, the malware/threat block, `unmapped.*` (ZScaler's
    `url_supercategory`, which is exactly what the "malicious URL category" rule keys on per
@@ -92,7 +93,11 @@ _HOT_COLUMNS: Final[dict[str, str]] = {
 # ---------------------------------------------------------------------------- ocsf JSONB paths
 
 # Sigma field name -> path segments into `Event.ocsf` (a `model_dump(mode="json")` of the
-# Pydantic OCSF event — see app/ocsf/base.py, app/ocsf/{authentication,http_activity}.py).
+# Pydantic OCSF event — see app/ocsf/base.py, app/ocsf/http_activity.py). A few of these paths
+# (`auth_protocol`, `status_detail`, and the geo/ASN fields) were populated only by Okta's now-
+# removed Authentication (3002) mapping; ZScaler's HTTPActivity never sets them, so they resolve
+# to SQL `NULL` today rather than being pruned -- a future identity source can repopulate them
+# without this table changing shape.
 _OCSF_TEXT_PATHS: Final[dict[str, tuple[str, ...]]] = {
     "activity_name": ("activity_name",),
     "status_detail": ("status_detail",),

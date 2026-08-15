@@ -140,10 +140,10 @@ def test_bulk_copy_events_round_trips_every_column(analysis: Analysis) -> None:
 def test_bulk_copy_events_leaves_nullable_hot_columns_null(analysis: Analysis) -> None:
     record = SimpleEventRecord(
         ts=datetime.now(UTC),
-        source_type="okta",
+        source_type="zscaler",
         raw_line_no=1,
-        ocsf_class_uid=3002,
-        ocsf={"eventType": "user.session.start"},
+        ocsf_class_uid=4002,
+        ocsf={"activity_name": "allowed"},
     )
     conn = _raw_connection()
     try:
@@ -173,9 +173,9 @@ def test_bulk_copy_events_returns_the_row_count(analysis: Analysis) -> None:
         for i in range(137):
             yield SimpleEventRecord(
                 ts=datetime.now(UTC),
-                source_type="cloudtrail",
+                source_type="zscaler",
                 raw_line_no=i,
-                ocsf_class_uid=6003,
+                ocsf_class_uid=4002,
                 ocsf={"i": i},
             )
 
@@ -201,7 +201,7 @@ def test_bulk_copy_events_returns_the_row_count(analysis: Analysis) -> None:
 
 def test_simple_event_record_satisfies_the_event_record_protocol() -> None:
     record = SimpleEventRecord(
-        ts=datetime.now(UTC), source_type="okta", raw_line_no=0, ocsf_class_uid=3002, ocsf={}
+        ts=datetime.now(UTC), source_type="zscaler", raw_line_no=0, ocsf_class_uid=4002, ocsf={}
     )
     assert isinstance(record, EventRecord)
 
@@ -210,16 +210,16 @@ def test_simple_event_record_from_mapping_round_trips() -> None:
     ts = datetime.now(UTC)
     mapping = {
         "ts": ts,
-        "source_type": "okta",
+        "source_type": "zscaler",
         "raw_line_no": 3,
-        "ocsf_class_uid": 3002,
+        "ocsf_class_uid": 4002,
         "ocsf": {"a": 1},
         "principal": "u_x",
         "action": "SUCCESS",
     }
     record = SimpleEventRecord.from_mapping(mapping)
     assert record.ts == ts
-    assert record.source_type == "okta"
+    assert record.source_type == "zscaler"
     assert record.principal == "u_x"
     assert record.action == "SUCCESS"
     assert record.domain is None
@@ -228,7 +228,7 @@ def test_simple_event_record_from_mapping_round_trips() -> None:
 
 def test_simple_event_record_from_mapping_raises_on_missing_required_field() -> None:
     with pytest.raises(KeyError):
-        SimpleEventRecord.from_mapping({"source_type": "okta"})
+        SimpleEventRecord.from_mapping({"source_type": "zscaler"})
 
 
 # ------------------------------------------------------------ streaming behaviour

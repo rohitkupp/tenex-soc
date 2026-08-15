@@ -68,7 +68,13 @@ class SaasApp:
 
 
 DEFAULT_SAAS_APPS: tuple[SaasApp, ...] = (
-    SaasApp("Okta", "okta.com", "identity"),
+    # A workforce identity provider the org's employees browse to over the proxy (SSO landing
+    # pages, MFA prompts) — modeling that this org *uses* an IdP as a SaaS destination, not that
+    # this pipeline *ingests* one as a log source. Named "OneLogin" rather than "Okta" on purpose:
+    # this project narrowed to ZScaler web proxy logs only, and Okta is no longer a source this
+    # codebase parses (`app/parsers/`, `datagen/emitters/`) — nothing here should read as if it
+    # still is.
+    SaasApp("OneLogin", "onelogin.com", "identity"),
     SaasApp("Google Workspace", "google.com", "productivity"),
     SaasApp("Slack", "slack.com", "collaboration"),
     SaasApp("Salesforce", "salesforce.com", "crm"),
@@ -119,7 +125,7 @@ SERVICE_ACCOUNT_CATALOG: tuple[ServiceAccountSpec, ...] = (
         "svc-ci-runner", "CI build and artifact fetch", 120, 9000, "curl", ("GitHub", "AWS Console")
     ),
     ServiceAccountSpec(
-        "svc-scim-sync", "Directory SCIM provisioning", 900, 2400, "okhttp", ("Okta", "Workday")
+        "svc-scim-sync", "Directory SCIM provisioning", 900, 2400, "okhttp", ("OneLogin", "Workday")
     ),
     ServiceAccountSpec(
         "svc-siem-forwarder", "SIEM log forwarder", 60, 18000, "Go-http-client", ("Datadog",)
@@ -128,7 +134,12 @@ SERVICE_ACCOUNT_CATALOG: tuple[ServiceAccountSpec, ...] = (
         "svc-vuln-scanner", "Authenticated vulnerability scan", 1800, 3000, "python-requests", ()
     ),
     ServiceAccountSpec(
-        "svc-license-audit", "SaaS license reconciliation", 3600, 800, "Java", ("Okta", "Workday")
+        "svc-license-audit",
+        "SaaS license reconciliation",
+        3600,
+        800,
+        "Java",
+        ("OneLogin", "Workday"),
     ),
     ServiceAccountSpec(
         "svc-crm-sync", "CRM bidirectional sync", 600, 5200, "axios", ("Salesforce",)

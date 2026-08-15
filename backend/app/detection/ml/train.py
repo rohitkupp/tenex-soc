@@ -90,11 +90,8 @@ def _run_datagen(args: list[str]) -> None:
 def _load_corpus_features(corpus_dir: Path) -> pd.DataFrame:
     paths: dict[str, Path] = {}
     zscaler = corpus_dir / "benign_zscaler.log"
-    okta = corpus_dir / "benign_okta.jsonl"
     if zscaler.exists():
         paths["zscaler"] = zscaler
-    if okta.exists():
-        paths["okta"] = okta
     events = load_ml_events(paths)
     log.info("corpus.events_loaded", n_events=len(events))
     df = build_entity_window_features(events)
@@ -125,7 +122,7 @@ def _build_tuning_validation(
                 str(tuning_events),
             ]
         )
-        log_files = sorted(out_dir.glob("*.log")) + sorted(out_dir.glob("*.jsonl"))
+        log_files = sorted(out_dir.glob("*.log"))
         label_files = sorted(out_dir.glob("*.labels.json"))
         malicious_lines: dict[str, set[int]] = {}
         for label_path in label_files:
@@ -133,7 +130,7 @@ def _build_tuning_validation(
             lines = {ln for s in payload["scenarios"] for ln in s["malicious_line_numbers"]}
             malicious_lines[payload["log_file"]] = lines
 
-        paths = {("zscaler" if p.suffix == ".log" else "okta"): p for p in log_files}
+        paths = {"zscaler": log_files[0]} if log_files else {}
         events = load_ml_events(paths)
         df = build_entity_window_features(events)
         if df.empty:

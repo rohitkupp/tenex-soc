@@ -4,6 +4,13 @@
 A single upload may contain multiple source types (mixed export) -- detect per-line-block and
 fan out to multiple parser queues."
 
+ZScaler is the only registered source today -- Okta and CloudTrail were removed, narrowing this
+project to ZScaler web proxy logs only. Nothing about the registry shape changed to do that:
+`DEFAULT_PARSERS` is still a tuple, `sniff_scores`/`detect_source_types` still run every entry and
+report the whole set above threshold rather than assuming exactly one match. Adding a source back
+is "implement `LogParser`, append one entry to `DEFAULT_PARSERS` and `make_parser`" -- no other
+module in this package needs to change, which is the extensibility this registry exists to prove.
+
 `sniff_scores` runs every registered parser's `sniff()` against the first `SNIFF_LINE_LIMIT`
 lines of the sample, exactly as `LogParser.sniff`'s own docstring specifies. Because every
 parser's `sniff` implementation scores per-line and reports a hit *ratio* rather than an
@@ -24,8 +31,6 @@ from dataclasses import dataclass, field
 
 from app.ocsf import OCSFEvent
 from app.parsers.base import LogParser, ParseFailure
-from app.parsers.cloudtrail import CloudTrailParser
-from app.parsers.okta import OktaParser
 from app.parsers.zscaler import ZScalerParser
 
 SNIFF_LINE_LIMIT = 50
@@ -35,7 +40,7 @@ SNIFF_THRESHOLD = 0.6
 # `_fields` state from `bind_header`, so registry callers that need header-driven binding for a
 # specific file should construct their own `ZScalerParser()` via `make_parser` rather than reuse
 # the registry's default instance across unrelated files.
-DEFAULT_PARSERS: tuple[LogParser, ...] = (ZScalerParser(), OktaParser(), CloudTrailParser())
+DEFAULT_PARSERS: tuple[LogParser, ...] = (ZScalerParser(),)
 
 
 def make_parser(source_type: str) -> LogParser:
@@ -43,10 +48,6 @@ def make_parser(source_type: str) -> LogParser:
     parsing a specific file end to end, so ZScaler's header binding never leaks across files."""
     if source_type == "zscaler":
         return ZScalerParser()
-    if source_type == "okta":
-        return OktaParser()
-    if source_type == "cloudtrail":
-        return CloudTrailParser()
     raise KeyError(f"no parser registered for source_type={source_type!r}")
 
 
@@ -107,8 +108,8 @@ def iter_events(
 
     **This is the seam with the bulk-COPY event-store writer.** Signature and contract:
 
-    * `source_type`: one of `"zscaler"`, `"okta"`, `"cloudtrail"` (matches `LogParser.source_type`
-      and `datagen.types.SourceType`).
+    * `source_type`: `"zscaler"` (matches `LogParser.source_type` and `datagen.types.SourceType` --
+      the only registered value now that Okta and CloudTrail have been removed).
     * `lines`: any iterable of text lines *with or without trailing newlines* -- an open `TextIO`
       file handle works directly (iterating a file object yields its lines), as does a `list[str]`
       or a generator. Nothing here reads the whole input into memory; this function is itself a

@@ -1,5 +1,8 @@
-"""Regression tests for scenario 8's docs/11 row 8 acceptance gate, plus s05's smaller
-n_events-margin fix (docs/11 rows 8 and 5).
+"""Regression tests for scenario 8's docs/11 row 8 acceptance gate.
+
+A companion regression test for scenario 5's smaller n_events-margin fix (docs/11 row 5,
+`account_takeover_chain`) used to live here too; that scenario was Okta-only and was deleted along
+with that source — this project is narrowed to ZScaler web proxy logs only.
 
 Scenario 8 exists specifically to test whether `ml.autoencoder` earns its slot (docs/11): if any
 single L3 feature's marginal robust z-score can catch the campaign, the benchmark it feeds is
@@ -48,12 +51,6 @@ _ORG_SPEC = corpus.OrgSpec()
 # exactly these terms. This is also the exact bar `s08_low_and_slow_exfil._check_acceptance`
 # builds candidates against, so a seed passing generation should always pass this audit too.
 _Z_THRESHOLD = 3.5
-# docs/04's real volumetric threshold is 3.5 (`_Z_THRESHOLD` above); 2.5 was an arbitrary safety
-# margin set tighter than that threshold actually requires. 3.0 keeps a real margin under 3.5
-# while no longer failing on a legitimate, non-defective z=2.698 (docs/11 row 5's own attack-hour
-# footprint is individually-legitimate events whose *ordering* is the attack — see that scenario's
-# docstring — so some volumetric footprint on the chain hour is expected, not a leak).
-_S05_Z_THRESHOLD = 3.0
 
 # The canonical docs/04 L3 feature set scenario 8's acceptance gate is built against
 # (`app.detection.features.ENTITY_WINDOW_FEATURES`) — imported, not restated, so this audit and
@@ -73,7 +70,6 @@ _LARGE_UPLOAD_BYTES = 1_000_000
 # full widened sweep to keep this file's own runtime modest — the gate, not this seed list, is
 # what carries the correctness guarantee now.
 _S08_SEEDS = (3, 17, 33, 55, 77, 99)
-_S05_SEEDS = (5, 42, 99)
 
 
 def _median_mad(values: list[float]) -> tuple[float, float]:
@@ -275,54 +271,9 @@ def test_s08_joint_distribution_still_separates(tmp_path: Path) -> None:
         )
 
 
-# ---------------------------------------------------------------------------- check 4: scenario 5
-
-
-def _s05_attack_hour_n_events_z(log_path: Path, labels_path: Path) -> list[float]:
-    labels = json.loads(labels_path.read_text())
-    scenario = labels["scenarios"][0]
-    malicious = set(scenario["malicious_line_numbers"])
-    victim = scenario["primary_entity"]["value"]
-
-    lines = log_path.read_text().splitlines()
-    buckets: dict[datetime, list[bool]] = defaultdict(list)
-    for line_no, line in enumerate(lines, start=1):
-        payload = json.loads(line)
-        if payload["actor"]["alternateId"] != victim:
-            continue
-        ts = datetime.strptime(payload["published"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC)
-        bucket = ts.replace(minute=0, second=0, microsecond=0)
-        buckets[bucket].append(line_no in malicious)
-
-    benign_n_events = [len(rows) for rows in buckets.values() if not any(rows)]
-    attack_hours = [rows for rows in buckets.values() if any(rows)]
-    assert benign_n_events, f"victim={victim}: no benign hours to compare against"
-    assert attack_hours, f"victim={victim}: no attack hours found"
-
-    return [abs(robust_z(benign_n_events, float(len(rows)))) for rows in attack_hours]
-
-
-def test_s05_attack_hour_n_events_margin(tmp_path: Path) -> None:
-    """docs/11 row 5's premise: every event in the chain is individually legitimate and only the
-    ordering is the attack, so the chain hour's own volumetric footprint (`n_events`, docs/04 L2)
-    must stay under the 3.5 burst threshold with a real margin, not skim right under it. A prior
-    version of this bar was 2.5 — an arbitrary safety margin set tighter than docs/04's own 3.5
-    threshold requires, which made a legitimate z=2.698 on one seed read as a defect when it was
-    not (docs/04's threshold is `|z| > 3.5`; 2.698 is comfortably under it). Target: |z| < 3.0 —
-    still a real half-point margin under 3.5, just not an arbitrarily tighter one.
-    """
-    for seed in _S05_SEEDS:
-        out_dir = tmp_path / f"s05-{seed}"
-        written = corpus.run_scenario("account_takeover_chain", seed, out_dir)
-        log_path = next(p for p in written if p.suffix == ".jsonl")
-        labels_path = next(p for p in written if p.suffix == ".json")
-
-        z_values = _s05_attack_hour_n_events_z(log_path, labels_path)
-        max_z = max(z_values)
-        assert max_z < _S05_Z_THRESHOLD, (
-            f"seed={seed}: attack-hour n_events max|z|={max_z:.3f} >= {_S05_Z_THRESHOLD} "
-            f"(all attack-hour z values: {[round(z, 3) for z in z_values]})"
-        )
+# `_s05_attack_hour_n_events_z` / `test_s05_attack_hour_n_events_margin` used to live here,
+# auditing `account_takeover_chain`'s (scenario 5) attack-hour volumetric footprint. Deleted along
+# with that Okta-only scenario -- see module docstring.
 
 
 # ---------------------------------------------------------------------------- sanity: window sizing

@@ -56,7 +56,7 @@ def _event(
     return MLEvent(
         line_no=line_no,
         ts=ts,
-        source_type="zscaler" if kind == "proxy" else "okta",
+        source_type="zscaler" if kind == "proxy" else "identity_source",
         kind=kind,  # type: ignore[arg-type]
         principal=principal,
         src_ip=src_ip,

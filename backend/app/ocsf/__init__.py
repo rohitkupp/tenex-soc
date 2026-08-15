@@ -1,17 +1,16 @@
-"""Typed OCSF event classes for the three classes docs/03 names (docs/13 M3).
+"""Typed OCSF event classes (docs/13 M3).
 
-`OCSFEvent` is the return-type alias `app/parsers`'s `LogParser.parse_line` uses, matching
-docs/03's `LogParser` Protocol verbatim (`parse_line(...) -> OCSFEvent | ParseFailure`).
+ZScaler is the only source this pipeline parses (Okta and CloudTrail, and their OCSF
+Authentication (3002) / API Activity (6003) classes, were removed — see `app/parsers/registry.py`
+for the extensibility argument that survives their removal). `OCSFEvent` is the return-type alias
+`app/parsers`'s `LogParser.parse_line` uses, matching docs/03's `LogParser` Protocol verbatim
+(`parse_line(...) -> OCSFEvent | ParseFailure`) -- kept as a union (of one member today) rather
+than collapsed to `HTTPActivity` outright, so a future second parser only has to add its class
+back into this alias, not touch every call site that names `OCSFEvent`.
 """
 
 from __future__ import annotations
 
-from app.ocsf.api_activity import CATEGORY_UID as API_ACTIVITY_CATEGORY_UID
-from app.ocsf.api_activity import CLASS_UID as API_ACTIVITY_CLASS_UID
-from app.ocsf.api_activity import APIActivity
-from app.ocsf.authentication import CATEGORY_UID as AUTHENTICATION_CATEGORY_UID
-from app.ocsf.authentication import CLASS_UID as AUTHENTICATION_CLASS_UID
-from app.ocsf.authentication import Authentication
 from app.ocsf.base import OCSFEventBase
 from app.ocsf.common import (
     Actor,
@@ -34,20 +33,14 @@ from app.ocsf.http_activity import CATEGORY_UID as HTTP_ACTIVITY_CATEGORY_UID
 from app.ocsf.http_activity import CLASS_UID as HTTP_ACTIVITY_CLASS_UID
 from app.ocsf.http_activity import HTTPActivity
 
-OCSFEvent = HTTPActivity | Authentication | APIActivity
+OCSFEvent = HTTPActivity
 
 __all__ = [
-    "API_ACTIVITY_CATEGORY_UID",
-    "API_ACTIVITY_CLASS_UID",
-    "AUTHENTICATION_CATEGORY_UID",
-    "AUTHENTICATION_CLASS_UID",
     "HTTP_ACTIVITY_CATEGORY_UID",
     "HTTP_ACTIVITY_CLASS_UID",
-    "APIActivity",
     "Actor",
     "Api",
     "ApiService",
-    "Authentication",
     "AutonomousSystem",
     "Cloud",
     "GeoCoordinates",

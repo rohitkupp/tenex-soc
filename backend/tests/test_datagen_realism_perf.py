@@ -22,7 +22,6 @@ the table as a whole.
 
 from __future__ import annotations
 
-import json
 import math
 import resource
 from collections import Counter
@@ -38,9 +37,7 @@ from datagen.types import TimeWindow
 _ORG_SPEC = corpus.OrgSpec(n_users=60, n_departments=6, offices=("US-CA", "US-NY", "IE-DU"))
 
 
-def _write_benign(
-    tmp_path: Path, *, proxy_events: int, okta_events: int = 1, chunk_size: int = 200_000
-) -> Path:
+def _write_benign(tmp_path: Path, *, proxy_events: int, chunk_size: int = 200_000) -> Path:
     org = corpus.build_org(11, corpus.ROLE_BENIGN, _ORG_SPEC)
     window = TimeWindow.of_days(14)
     root = corpus.SeededRandom(corpus.role_seed(11, corpus.ROLE_BENIGN))
@@ -50,8 +47,6 @@ def _write_benign(
         window,
         tmp_path,
         proxy_events=proxy_events,
-        okta_events=okta_events,
-        cloudtrail_events=1,
         chunk_size=chunk_size,
     )
     return tmp_path / "benign_zscaler.log"
@@ -83,7 +78,7 @@ def test_human_domain_traffic_is_zipf_over_the_real_top_sites_list(tmp_path: Pat
     # bundled top-site or one of the org's own SaaS domains (org.py DEFAULT_SAAS_APPS) — nothing
     # is hand-rolled on the hot path.
     saas_domains = {
-        "okta.com",
+        "onelogin.com",
         "google.com",
         "slack.com",
         "salesforce.com",
@@ -220,56 +215,10 @@ def test_zscaler_lines_carry_exactly_the_docs03_field_set_in_order(tmp_path: Pat
     assert action_values <= {"Allowed", "Blocked"}
 
 
-def test_okta_lines_carry_every_docs03_mapped_json_path(tmp_path: Path) -> None:
-    """docs/03 "Okta System Log -> OCSF Authentication": every path in the mapping table must
-    resolve on a real emitted line, not just on the crafted sample in the docstring."""
-    org = corpus.build_org(11, corpus.ROLE_BENIGN, _ORG_SPEC)
-    window = TimeWindow.of_days(14)
-    root = corpus.SeededRandom(corpus.role_seed(11, corpus.ROLE_BENIGN))
-    corpus.write_benign_corpus(
-        org,
-        root,
-        window,
-        tmp_path,
-        proxy_events=1,
-        okta_events=3_000,
-        cloudtrail_events=1,
-    )
-    log_path = tmp_path / "benign_okta.jsonl"
-    assert log_path.exists()
-
-    def resolve(payload: dict, path: str) -> None:
-        node = payload
-        for key in path.split("."):
-            assert isinstance(node, dict) and key in node, f"missing path {path!r} in {payload}"
-            node = node[key]
-
-    documented_paths = (
-        "published",
-        "eventType",
-        "outcome.result",
-        "outcome.reason",
-        "actor.alternateId",
-        "actor.displayName",
-        "client.ipAddress",
-        "client.userAgent.rawUserAgent",
-        "client.geographicalContext.country",
-        "client.geographicalContext.city",
-        "client.geographicalContext.geolocation",
-        "securityContext.asNumber",
-        "securityContext.isProxy",
-        "authenticationContext.authenticationStep",
-        "debugContext.debugData",
-    )
-    n_checked = 0
-    with log_path.open() as fh:
-        for line in fh:
-            payload = json.loads(line)
-            for path in documented_paths:
-                resolve(payload, path)
-            assert isinstance(payload["target"], list)
-            n_checked += 1
-    assert n_checked > 1000
+# The Okta-lines field-set fidelity test that used to live here (`test_okta_lines_carry_every_
+# docs03_mapped_json_path`) was deleted along with the Okta source -- this project is narrowed to
+# ZScaler web proxy logs only, and `test_zscaler_lines_carry_exactly_the_docs03_field_set_in_order`
+# above is the sole remaining source's fidelity test.
 
 
 # ---------------------------------------------------------------------------- performance

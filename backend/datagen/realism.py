@@ -45,7 +45,6 @@ __all__ = [
     "GeoPoint",
     "NewlyRegisteredDomainPool",
     "Office",
-    "OktaEventMix",
     "RealismModels",
     "RegisteredDomain",
     "ResponseSizeModel",
@@ -860,76 +859,8 @@ class ResponseSizeModel:
         return int(min(max(value, self.min_bytes), self.max_bytes))
 
 
-# ---------------------------------------------------------------------------- okta
-
-
-class OktaEventMix:
-    """Okta event-type mix in documented enterprise proportions (docs/11).
-
-    A real tenant's system log is overwhelmingly sign-on and SSO traffic; factor lifecycle,
-    admin and policy events are fractions of a percent. Getting this ratio right is what makes
-    the identity rules hard: an MFA-deactivate that is one event in a hundred thousand is a
-    signal, one in fifty is background.
-
-    Every event type docs/03 lists as detection-critical appears here so it survives
-    normalization and the sequence model's vocabulary contains it.
-    """
-
-    # (event_type, outcome, relative weight)
-    EVENTS: ClassVar[tuple[tuple[str, str, float], ...]] = (
-        ("user.session.start", "SUCCESS", 22.0),
-        ("user.session.start", "FAILURE", 2.2),
-        ("user.authentication.sso", "SUCCESS", 31.0),
-        ("user.authentication.auth_via_mfa", "SUCCESS", 16.0),
-        ("user.authentication.auth_via_mfa", "FAILURE", 1.1),
-        ("policy.evaluate_sign_on", "ALLOW", 12.0),
-        ("policy.evaluate_sign_on", "CHALLENGE", 3.0),
-        ("user.session.end", "SUCCESS", 8.0),
-        ("app.oauth2.token.grant", "SUCCESS", 2.4),
-        ("user.authentication.verify", "SUCCESS", 1.0),
-        ("user.account.update_profile", "SUCCESS", 0.35),
-        ("application.user_membership.add", "SUCCESS", 0.25),
-        ("user.mfa.factor.activate", "SUCCESS", 0.12),
-        ("user.mfa.factor.deactivate", "SUCCESS", 0.05),
-        ("user.account.lock", "SUCCESS", 0.06),
-        ("user.account.unlock", "SUCCESS", 0.05),
-        ("system.api_token.create", "SUCCESS", 0.04),
-        ("user.account.privilege.grant", "SUCCESS", 0.03),
-        ("policy.lifecycle.update", "SUCCESS", 0.03),
-        ("user.session.impersonation.initiate", "SUCCESS", 0.01),
-    )
-
-    FAILURE_OUTCOMES: ClassVar[dict[str, str]] = {
-        "user.session.start": "FAILURE",
-        "user.authentication.sso": "FAILURE",
-        "user.authentication.auth_via_mfa": "FAILURE",
-        "policy.evaluate_sign_on": "DENY",
-    }
-
-    def __init__(self, events: Sequence[tuple[str, str, float]] | None = None) -> None:
-        entries = tuple(events) if events else self.EVENTS
-        self.pairs = tuple((e, o) for e, o, _ in entries)
-        total = sum(w for _, _, w in entries)
-        self.weights = tuple(w / total for _, _, w in entries)
-        self.event_types = tuple(dict.fromkeys(e for e, _, _ in entries))
-
-    def sample(self, rng: SeededRandom) -> tuple[str, str]:
-        """Returns `(eventType, outcome.result)` — together the Okta `event_key` (docs/03)."""
-        return rng.weighted_choice(self.pairs, self.weights)
-
-    def probability(self, event_type: str, outcome: str) -> float:
-        return sum(
-            w
-            for (e, o), w in zip(self.pairs, self.weights, strict=True)
-            if e == event_type and o == outcome
-        )
-
-    def failure_outcome(self, event_type: str) -> str:
-        return self.FAILURE_OUTCOMES.get(event_type, "FAILURE")
-
-    def vocabulary(self) -> tuple[str, ...]:
-        """`{eventType}:{outcome}` tokens — the sequence model's discrete alphabet."""
-        return tuple(f"{e}:{o}" for e, o in self.pairs)
+# `OktaEventMix` (Okta System Log event-type mix) lived here. Removed along with the Okta source
+# — this project is narrowed to ZScaler web proxy logs only.
 
 
 # ---------------------------------------------------------------------------- bundle
@@ -947,7 +878,6 @@ class RealismModels:
     user_agents: UserAgentMix
     diurnal: DiurnalCurve
     response_sizes: ResponseSizeModel
-    okta_events: OktaEventMix
     geo: GeoDistribution
     dga: DGAGenerator
     newly_registered: NewlyRegisteredDomainPool
@@ -961,7 +891,6 @@ def build_models(
         user_agents=UserAgentMix(),
         diurnal=DiurnalCurve(),
         response_sizes=ResponseSizeModel(),
-        okta_events=OktaEventMix(),
         geo=GeoDistribution(offices, office_weights),
         dga=DGAGenerator(),
         newly_registered=NewlyRegisteredDomainPool(),
