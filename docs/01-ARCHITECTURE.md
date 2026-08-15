@@ -78,6 +78,20 @@ the next `StageMessage`.
 
 The funnel counters are the headline UI element — keep them current at every stage.
 
+**Terminal contract.** Every event carries `status`, one of `queued | running | complete | failed`,
+mirroring `analyses.status`. The stream is terminal when `status` is `complete` or `failed`; the
+API then closes the SSE connection and the client closes its `EventSource`.
+
+This is specified because it cannot be inferred. Reading terminality from `stage`/`progress` means
+guessing which stage is last — and the last stage changes as milestones land, so a client that
+guesses today breaks silently at M12 and leaks one connection per analysis while the funnel sits
+at 99% forever.
+
+```json
+{ "stage": "triage", "progress": 1.0, "status": "complete", "message": "Done",
+  "counters": { "events": 1412903, "signals": 812, "incidents": 14, "needs_attention": 3 } }
+```
+
 ## Deployment
 
 | Component | Target |
