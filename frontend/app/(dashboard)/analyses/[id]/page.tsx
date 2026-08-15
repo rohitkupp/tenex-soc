@@ -1,22 +1,30 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { fetchServer } from "@/lib/api/server";
-import type { AnalysisDetail } from "@/lib/api/types";
+import type { AnalysisDetail, AnalysisTimelineResponse } from "@/lib/api/types";
 import { formatDate, formatPercent, formatUsd } from "@/lib/format";
 import { FunnelProgress } from "@/components/pipeline/FunnelProgress";
+import { AnalysisTimeline } from "@/components/analyses/AnalysisTimeline";
 
 export const metadata: Metadata = { title: "Analysis — Tenex SOC Analyst" };
 
 // docs/10-FRONTEND.md scopes this route to funnel state + counters for a
-// completed or running analysis; the rich overview (event volume chart, top
-// entities, severity distribution) lands at M15 — deliberately not built here.
+// completed or running analysis; the rest of the rich overview (event volume
+// chart, top entities, severity distribution) is still M15+ scope beyond
+// this milestone. The summarized timeline below is this milestone's piece of
+// it — the brief's headline "human-consumable ... summarized timeline of
+// events" deliverable, so it renders high on the page rather than waiting
+// for the rest of the overview to land.
 export default async function AnalysisDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const analysis = await fetchServer<AnalysisDetail>(`/api/analyses/${id}`);
+  const [analysis, timeline] = await Promise.all([
+    fetchServer<AnalysisDetail>(`/api/analyses/${id}`),
+    fetchServer<AnalysisTimelineResponse>(`/api/analyses/${id}/timeline`),
+  ]);
 
   // fetchServer collapses "not found" and "API unreachable" to the same
   // null result (see lib/api/server.ts) — say something true of both rather
@@ -70,6 +78,8 @@ export default async function AnalysisDetailPage({
           Events
         </Link>
       </nav>
+
+      <AnalysisTimeline data={timeline} />
 
       <dl className="grid grid-cols-2 gap-x-6 gap-y-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-5 text-sm sm:grid-cols-4">
         <div>

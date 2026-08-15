@@ -13,6 +13,14 @@ episode of activity — a beaconing group, a burst bucket, a rule match), ordere
 rule match on a single event). This module never orders raw events itself beyond that one sort —
 consistent with docs/05's instruction that ordering must come from the data, not be inferred.
 
+`TimelinePhase` also carries `detector_layer`/`confidence`/`mitre_technique` straight through
+from the source signal (not just the mapped `tactic` name) — `app.api.incident_detail`'s
+analysis-level timeline (`GET /api/analyses/{id}/timeline`) surfaces all three per docs/09 so an
+analyst sees the same confidence score the queue and the event detail view show, without a
+second round trip to `signals`. The per-incident timeline route deliberately keeps its own
+response shape unchanged (`app.schemas.incident.TimelinePhaseOut` doesn't include them), so this
+is purely additive at the dataclass level.
+
 ## Tactic annotation, before the agent exists
 
 docs/05 assigns tactic annotation to the agent (M11, not built yet). `_TACTIC_BY_TECHNIQUE` below
@@ -58,8 +66,11 @@ class TimelinePhase:
     event_ids: list[int]
     summary: str
     detector_key: str
+    detector_layer: str
     entity_type: str
     entity_value: str
+    confidence: float
+    mitre_technique: str | None
 
 
 def _tactic_for(technique: str | None) -> tuple[str, bool]:
@@ -71,10 +82,12 @@ def _tactic_for(technique: str | None) -> tuple[str, bool]:
 
 def build_timeline(signals: list[Any]) -> list[TimelinePhase]:
     """One `TimelinePhase` per signal (`app.graph.incidents.SignalRef`-shaped: needs
-    `window_start`, `evidence_event_ids`, `detector_key`, `entity_type`, `entity_value`,
-    `mitre_technique`), ordered by `window_start` (or the earliest evidence event id as a stable
-    tiebreak/fallback when no window was reported — event ids are assigned in ingestion order in
-    this system, `docs/02`, so lower id is earlier in every practical case)."""
+    `window_start`, `evidence_event_ids`, `detector_key`, `detector_layer`, `entity_type`,
+    `entity_value`, `confidence`, `mitre_technique` — every field `app.models.signal.Signal`
+    itself already carries, so ORM rows work here unmodified, same as `SignalRef`), ordered by
+    `window_start` (or the earliest evidence event id as a stable tiebreak/fallback when no
+    window was reported — event ids are assigned in ingestion order in this system, `docs/02`,
+    so lower id is earlier in every practical case)."""
 
     def sort_key(s: Any) -> tuple[int, datetime | int]:
         if s.window_start is not None:
@@ -93,8 +106,11 @@ def build_timeline(signals: list[Any]) -> list[TimelinePhase]:
                 event_ids=list(s.evidence_event_ids),
                 summary=f"{s.detector_key} on {s.entity_type} {s.entity_value}",
                 detector_key=s.detector_key,
+                detector_layer=s.detector_layer,
                 entity_type=s.entity_type,
                 entity_value=s.entity_value,
+                confidence=s.confidence,
+                mitre_technique=s.mitre_technique,
             )
         )
     return phases

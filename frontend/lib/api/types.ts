@@ -546,7 +546,11 @@ export interface IncidentDetail {
 }
 
 /** `GET /api/incidents/{id}/timeline` — docs/05 "Timeline", output shape verbatim, plus the
- * extra context fields `app/graph/timeline.py::TimelinePhase` actually carries. */
+ * extra context fields `app/graph/timeline.py::TimelinePhase` actually carries. Also reused by
+ * the analysis-wide `GET /api/analyses/{id}/timeline` (M15, see `AnalysisTimelineResponse`
+ * below) — that endpoint's contract adds `detector_layer`, `confidence`, and `mitre_technique`
+ * on the same phase shape, so they're folded in here (optional, best-effort like the rest of
+ * this type) rather than duplicated into a parallel interface. */
 export interface TimelinePhaseOut {
   ts: string | null;
   tactic: string;
@@ -554,8 +558,24 @@ export interface TimelinePhaseOut {
   event_ids: number[];
   summary: string;
   detector_key?: string;
+  detector_layer?: string;
   entity_type?: string;
   entity_value?: string;
+  confidence?: number | null;
+  mitre_technique?: string | null;
+}
+
+/**
+ * `GET /api/analyses/{id}/timeline` (new, M15) — the analysis-wide "summarized timeline of
+ * events" the brief calls for, surfaced on the overview rather than nested inside one
+ * incident's case file. `truncated` marks that the backend capped the phase list to its
+ * highest-confidence subset; the contract does not send a total-phase count alongside it, so
+ * the UI can say a cap was applied but must not fabricate "of N" — see
+ * `components/analyses/AnalysisTimeline.tsx`.
+ */
+export interface AnalysisTimelineResponse {
+  phases: TimelinePhaseOut[];
+  truncated: boolean;
 }
 
 /** `GET /api/incidents/{id}/graph` — docs/09: `{nodes: [], edges: []}`, shaped from docs/02's
@@ -880,6 +900,12 @@ export interface Tier2QueryResponse {
 
 // ---- Events (real schemas, `backend/app/schemas/event.py` verbatim) ----
 
+/**
+ * M15: `signal_count`/`max_confidence`/`detectors` are what make "highlight the anomalous
+ * entries ... with a confidence score" possible from the list view alone, without a fetch per
+ * row. `has_signal=true|false` in `GET /api/analyses/{id}/events` now genuinely filters on
+ * `signal_count` (it previously always returned zero rows — see `EventExplorer`).
+ */
 export interface EventListItem {
   id: number;
   analysis_id: string;
@@ -899,12 +925,43 @@ export interface EventListItem {
   bytes_out: number | null;
   user_agent: string | null;
   event_key: string | null;
+  /** Count of signals attached to this event. `> 0` is what "signal-bearing" means, both for
+   * the row highlight and for the `has_signal` filter. */
+  signal_count: number;
+  /** Highest `confidence` among this event's signals; `null` when `signal_count` is 0. */
+  max_confidence: number | null;
+  /** `detector_key`s of every signal attached to this event — "which detector(s) flagged it". */
+  detectors: string[];
 }
 export interface EventListResponse {
   items: EventListItem[];
   next_cursor: string | null;
 }
+
+/**
+ * A signal as carried on `GET /api/events/{event_id}`, not `GET /api/incidents/{id}` — a
+ * narrower projection of `SignalOut` (no `entity_type`/`entity_value`/`evidence_event_ids`/
+ * `created_at`: the event itself is already the evidence, and the entity is implied by it).
+ * `ExplanationRenderer` only ever reads `detector_key`/`detector_layer`/`explanation`
+ * (see that component), so this shape satisfies its prop type structurally — no need to
+ * fabricate the fields this endpoint doesn't send.
+ */
+export interface EventSignalOut {
+  id: number;
+  detector_key: string;
+  detector_layer: string;
+  confidence: number;
+  raw_score: number;
+  mitre_technique: string | null;
+  explanation: SignalExplanation;
+  window_start: string | null;
+  window_end: string | null;
+}
+
 export interface EventOut extends EventListItem {
   ocsf: Record<string, unknown>;
   enrichment: Record<string, unknown>;
+  /** Why this event was flagged, one entry per detector — rendered through
+   * `ExplanationRenderer` in `EventInspector`, never as raw JSON. */
+  signals: EventSignalOut[];
 }

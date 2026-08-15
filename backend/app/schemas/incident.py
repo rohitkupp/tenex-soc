@@ -7,6 +7,11 @@ docstring. This module owns everything else docs/09 folds into the case file:
     GET /api/incidents/{id}            "signals with explanations, entities, ..., verdict"
     GET /api/incidents/{id}/graph      `{nodes: [], edges: []}`
     GET /api/incidents/{id}/timeline   docs/05's deterministic phase list
+    GET /api/analyses/{id}/timeline    the analysis-wide summarized timeline (the take-home
+                                        brief's "summarized timeline of events"), same phase
+                                        shape as the per-incident route above (`TimelinePhaseOut`
+                                        is shared, not duplicated) — see
+                                        `app.api.incident_detail.get_analysis_timeline`
 
 Field names and nullability here are not freshly invented: they match
 `frontend/lib/api/types.ts`'s `IncidentListItem` / `IncidentDetail` / `IncidentGraph` /
@@ -127,7 +132,15 @@ class IncidentDetail(BaseModel):
 class TimelinePhaseOut(BaseModel):
     """`app.graph.timeline.TimelinePhase`, serialised. `tactic_is_placeholder` is carried through
     rather than hidden: it tells the UI (and a reviewer) which phases carry a deterministic
-    lookup-table tactic versus one the agent actually attributed."""
+    lookup-table tactic versus one the agent actually attributed.
+
+    `detector_layer`/`confidence`/`mitre_technique` were added for the analysis-wide timeline
+    (`AnalysisTimelineResponse` below, docs/09's "summarized timeline of events" +
+    "confidence score" requirements) but are shared here rather than duplicated into a second
+    phase schema: `TimelinePhase` (the dataclass this serialises) always carries them now, so
+    `GET /api/incidents/{id}/timeline` gets them for free too — a strict superset of its
+    previous response, not a behaviour change for anything reading the fields it already had.
+    """
 
     ts: datetime | None
     tactic: str
@@ -135,12 +148,33 @@ class TimelinePhaseOut(BaseModel):
     event_ids: list[int]
     summary: str
     detector_key: str
+    detector_layer: str
     entity_type: str
     entity_value: str
+    confidence: float
+    mitre_technique: str | None
 
 
 class TimelineResponse(BaseModel):
     phases: list[TimelinePhaseOut]
+
+
+class AnalysisTimelineResponse(BaseModel):
+    """`GET /api/analyses/{id}/timeline` — the take-home brief's "summarized timeline of
+    events", analysis-wide rather than nested inside one incident's case file. `phases` reuses
+    `TimelinePhaseOut` verbatim (see that schema's docstring).
+
+    `truncated` is `true` when the analysis produced more than the cap
+    (`app.api.incident_detail.MAX_ANALYSIS_TIMELINE_PHASES`) worth of phases and the response
+    was cut down to the highest-confidence subset. `total_phases` is the count *before* that
+    cut — without it the UI can say a truncation happened but not by how much, which is why
+    this field was added after the first pass at this endpoint shipped `{phases, truncated}`
+    alone. `total_phases == len(phases)` exactly when `truncated` is `false`.
+    """
+
+    phases: list[TimelinePhaseOut]
+    truncated: bool
+    total_phases: int
 
 
 class GraphNode(BaseModel):

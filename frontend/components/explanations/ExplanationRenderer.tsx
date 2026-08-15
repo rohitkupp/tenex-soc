@@ -35,8 +35,17 @@ function hasKeys(v: Record<string, unknown>, keys: string[]): boolean {
  * covers any detector this component doesn't explicitly know about, and the last resort is
  * `FallbackExplanation`'s flattened key/value view. **No path here ever renders raw JSON**
  * (docs/13 M15 acceptance criterion) — every branch is a labelled view of some kind.
+ *
+ * The prop only requires the three fields this component actually reads, not the full
+ * `SignalOut` — `SignalOut` satisfies it structurally, and so does `EventSignalOut`
+ * (`GET /api/events/{event_id}`'s narrower per-event signal shape), so the same renderer
+ * serves both the case file's `SignalsSection` and `EventInspector`'s "why flagged" view.
  */
-export function ExplanationRenderer({ signal }: { signal: SignalOut }) {
+export function ExplanationRenderer({
+  signal,
+}: {
+  signal: Pick<SignalOut, "detector_key" | "detector_layer" | "explanation">;
+}) {
   const { detector_key: key, detector_layer: layer, explanation } = signal;
 
   if (!isRecord(explanation)) {

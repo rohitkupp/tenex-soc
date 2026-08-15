@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from app.graph.incidents import SignalRef
 from app.graph.timeline import build_timeline
 
@@ -72,3 +74,14 @@ def test_summary_is_deterministic_and_references_detector_and_entity() -> None:
     s = _signal(1, window_start=_T0, evidence_event_ids=(1,), detector_key="signal.beaconing")
     phases = build_timeline([s])
     assert phases[0].summary == "signal.beaconing on user alice@corp.example"
+
+
+def test_phase_carries_detector_layer_confidence_and_mitre_technique_through() -> None:
+    """M15: `app.api.incident_detail.get_analysis_timeline` needs these straight off the phase
+    (docs/09's confidence-score requirement) — `build_timeline` must pass them through from the
+    source signal, not just use them internally for the `tactic` lookup."""
+    s = _signal(1, window_start=_T0, evidence_event_ids=(1,), mitre_technique="T1071.001")
+    phases = build_timeline([s])
+    assert phases[0].detector_layer == "signal"
+    assert phases[0].confidence == pytest.approx(0.9)
+    assert phases[0].mitre_technique == "T1071.001"

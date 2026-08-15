@@ -1,6 +1,7 @@
 """The incident *read* surface — docs/09-API-CONTRACT.md.
 
     GET /api/analyses/{analysis_id}/incidents   the queue
+    GET /api/analyses/{analysis_id}/timeline    analysis-wide summarized timeline (below)
     GET /api/incidents/{incident_id}            full case file (minus timeline/plan, below)
     GET /api/incidents/{incident_id}/graph      `{nodes: [], edges: []}`
     GET /api/incidents/{incident_id}/timeline   docs/05's deterministic phase list
@@ -11,11 +12,20 @@ not this module's to build whole". This is that composite. Both routers mount at
 split is invisible over the wire — `/api/incidents/{id}` and `/api/incidents/{id}/verdict` are
 neighbours in `/api/docs` regardless of which file defines them.
 
+**Why `/api/analyses/{id}/timeline` lives here and not in `app.api.events`.** It is
+`app.graph.timeline.build_timeline` fed every signal in an analysis instead of one incident's
+(docs/05's "Timeline" section) — the exact same function, called the exact same way, as
+`get_incident_timeline` two functions below. Splitting the two callers across modules would mean
+either duplicating the phase-assembly logic or importing across `app.api.events`/
+`app.api.incident_detail` for no reason; keeping them together means one docstring explains the
+ordering/truncation contract for both.
+
 **Tenant isolation.** `Incident` and `Signal` carry `TenantScopedMixin`, so `tenant_scope`
 filters them structurally (`app.models.base`). `Entity` and `EntityEdge` do not — docs/02 scopes
 them transitively through `analysis_id`, and every query below reaches them only via an
-`analysis_id` read off an incident that `tenant_scope` already proved belongs to the caller. A
-cross-tenant id 404s; it never leaks a row.
+`analysis_id` read off an incident (or, for the two analysis-scoped routes, an `Analysis` row
+itself) that `tenant_scope` already proved belongs to the caller. A cross-tenant id 404s; it
+never leaks a row.
 
 **Ordering.** The queue is `fused_score DESC, id DESC` — the order an analyst works the queue in,
 and a strict total order (`id` is unique), so the keyset cursor below can never skip or repeat a
@@ -37,7 +47,7 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.errors import ApiError
 from app.core.security import CurrentUser, require_user
-from app.graph.timeline import build_timeline
+from app.graph.timeline import TimelinePhase, build_timeline
 from app.models.analysis import Analysis
 from app.models.base import tenant_scope
 from app.models.entity import Entity
@@ -47,6 +57,7 @@ from app.models.signal import Signal
 from app.models.triage_verdict import TriageVerdict
 from app.schemas.agent import TriageVerdictResponse
 from app.schemas.incident import (
+    AnalysisTimelineResponse,
     EntityOut,
     GraphEdge,
     GraphNode,
@@ -60,6 +71,15 @@ from app.schemas.incident import (
 )
 
 router = APIRouter()
+
+# Cap for `GET /api/analyses/{id}/timeline` — an analysis-wide timeline has no natural upper
+# bound the way one incident's does (docs/05 correlates "hundreds of signals" down to "a dozen
+# readable incidents", but the *analysis* can still carry every signal that never made it into
+# one), and CLAUDE.md rule 1 ("the LLM never sees raw log volume... a few hundred events into a
+# prompt, stop") is a UI-facing instance of the same principle here: an unbounded phase list is
+# not "summarized". Kept by confidence, not truncated arbitrarily — see
+# `get_analysis_timeline`'s docstring for how the cut interacts with chronological ordering.
+MAX_ANALYSIS_TIMELINE_PHASES = 100
 
 # The graph endpoint returns the incident's seed entities plus their 1-hop neighbourhood
 # (docs/05). On a busy analysis a single hub entity — a shared proxy egress IP, a CDN domain —
@@ -218,6 +238,81 @@ def list_incidents(
     return IncidentsListResponse(items=items, next_cursor=next_cursor)
 
 
+def _timeline_phase_out(phase: TimelinePhase) -> TimelinePhaseOut:
+    """Shared by both timeline routes — one field-for-field copy from the dataclass
+    `build_timeline` returns to the Pydantic shape the wire actually sends."""
+    return TimelinePhaseOut(
+        ts=phase.ts,
+        tactic=phase.tactic,
+        tactic_is_placeholder=phase.tactic_is_placeholder,
+        event_ids=phase.event_ids,
+        summary=phase.summary,
+        detector_key=phase.detector_key,
+        detector_layer=phase.detector_layer,
+        entity_type=phase.entity_type,
+        entity_value=phase.entity_value,
+        confidence=phase.confidence,
+        mitre_technique=phase.mitre_technique,
+    )
+
+
+@router.get("/analyses/{analysis_id}/timeline", response_model=AnalysisTimelineResponse)
+def get_analysis_timeline(
+    analysis_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current: Annotated[CurrentUser, Depends(require_user)],
+) -> AnalysisTimelineResponse:
+    """The take-home brief's "summarized timeline of events" — analysis-wide, not nested in one
+    incident's case file. Reuses `build_timeline` (docs/05: "Never let the model order events")
+    fed every signal in the analysis rather than one incident's `signal_ids`.
+
+    **Truncation.** Capped at `MAX_ANALYSIS_TIMELINE_PHASES`, kept *by confidence* — "keep the
+    strongest, then re-sort chronologically for output" (docs/09). Concretely: `build_timeline`
+    already returns every phase in deterministic chronological order (window_start, falling back
+    to the lowest evidence event id — see that module's docstring for why that fallback is
+    correct and not arbitrary); when a cut is needed, this ranks phases by confidence (ties
+    broken by their position in that chronological list, for determinism) to pick the survivors,
+    then filters the *original* chronological list down to that surviving set instead of
+    re-deriving order from `ts` from scratch. That sidesteps having a second, easy-to-drift
+    reimplementation of `build_timeline`'s None/fallback ordering rule here, and produces exactly
+    the same output a from-scratch chronological re-sort of the survivors would.
+
+    `total_phases` is the count *before* the cut, so the UI can render "showing the 100
+    highest-confidence phases of N" instead of a vaguer "some were hidden" — added after this
+    endpoint's first pass shipped without it and the frontend had no way to say how much was cut.
+    """
+    with tenant_scope(db, current.tenant.id):
+        analysis = db.execute(
+            select(Analysis).where(Analysis.id == analysis_id)
+        ).scalar_one_or_none()
+        if analysis is None:
+            raise _not_found("Analysis not found.")
+        signals = (
+            db.execute(select(Signal).where(Signal.analysis_id == analysis_id)).scalars().all()
+        )
+
+    all_phases = build_timeline(list(signals))
+    total_phases = len(all_phases)
+    truncated = total_phases > MAX_ANALYSIS_TIMELINE_PHASES
+    if truncated:
+        keep_indices = {
+            i
+            for i, _ in sorted(
+                enumerate(all_phases),
+                key=lambda pair: (-pair[1].confidence, pair[0]),
+            )[:MAX_ANALYSIS_TIMELINE_PHASES]
+        }
+        phases = [p for i, p in enumerate(all_phases) if i in keep_indices]
+    else:
+        phases = all_phases
+
+    return AnalysisTimelineResponse(
+        phases=[_timeline_phase_out(p) for p in phases],
+        truncated=truncated,
+        total_phases=total_phases,
+    )
+
+
 @router.get("/incidents/{incident_id}", response_model=IncidentDetail)
 def get_incident(
     incident_id: uuid.UUID,
@@ -293,21 +388,7 @@ def get_incident_timeline(
             db.execute(select(Signal).where(Signal.id.in_(incident.signal_ids))).scalars().all()
         )
     phases = build_timeline(list(signals))
-    return TimelineResponse(
-        phases=[
-            TimelinePhaseOut(
-                ts=p.ts,
-                tactic=p.tactic,
-                tactic_is_placeholder=p.tactic_is_placeholder,
-                event_ids=p.event_ids,
-                summary=p.summary,
-                detector_key=p.detector_key,
-                entity_type=p.entity_type,
-                entity_value=p.entity_value,
-            )
-            for p in phases
-        ]
-    )
+    return TimelineResponse(phases=[_timeline_phase_out(p) for p in phases])
 
 
 @router.get("/incidents/{incident_id}/graph", response_model=IncidentGraph)

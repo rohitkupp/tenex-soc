@@ -93,7 +93,12 @@ ignore = [
 # Strict on the layers the reviewer will read closely. The rest is checked loosely.
 
 [tool.mypy]
-python_version = "3.11"
+# 3.12, matching the runtime the Dockerfile actually installs (python:3.12-slim) — not
+# `requires-python`'s 3.11 floor. Pinning 3.11 here made mypy parse numpy's own .pyi stubs,
+# which use 3.12 `type` statements, as a syntax error and abort before checking a single line
+# of our code. `make lint`'s mypy step was therefore passing over nothing at all while CLAUDE.md
+# advertised `mypy --strict` on app/detection, app/agent, app/graph.
+python_version = "3.12"
 warn_unused_configs = true
 ignore_missing_imports = true
 

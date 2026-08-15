@@ -17,13 +17,25 @@ pages, even if new events are written between two page fetches (a genuinely new 
 that sorts before the cursor position simply isn't visible on a page that has already
 moved past that point).
 
-**`has_signal` is a documented stub.** docs/02's `signals` table doesn't exist until
-M6/M7 (docs/13) — this milestone is `events` only. No event can be signal-linked yet,
-so `has_signal=true` correctly returns an empty page (not an error, not silently
-ignored) and `has_signal=false`/unset needs no predicate at all, since every event
-currently satisfies "has no signal". Once `signals` lands, this becomes a join/`EXISTS`
-against `signals.evidence_event_ids` — grep for `has_signal` here when that milestone
-starts.
+**`has_signal`** is a real predicate against `signals.evidence_event_ids` (docs/02), scoped to
+the same `analysis_id` the rest of the query is already scoped to. `has_signal=true` keeps
+only events cited by at least one signal's evidence; `has_signal=false` keeps only events no
+signal ever cited — a genuinely useful "show me what got ignored" view, not just the inverse
+of an error case. Both are a correlated `EXISTS`/`NOT EXISTS` using Postgres's array
+containment operator (`evidence_event_ids @> ARRAY[events.id]`), not `events.id = ANY(...)`:
+`@>` is one of the operators the default `array_ops` GIN opclass actually indexes (`&&`, `@>`,
+`<@`, `=`) — `= ANY(array_column)` is not, so writing it that way would silently fall back to a
+sequential scan of `signals` per outer row. The GIN index itself is
+`ix_signals_evidence_event_ids_gin`
+(`alembic/versions/6ba739579d4b_signals_evidence_event_ids_gin_index.py`); without it this
+degrades badly on large analyses, and docs/13's M3 acceptance is "paginates 1M+ rows without
+timing out".
+
+**Signal stats on the list row** (`signal_count`/`max_confidence`/`detectors`, docs/09 +
+the take-home brief's "highlight the anomalous entries ... with a confidence score") are
+folded on in Python after the page is fetched, from exactly one extra query per *page* — see
+`_signal_stats_for_page`'s docstring for why that one query uses array *overlap* (`&&`)
+against the whole page's event ids rather than one query per event.
 """
 
 from __future__ import annotations
@@ -36,7 +48,8 @@ from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import false, select, tuple_
+from sqlalchemy import ColumnElement, exists, select, tuple_
+from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -45,7 +58,8 @@ from app.core.security import CurrentUser, require_user
 from app.models.analysis import Analysis
 from app.models.base import tenant_scope
 from app.models.event import Event
-from app.schemas.event import EventListItem, EventListResponse, EventOut
+from app.models.signal import Signal
+from app.schemas.event import EventListItem, EventListResponse, EventOut, EventSignalOut
 
 router = APIRouter()
 
@@ -76,6 +90,83 @@ def _decode_cursor(cursor: str) -> tuple[datetime, int]:
         return datetime.fromisoformat(ts_str), int(id_str)
     except (ValueError, binascii.Error) as exc:
         raise ApiError(status_code=400, code="invalid_cursor", detail="Invalid cursor.") from exc
+
+
+def _has_signal_predicate(analysis_id: uuid.UUID, *, want_signal: bool) -> ColumnElement[bool]:
+    """`EXISTS`/`NOT EXISTS` against `signals.evidence_event_ids`, correlated on `Event.id`.
+
+    Written with the containment operator (`@>`) rather than `Event.id == any_(...)` on
+    purpose: Postgres's default GIN opclass for arrays (`array_ops`) indexes `&&`, `@>`,
+    `<@`, and `=` — not the `x = ANY(array_column)` form, which the planner cannot route
+    through that index and falls back to scanning every `signals` row per outer event. See
+    `ix_signals_evidence_event_ids_gin` (docs/09 module docstring above).
+    """
+    has_evidence = exists(
+        select(Signal.id).where(
+            Signal.analysis_id == analysis_id,
+            Signal.evidence_event_ids.op("@>")(array([Event.id])),
+        )
+    )
+    return has_evidence if want_signal else ~has_evidence
+
+
+class _SignalStats:
+    __slots__ = ("count", "detectors", "max_confidence")
+
+    def __init__(self) -> None:
+        self.count = 0
+        self.max_confidence: float | None = None
+        self.detectors: set[str] = set()
+
+    def add(self, signal: Signal) -> None:
+        self.count += 1
+        self.detectors.add(signal.detector_key)
+        if self.max_confidence is None or signal.confidence > self.max_confidence:
+            self.max_confidence = signal.confidence
+
+
+def _signal_stats_for_page(
+    db: Session, analysis_id: uuid.UUID, event_ids: list[int]
+) -> dict[int, _SignalStats]:
+    """One query for a whole page (never per event, per docs/09's performance note).
+
+    A page has up to 500 event ids; a single query using array *overlap* (`&&`) pulls every
+    signal that cites *any* of them, then this function folds that (typically much smaller)
+    result set onto individual event ids in Python. The alternative — one `EXISTS`/count
+    query per event — is what "per event" performance would look like: up to 500 round trips
+    for one page, versus exactly one here. `&&` (not `@>`) is correct for this direction: we
+    are asking "which signals overlap this whole batch of ids", not "does this one signal
+    contain this one id" — and `&&` is indexed by the same GIN opclass as `@>`.
+
+    The right-hand side is the bare Python list, not `postgresql.array(event_ids)`: SQLAlchemy
+    binds a plain list operand to a comparison as a single parameter typed from the *left*
+    operand's column type (here `ARRAY(BigInteger)`, matching `evidence_event_ids`).
+    `postgresql.array(...)` instead builds a literal `ARRAY[...]` with each element typed from
+    the Python value alone (`int` -> `INTEGER`), which Postgres then refuses to compare against
+    a `bigint[]` column (`operator does not exist: bigint[] && integer[]`) — `array(...)` is
+    only needed below, in `_has_signal_predicate`, where the element is a column expression
+    (`Event.id`) rather than a plain value.
+    """
+    if not event_ids:
+        return {}
+    page_ids = set(event_ids)
+    signals = (
+        db.execute(
+            select(Signal).where(
+                Signal.analysis_id == analysis_id,
+                Signal.evidence_event_ids.op("&&")(event_ids),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    stats: dict[int, _SignalStats] = {}
+    for signal in signals:
+        for event_id in signal.evidence_event_ids:
+            if event_id not in page_ids:
+                continue  # this signal also cites events outside this page — ignore those
+            stats.setdefault(event_id, _SignalStats()).add(signal)
+    return stats
 
 
 @router.get("/analyses/{analysis_id}/events", response_model=EventListResponse)
@@ -119,8 +210,8 @@ def list_events(
             stmt = stmt.where(Event.ts >= ts_from)
         if ts_to is not None:
             stmt = stmt.where(Event.ts <= ts_to)
-        if has_signal:
-            stmt = stmt.where(false())  # see module docstring: documented stub
+        if has_signal is not None:
+            stmt = stmt.where(_has_signal_predicate(analysis_id, want_signal=has_signal))
 
         stmt = stmt.order_by(Event.ts.asc(), Event.id.asc())
         if cursor is not None:
@@ -130,9 +221,22 @@ def list_events(
 
         rows = db.execute(stmt).scalars().all()
 
-    has_more = len(rows) > limit
-    page = rows[:limit]
-    items = [EventListItem.model_validate(e) for e in page]
+        has_more = len(rows) > limit
+        page = rows[:limit]
+        stats = _signal_stats_for_page(db, analysis_id, [e.id for e in page])
+
+    items = [
+        EventListItem.model_validate(e).model_copy(
+            update={
+                "signal_count": s.count,
+                "max_confidence": s.max_confidence,
+                "detectors": sorted(s.detectors),
+            }
+        )
+        if (s := stats.get(e.id)) is not None
+        else EventListItem.model_validate(e)
+        for e in page
+    ]
     next_cursor = _encode_cursor(page[-1].ts, page[-1].id) if has_more and page else None
     return EventListResponse(items=items, next_cursor=next_cursor)
 
@@ -145,6 +249,32 @@ def get_event(
 ) -> EventOut:
     with tenant_scope(db, current.tenant.id):
         event = db.execute(select(Event).where(Event.id == event_id)).scalar_one_or_none()
-    if event is None:
-        raise _event_not_found()
-    return EventOut.model_validate(event)
+        if event is None:
+            raise _event_not_found()
+        # Single-event detail view: a per-event query here is fine (docs/09's "do not query
+        # per event" note is about the paged list, which can carry up to 500 rows). `[event.id]`
+        # is a bare Python list (`event.id` already loaded as a plain int, not a column
+        # expression here) — see `_signal_stats_for_page`'s docstring for why that must not be
+        # wrapped in `postgresql.array(...)`.
+        signals = (
+            db.execute(
+                select(Signal).where(
+                    Signal.analysis_id == event.analysis_id,
+                    Signal.evidence_event_ids.op("@>")([event.id]),
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    confidences = [s.confidence for s in signals]
+    base = EventListItem.model_validate(event)
+    return EventOut(
+        **base.model_dump(exclude={"signal_count", "max_confidence", "detectors"}),
+        ocsf=event.ocsf,
+        enrichment=event.enrichment,
+        signal_count=len(signals),
+        max_confidence=max(confidences) if confidences else None,
+        detectors=sorted({s.detector_key for s in signals}),
+        signals=[EventSignalOut.model_validate(s) for s in signals],
+    )

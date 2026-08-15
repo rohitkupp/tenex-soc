@@ -3,29 +3,36 @@
 /**
  * `/analyses/[id]/events` — docs/10: "Raw event explorer, filterable, signal-bearing rows
  * marked." Filterable and paginated per docs/09's `GET /api/analyses/{id}/events` (keyset
- * cursor, hot-column filters). "Signal-bearing rows marked" is not implemented as a per-row
- * visual: `EventListItem` (`backend/app/schemas/event.py`) carries no such flag, and
- * `has_signal` in the API is a query *filter*, not a response field — `events.py`'s own
- * module docstring calls this "a documented stub" (the `signals` table doesn't exist from
- * this route's perspective yet). The filter itself is still wired below, honestly: toggling
- * it sends `has_signal=true` and will currently return zero rows against the live backend,
- * which is the real, current behavior, not a fabricated marker.
+ * cursor, hot-column filters).
+ *
+ * M15: signal-bearing rows are now a real per-row visual (`EventListItem` gained
+ * `signal_count`/`max_confidence`/`detectors` — see `lib/api/types.ts`), and `has_signal`
+ * genuinely filters instead of always returning zero rows. Highlighting never relies on
+ * colour alone: a flagged row gets a `severity-high` left-edge accent (the same token the
+ * app already uses for "this needs attention" outside strict incident severity, e.g. this
+ * file's own error text below) *plus* a labelled "Flagged" badge and bolder time text, so a
+ * colour-blind reader or a screen reader gets the same signal a sighted scan does. Clicking
+ * a row expands `EventInspector`, which now renders each attached signal's `explanation`
+ * through the shared `ExplanationRenderer` — the "why" the brief asks for.
  */
 import { Fragment, useCallback, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
 import type { EventListItem, EventListResponse } from "@/lib/api/types";
-import { formatDate } from "@/lib/format";
+import { formatDate, formatScore } from "@/lib/format";
+import { Badge } from "@/components/ui/Badge";
 import { EventInspector } from "./EventInspector";
+
+type SignalFilter = "all" | "signal" | "no_signal";
 
 interface Filters {
   principal: string;
   domain: string;
   src_ip: string;
   action: string;
-  has_signal: boolean;
+  signal: SignalFilter;
 }
 
-const EMPTY_FILTERS: Filters = { principal: "", domain: "", src_ip: "", action: "", has_signal: false };
+const EMPTY_FILTERS: Filters = { principal: "", domain: "", src_ip: "", action: "", signal: "all" };
 
 function buildQuery(analysisId: string, filters: Filters, cursor: string | null): string {
   const params = new URLSearchParams();
@@ -33,7 +40,8 @@ function buildQuery(analysisId: string, filters: Filters, cursor: string | null)
   if (filters.domain) params.set("domain", filters.domain);
   if (filters.src_ip) params.set("src_ip", filters.src_ip);
   if (filters.action) params.set("action", filters.action);
-  if (filters.has_signal) params.set("has_signal", "true");
+  if (filters.signal === "signal") params.set("has_signal", "true");
+  if (filters.signal === "no_signal") params.set("has_signal", "false");
   if (cursor) params.set("cursor", cursor);
   params.set("limit", "100");
   return `/api/analyses/${analysisId}/events?${params.toString()}`;
@@ -115,13 +123,17 @@ export function EventExplorer({
             onChange={(e) => setFilters((f) => ({ ...f, action: e.target.value }))}
           />
         </label>
-        <label className="flex items-center gap-1.5 pb-2 text-xs text-[var(--color-text-lo)]" title="Documented stub — currently returns zero rows against the live backend.">
-          <input
-            type="checkbox"
-            checked={filters.has_signal}
-            onChange={(e) => setFilters((f) => ({ ...f, has_signal: e.target.checked }))}
-          />
-          Signal-bearing only
+        <label className="flex flex-col gap-1 text-xs text-[var(--color-text-lo)]">
+          Signals
+          <select
+            className={inputClass}
+            value={filters.signal}
+            onChange={(e) => setFilters((f) => ({ ...f, signal: e.target.value as SignalFilter }))}
+          >
+            <option value="all">All events</option>
+            <option value="signal">Signal-bearing only</option>
+            <option value="no_signal">No signal only</option>
+          </select>
         </label>
         <button
           type="submit"
@@ -144,7 +156,7 @@ export function EventExplorer({
         </div>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-[var(--color-border)]">
-          <table className="w-full min-w-[720px] border-collapse text-xs">
+          <table className="w-full min-w-[900px] border-collapse text-xs">
             <thead>
               <tr className="border-b border-[var(--color-border)] bg-[var(--color-surface-1)] text-left text-[var(--color-text-lo)]">
                 <th className="px-3 py-2 font-normal">Time</th>
@@ -154,32 +166,71 @@ export function EventExplorer({
                 <th className="px-3 py-2 font-normal">Action</th>
                 <th className="px-3 py-2 font-normal">Status</th>
                 <th className="px-3 py-2 font-normal">Bytes out</th>
+                <th className="px-3 py-2 font-normal">Confidence</th>
+                <th className="px-3 py-2 font-normal">Flagged by</th>
               </tr>
             </thead>
             <tbody>
-              {events.map((event) => (
-                <Fragment key={event.id}>
-                  <tr
-                    onClick={() => setExpandedId(expandedId === event.id ? null : event.id)}
-                    className="cursor-pointer border-b border-[var(--color-border)] bg-[var(--color-surface-1)] transition-colors last:border-b-0 hover:bg-[var(--color-surface-2)]"
-                  >
-                    <td className="px-3 py-2 font-mono text-[var(--color-text-hi)]">{formatDate(event.ts)}</td>
-                    <td className="px-3 py-2 font-mono text-[var(--color-text-mid)]">{event.principal ?? "—"}</td>
-                    <td className="px-3 py-2 font-mono text-[var(--color-text-mid)]">{event.domain ?? "—"}</td>
-                    <td className="px-3 py-2 font-mono text-[var(--color-text-mid)]">{event.src_ip ?? "—"}</td>
-                    <td className="px-3 py-2 text-[var(--color-text-mid)]">{event.action ?? "—"}</td>
-                    <td className="px-3 py-2 font-mono text-[var(--color-text-mid)]">{event.status_code ?? "—"}</td>
-                    <td className="px-3 py-2 font-mono text-[var(--color-text-mid)]">{event.bytes_out ?? "—"}</td>
-                  </tr>
-                  {expandedId === event.id && (
-                    <tr>
-                      <td colSpan={7} className="bg-[var(--color-surface-0)] p-3">
-                        <EventInspector eventId={event.id} />
+              {events.map((event) => {
+                const flagged = event.signal_count > 0;
+                return (
+                  <Fragment key={event.id}>
+                    <tr
+                      onClick={() => setExpandedId(expandedId === event.id ? null : event.id)}
+                      aria-expanded={expandedId === event.id}
+                      className="cursor-pointer border-b border-[var(--color-border)] bg-[var(--color-surface-1)] transition-colors last:border-b-0 hover:bg-[var(--color-surface-2)]"
+                      style={flagged ? { borderLeft: "3px solid var(--color-severity-high)" } : undefined}
+                    >
+                      <td
+                        className={`px-3 py-2 font-mono ${flagged ? "font-semibold text-[var(--color-text-hi)]" : "text-[var(--color-text-hi)]"}`}
+                      >
+                        {formatDate(event.ts)}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-[var(--color-text-mid)]">{event.principal ?? "—"}</td>
+                      <td className="px-3 py-2 font-mono text-[var(--color-text-mid)]">{event.domain ?? "—"}</td>
+                      <td className="px-3 py-2 font-mono text-[var(--color-text-mid)]">{event.src_ip ?? "—"}</td>
+                      <td className="px-3 py-2 text-[var(--color-text-mid)]">{event.action ?? "—"}</td>
+                      <td className="px-3 py-2 font-mono text-[var(--color-text-mid)]">{event.status_code ?? "—"}</td>
+                      <td className="px-3 py-2 font-mono text-[var(--color-text-mid)]">{event.bytes_out ?? "—"}</td>
+                      <td className="px-3 py-2 font-mono text-[var(--color-text-hi)]">
+                        {flagged ? formatScore(event.max_confidence) : "—"}
+                      </td>
+                      <td className="px-3 py-2">
+                        {flagged ? (
+                          <span className="flex flex-wrap items-center gap-1.5">
+                            <Badge variant="outline">
+                              <span aria-hidden="true" style={{ color: "var(--color-severity-high)" }}>
+                                ▲
+                              </span>
+                              flagged
+                            </Badge>
+                            {event.detectors.slice(0, 2).map((d) => (
+                              <span
+                                key={d}
+                                className="rounded border border-[var(--color-border)] px-1.5 py-0.5 font-mono text-[var(--color-text-mid)]"
+                              >
+                                {d}
+                              </span>
+                            ))}
+                            {event.detectors.length > 2 && (
+                              <span className="text-[var(--color-text-lo)]">+{event.detectors.length - 2}</span>
+                            )}
+                          </span>
+                        ) : (
+                          <span className="text-[var(--color-text-lo)]">—</span>
+                        )}
                       </td>
                     </tr>
-                  )}
-                </Fragment>
-              ))}
+                    {expandedId === event.id && (
+                      <tr>
+                        <td colSpan={9} className="bg-[var(--color-surface-0)] p-3">
+                          <EventInspector eventId={event.id} />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
