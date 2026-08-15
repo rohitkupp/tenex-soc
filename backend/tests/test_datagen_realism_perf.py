@@ -9,15 +9,23 @@ that is not what the README says it is. Every test below drives the real CLI-fac
 (`datagen.corpus`) and asserts against the emitted lines, not against the intermediate model
 objects, for exactly that reason. No datagen source was modified to write this file.
 
-`test_human_user_agents_never_include_a_mobile_device` is expected to fail at the time this file
-was written. It documents a real fidelity gap: `Org._build_users` (org.py) assigns every human's
-device fingerprint via `UserAgentMix.sample_desktop()` (realism.py), which filters the real-world
-browser-share table (`_BROWSER_SHARE`) down to `device_type == "desktop"` before sampling. Three
-specs — Chrome/Android, Safari/iOS, Samsung Internet/Android — carry 26.3 of the table's 100 share
-points and are therefore structurally unreachable by any human principal. docs/11 states the
-mitigation as "User-agent mix | Real-world browser share table" with no documented carve-out for
-mobile, so the emitted corpus is real-world-proportioned only among desktop browsers, not against
-the table as a whole.
+`test_human_user_agents_never_include_a_mobile_device` documents a real fidelity gap and is marked
+`xfail(strict=True)`. `Org._build_users` (org.py) assigns every human's device fingerprint via
+`UserAgentMix.sample_desktop()` (realism.py), which filters the real-world browser-share table
+(`_BROWSER_SHARE`) down to `device_type == "desktop"` before sampling. Three specs —
+Chrome/Android, Safari/iOS, Samsung Internet/Android — carry 26.3 of the table's 100 share points
+and are therefore structurally unreachable by any human principal, so the emitted corpus is
+real-world-proportioned only among desktop browsers, not against the table as a whole.
+
+Resolved by the second of the two options this test originally offered: the limitation is now
+stated explicitly in docs/11 and the README rather than papered over. Fixing the generator instead
+would change the emitted corpus for a given seed, which would invalidate every number in
+`evals/results.md` — a real cost, paid for a realism detail no detector in this system reads
+(nothing keys on mobile-vs-desktop; the user-agent features are `is_browser_ua` and UA rarity).
+
+`strict=True` matters: if someone later gives a minority of users a mobile fingerprint, this test
+starts passing and the strict marker turns that into a *failure*, forcing the marker and the two
+documented carve-outs to be removed together instead of silently drifting out of date.
 """
 
 from __future__ import annotations
@@ -26,6 +34,8 @@ import math
 import resource
 from collections import Counter
 from pathlib import Path
+
+import pytest
 
 from datagen import corpus
 from datagen.realism import _BROWSER_SHARE, load_top_domains
@@ -136,14 +146,18 @@ def test_service_account_user_agents_are_automation_tools_not_browsers(tmp_path:
     assert seen_service_ua, "sanity: no service-account traffic was generated to check"
 
 
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Known, documented limitation: humans get desktop-only user agents. Stated in docs/11 "
+        "and the README. strict=True so fixing the generator fails here and forces both "
+        "carve-outs to be removed with it — see the module docstring."
+    ),
+)
 def test_human_user_agents_never_include_a_mobile_device(tmp_path: Path) -> None:
-    """Documents a real fidelity gap (see module docstring): every human's device fingerprint is
-    drawn via `UserAgentMix.sample_desktop()`, so the mobile third of the real-world browser-share
-    table (`_BROWSER_SHARE`) — Chrome/Android, Safari/iOS, Samsung Internet — is unreachable by
-    any human principal, contradicting docs/11's unqualified "real-world browser share table"
-    claim. Expected to fail until either a minority of users are given a mobile fingerprint or the
-    docs/README carve out desktop-only as a stated limitation.
-    """
+    """Every human's device fingerprint is drawn via `UserAgentMix.sample_desktop()`, so the
+    mobile 26.3% of the real-world browser-share table (`_BROWSER_SHARE`) — Chrome/Android,
+    Safari/iOS, Samsung Internet — is unreachable by any human principal."""
     log_path = _write_benign(tmp_path, proxy_events=60_000)
     mobile_markers = ("iPhone", "Android")
 

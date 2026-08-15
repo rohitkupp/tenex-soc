@@ -167,8 +167,16 @@ Nothing here is hidden in a footnote. Each is a real limitation of what shipped.
 5. **Synthetic data circularity.** The generator and the detectors were written by the same author.
    The eval corpus uses a different seed and a namespaced org fingerprint from training, and no
    model is scored on data it was fit or tuned on — but that does not make the scenarios
-   adversarially realistic.
+   adversarially realistic. One measured fidelity gap within that: **human user agents are
+   desktop-only**, so the 26.3% mobile share of the real browser table is unreachable
+   ([docs/11](docs/11-SYNTHETIC-DATA.md)). Held in place by an `xfail(strict=True)` test rather
+   than fixed, because changing the generator would invalidate every number in
+   `backend/evals/results.md` for a realism detail no detector reads.
 6. **The enforcement plane is deliberately simulated** and stateful. Everything else runs for real.
+7. **`GET /api/models` is not implemented.** The `/models` page therefore renders the committed
+   benchmark tables from `backend/evals/results.md` as a clearly-labeled static report rather than
+   a live call. The numbers are the real ones; the delivery mechanism is not the live one. Every
+   other page in the UI is driven by a working endpoint.
 
 ---
 

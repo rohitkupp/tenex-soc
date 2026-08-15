@@ -26,12 +26,25 @@ generator. Mitigate by grounding distributions in real-world data rather than in
 | Property | Source |
 |---|---|
 | Domain popularity | Zipf sample over a bundled top-sites list |
-| User-agent mix | Real-world browser share table |
+| User-agent mix | Real-world browser share table, **desktop rows only** for human principals (see below) |
 | Diurnal activity | Business-hours curve with weekend dropoff and per-user jitter |
 | Response sizes | Log-normal fit to realistic web content sizes |
 | Geography | Weighted by simulated org office locations |
 
 State this mitigation, and its limits, in the README.
+
+**Known limit — human user agents are desktop-only.** `Org._build_users` draws every human's
+device fingerprint through `UserAgentMix.sample_desktop()`, which filters `_BROWSER_SHARE` to
+`device_type == "desktop"` before sampling. Chrome/Android, Safari/iOS, and Samsung Internet carry
+26.3 of the table's 100 share points and are therefore unreachable by any human principal: the
+emitted corpus is real-world-proportioned *among desktop browsers*, not against the whole table.
+Service accounts are unaffected (they carry automation UAs by design).
+
+This is documented rather than fixed, deliberately. No detector in the system reads mobile-vs-
+desktop — the user-agent features are `is_browser_ua` and UA rarity — while changing the generator
+would change the emitted corpus for a given seed and invalidate every number in
+`evals/results.md`. `tests/test_datagen_realism_perf.py` holds the gap in place with an
+`xfail(strict=True)`, so closing it later forces this paragraph to be removed with it.
 
 ## Simulated org
 
