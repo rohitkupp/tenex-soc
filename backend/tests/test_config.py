@@ -16,12 +16,21 @@ from typing import Any
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from app.core.config import DEV_JWT_SECRET, DEV_PSEUDONYM_SALT, DEV_S3_SECRET, Settings
+from app.core.config import (
+    DEV_JWT_SECRET,
+    DEV_PSEUDONYM_SALT,
+    DEV_S3_SECRET,
+    DEV_TIER2_INDICATOR_SALT,
+    DEV_TIER2_READONLY_DB_PASSWORD,
+    Settings,
+)
 
 REAL = {
     "jwt_secret": SecretStr("a-real-48-byte-secret-from-the-environment"),
     "pseudonym_salt": SecretStr("a-real-per-tenant-salt"),
     "s3_secret_key": SecretStr("a-real-object-store-key"),
+    "tier2_indicator_salt": SecretStr("a-real-shared-indicator-salt"),
+    "tier2_readonly_db_password": SecretStr("a-real-readonly-db-password"),
 }
 
 
@@ -41,6 +50,8 @@ def test_local_tolerates_dev_defaults() -> None:
         ("jwt_secret", DEV_JWT_SECRET),
         ("pseudonym_salt", DEV_PSEUDONYM_SALT),
         ("s3_secret_key", DEV_S3_SECRET),
+        ("tier2_indicator_salt", DEV_TIER2_INDICATOR_SALT),
+        ("tier2_readonly_db_password", DEV_TIER2_READONLY_DB_PASSWORD),
     ],
 )
 def test_production_rejects_each_dev_default(field: str, sentinel: str) -> None:

@@ -161,6 +161,7 @@ def build_incident_context(
     signals: list[dict[str, Any]],
     timeline: list[dict[str, Any]],
     entity_scope: list[dict[str, str]],
+    total_signal_count: int,
 ) -> str:
     """The Investigator's first user-turn payload — everything about the incident that was
     already computed upstream (docs/05 correlation, docs/04 detection), wrapped as untrusted
@@ -168,11 +169,15 @@ def build_incident_context(
     summaries) ultimately traces back to attacker-reachable log content, even though it has
     passed through several deterministic transformation stages since. `severity`/`fused_score`
     are included for situational context only — the system prompt already tells the model these
-    are not its call to make."""
+    are not its call to make. `signals` may be a capped, highest-confidence-first subset of
+    `total_signal_count` — the orchestrator caps large incidents (CLAUDE.md rule 1); the count is
+    included explicitly so the model knows when it's seeing everything versus a sample."""
     payload = {
         "incident_title": incident_title,
         "severity_from_fusion": severity,
         "fused_score": fused_score,
+        "total_signal_count": total_signal_count,
+        "signals_shown": len(signals),
         "signals": signals,
         "timeline": timeline,
         "entities_in_scope": entity_scope,

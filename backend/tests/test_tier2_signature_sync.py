@@ -28,15 +28,15 @@ from tests.conftest import make_analysis, make_tenant, make_user
 from tests.fixtures.response import make_incident, make_triage_verdict
 from tests.fixtures.tier2 import (
     make_entity,
-    tier2_signature_cleanup,
-    tier2_tenant_cleanup,
+    tier2_signature_cleanup,  # noqa: F401 -- imported for pytest fixture registration, used by name as a parameter below
+    tier2_tenant_cleanup,  # noqa: F401 -- same as above
 )
 
 _REAL_SALT_SETTINGS = Settings(_env_file=None, tier2_indicator_salt="a-real-shared-indicator-salt")
 
 
 @pytest.fixture
-def ctx(tier2_tenant_cleanup: list[uuid.UUID]):
+def ctx(tier2_tenant_cleanup: list[uuid.UUID]):  # noqa: F811
     tenant = make_tenant(name="Tier2 Sync Test Tenant")
     tier2_tenant_cleanup.append(tenant.id)
     user = make_user(tenant_id=tenant.id, email=f"tier2sync-{uuid.uuid4()}@test.local")
@@ -211,7 +211,8 @@ def test_build_signature_rejects_mismatched_incident_and_verdict(ctx: dict) -> N
 
 
 def test_build_signature_rejects_mismatched_incident_and_tenant(
-    ctx: dict, tier2_tenant_cleanup: list[uuid.UUID]
+    ctx: dict,
+    tier2_tenant_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant, analysis = ctx["tenant"], ctx["analysis"]
     other_tenant = make_tenant(name="Some Other Tenant")
@@ -270,7 +271,8 @@ def test_derive_source_types_from_upload(ctx: dict) -> None:
 
 
 def test_sync_incident_to_tier2_persists_a_real_row(
-    ctx: dict, tier2_signature_cleanup: list[uuid.UUID]
+    ctx: dict,
+    tier2_signature_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant, analysis = ctx["tenant"], ctx["analysis"]
     e_domain = make_entity(analysis_id=analysis.id, entity_type="domain", value="beacon.evil.test")
@@ -310,7 +312,8 @@ def test_sync_incident_to_tier2_persists_a_real_row(
 
 
 def test_sync_incident_to_tier2_skips_benign_and_writes_nothing(
-    ctx: dict, tier2_signature_cleanup: list[uuid.UUID]
+    ctx: dict,
+    tier2_signature_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant, analysis = ctx["tenant"], ctx["analysis"]
     incident = make_incident(tenant_id=tenant.id, analysis_id=analysis.id)

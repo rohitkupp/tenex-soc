@@ -34,6 +34,8 @@ _REAL_PRODUCTION_SECRETS = {
     "jwt_secret": SecretStr("a-real-48-byte-secret-from-the-environment"),
     "pseudonym_salt": SecretStr("a-real-per-tenant-salt"),
     "s3_secret_key": SecretStr("a-real-object-store-key"),
+    "tier2_indicator_salt": SecretStr("a-real-shared-indicator-salt"),
+    "tier2_readonly_db_password": SecretStr("a-real-readonly-db-password"),
 }
 
 

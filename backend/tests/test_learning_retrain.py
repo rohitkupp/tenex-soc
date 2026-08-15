@@ -25,7 +25,7 @@ from app.learning.classifier import TrainingRow, TrainResult, build_training_row
 from app.learning.retrain import DOCS12_TOLERANCES, evaluate_candidate, run_classifier_retrain
 from app.models.model_version import ModelVersion
 from tests.conftest import make_analysis, make_tenant, make_user
-from tests.fixtures.learning import (
+from tests.fixtures.learning import (  # noqa: F401
     learning_cleanup,
     learning_session,
     make_feedback,
@@ -160,7 +160,8 @@ def _seed_labeled_rows(
 
 
 def test_run_classifier_retrain_skips_below_the_minimum_row_threshold(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Retrain Too Few Rows Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -176,7 +177,9 @@ def test_run_classifier_retrain_skips_below_the_minimum_row_threshold(
 
 
 def test_run_classifier_retrain_promotes_the_first_attempt_with_no_incumbent(
-    learning_session: Session, learning_cleanup: list[uuid.UUID], retrain_model_key: str
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
+    retrain_model_key: str,
 ) -> None:
     tenant = make_tenant(name="Retrain First Promotion Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -207,7 +210,9 @@ def test_run_classifier_retrain_promotes_the_first_attempt_with_no_incumbent(
 
 
 def test_run_classifier_retrain_rejects_a_deliberately_worse_second_attempt(
-    learning_session: Session, learning_cleanup: list[uuid.UUID], retrain_model_key: str
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
+    retrain_model_key: str,
 ) -> None:
     """End-to-end version of the same acceptance-bar requirement: a first, decent model
     promotes; a second, deliberately worse model is rejected and the first stays live -- both
@@ -277,7 +282,8 @@ def test_run_classifier_retrain_rejects_a_deliberately_worse_second_attempt(
 
 
 def test_run_classifier_retrain_persist_false_writes_nothing(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Retrain No Persist Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -302,13 +308,14 @@ def test_run_classifier_retrain_persist_false_writes_nothing(
 
 
 def test_build_training_rows_and_real_lightgbm_end_to_end(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     """Exercises `app.learning.classifier.train_and_evaluate`'s real (non-stubbed) LightGBM path.
     Skips, rather than fails, if `lightgbm` cannot be imported in this environment -- see
     `app/learning/classifier.py`'s module docstring."""
     try:
-        import lightgbm
+        import lightgbm  # noqa: F401
     except (ImportError, OSError) as exc:
         pytest.skip(f"lightgbm not loadable in this environment: {exc}")
 
@@ -330,10 +337,12 @@ def test_build_training_rows_and_real_lightgbm_end_to_end(
 
 
 def test_run_classifier_retrain_real_lightgbm_writes_a_promoted_first_version(
-    learning_session: Session, learning_cleanup: list[uuid.UUID], retrain_model_key: str
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
+    retrain_model_key: str,
 ) -> None:
     try:
-        import lightgbm
+        import lightgbm  # noqa: F401
     except (ImportError, OSError) as exc:
         pytest.skip(f"lightgbm not loadable in this environment: {exc}")
 

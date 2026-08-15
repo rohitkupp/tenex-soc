@@ -14,7 +14,7 @@ from app.learning.calibration import (
     summarize_for_api,
 )
 from tests.conftest import make_analysis, make_tenant, make_user
-from tests.fixtures.learning import (
+from tests.fixtures.learning import (  # noqa: F401
     learning_cleanup,
     learning_session,
     make_feedback,
@@ -54,7 +54,8 @@ def _seed_miscalibrated_detector(
 
 
 def test_refit_calibrators_improves_brier_score_on_miscalibrated_detector(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Calibration Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -79,7 +80,8 @@ def test_refit_calibrators_improves_brier_score_on_miscalibrated_detector(
 
 
 def test_refit_calibrators_skips_detector_with_too_few_samples(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Calibration Sparse Tenant")
     learning_cleanup.append(tenant.id)
@@ -106,7 +108,8 @@ def test_refit_calibrators_skips_detector_with_too_few_samples(
 
 
 def test_refit_calibrators_skips_single_class_detector(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Calibration Single Class Tenant")
     learning_cleanup.append(tenant.id)
@@ -145,7 +148,8 @@ def test_apply_calibrator_falls_back_to_clamped_raw_score_when_unfitted() -> Non
 
 
 def test_apply_calibrator_uses_persisted_artifact_after_refit(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Calibration Persist Tenant")
     learning_cleanup.append(tenant.id)
@@ -169,7 +173,8 @@ def test_should_refit_now_matches_documented_cadence() -> None:
 
 
 def test_summarize_for_api_shape(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Calibration Summary Tenant")
     learning_cleanup.append(tenant.id)

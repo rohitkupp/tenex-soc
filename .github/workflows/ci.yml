@@ -82,18 +82,57 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
 
-  # Enabled at M16. A regression beyond tolerance fails the build — see docs/12.
+  # Enabled at M16. A regression beyond tolerance fails the build — see docs/12. Needs a live
+  # Postgres (the real L1 Sigma rules and L2 events_dao have no DB-free code path — see
+  # backend/evals/pipeline.py's module docstring) but never an ANTHROPIC_API_KEY: agent metrics
+  # degrade to "not measured" (backend/evals/metrics/agent.py) rather than attempting a live call,
+  # which is exactly what `DEMO_MODE: "true"` (this workflow's own global env, above) signals.
   eval-gate:
     runs-on: ubuntu-latest
-    if: false
     defaults:
       run:
         working-directory: backend
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: tenex
+          POSTGRES_PASSWORD: tenex
+          POSTGRES_DB: tenex
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tenex -d tenex"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+    env:
+      DATABASE_URL: postgresql+psycopg://tenex:tenex@localhost:5432/tenex
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      # lightgbm's Linux wheel dynamically links libgomp.so.1 — present on ubuntu-latest by
+      # default, but installed explicitly so this job never depends on that staying true.
+      - name: Install system OpenMP runtime (lightgbm)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libgomp1
+
+      - name: Install
+        run: pip install -e ".[dev]"
+
+      - name: Migrate
+        run: alembic upgrade head
+
       - name: Golden dataset regression gate
         run: python -m evals.run
+
+      - name: Upload results.md
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: backend/evals/results.md

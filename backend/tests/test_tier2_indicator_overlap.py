@@ -21,8 +21,8 @@ from tests.conftest import make_analysis, make_tenant, make_user
 from tests.fixtures.response import make_incident, make_triage_verdict
 from tests.fixtures.tier2 import (
     make_entity,
-    tier2_signature_cleanup,
-    tier2_tenant_cleanup,
+    tier2_signature_cleanup,  # noqa: F401 -- imported for pytest fixture registration, used by name as a parameter below
+    tier2_tenant_cleanup,  # noqa: F401 -- same as above
 )
 
 _SHARED_SALT_SETTINGS = Settings(
@@ -33,7 +33,7 @@ _SHARED_C2_DOMAIN = "c2.two-tenant-overlap-test.example"
 
 
 @pytest.fixture
-def two_tenants(tier2_tenant_cleanup: list[uuid.UUID]):
+def two_tenants(tier2_tenant_cleanup: list[uuid.UUID]):  # noqa: F811
     """Tenant A and Tenant B, each with their own upload/analysis, each having seen the
     *same* C2 domain independently -- the minimal scenario the whole feature exists for."""
     tenants = {}
@@ -72,7 +72,8 @@ def _sync_signature_for_tenant(tenant_ctx: dict, domain: str) -> Tier2Signature:
 
 
 def test_two_tenants_seeing_the_same_domain_produce_the_same_indicator_hash(
-    two_tenants: dict, tier2_signature_cleanup: list[uuid.UUID]
+    two_tenants: dict,
+    tier2_signature_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     sig_a = _sync_signature_for_tenant(two_tenants["a"], _SHARED_C2_DOMAIN)
     sig_b = _sync_signature_for_tenant(two_tenants["b"], _SHARED_C2_DOMAIN)
@@ -86,7 +87,8 @@ def test_two_tenants_seeing_the_same_domain_produce_the_same_indicator_hash(
 
 
 def test_overlap_surfaces_across_the_two_tenants(
-    two_tenants: dict, tier2_signature_cleanup: list[uuid.UUID]
+    two_tenants: dict,
+    tier2_signature_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     sig_a = _sync_signature_for_tenant(two_tenants["a"], _SHARED_C2_DOMAIN)
     sig_b = _sync_signature_for_tenant(two_tenants["b"], _SHARED_C2_DOMAIN)
@@ -107,7 +109,8 @@ def test_overlap_surfaces_across_the_two_tenants(
 
 
 def test_a_tenant_seen_indicator_alone_does_not_appear_as_overlap(
-    two_tenants: dict, tier2_signature_cleanup: list[uuid.UUID]
+    two_tenants: dict,
+    tier2_signature_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     """The negative case: an indicator only tenant A has ever seen must not show up in the
     min_tenants=2 overlap listing at all -- overlap means *cross*-tenant, not "any
@@ -126,7 +129,8 @@ def test_a_tenant_seen_indicator_alone_does_not_appear_as_overlap(
 
 
 def test_neither_tenants_raw_indicator_value_is_recoverable_from_the_other_view(
-    two_tenants: dict, tier2_signature_cleanup: list[uuid.UUID]
+    two_tenants: dict,
+    tier2_signature_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     """The privacy half of the milestone brief: "neither tenant's raw indicator values are
     recoverable from the other's view." Everything the overlap query returns is checked
@@ -169,7 +173,8 @@ def test_neither_tenants_identity_is_recoverable_from_tenant_hash_alone(two_tena
 
 
 def test_overview_totals_reflect_both_tenants(
-    two_tenants: dict, tier2_signature_cleanup: list[uuid.UUID]
+    two_tenants: dict,
+    tier2_signature_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     sig_a = _sync_signature_for_tenant(two_tenants["a"], _SHARED_C2_DOMAIN)
     sig_b = _sync_signature_for_tenant(two_tenants["b"], "second-domain-only-b.example")
@@ -188,7 +193,8 @@ def test_overview_totals_reflect_both_tenants(
 
 
 def test_shared_salt_is_what_makes_overlap_detectable_at_all(
-    two_tenants: dict, tier2_signature_cleanup: list[uuid.UUID]
+    two_tenants: dict,
+    tier2_signature_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     """The negative control that proves the salt tradeoff is load-bearing, not incidental:
     hashing the same domain with two genuinely different salts (simulating the mistake

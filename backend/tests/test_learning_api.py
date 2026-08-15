@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from app.models.base import tenant_scope
 from app.models.incident import Incident
 from tests.conftest import authenticate, make_analysis, make_tenant, make_user
-from tests.fixtures.learning import (
+from tests.fixtures.learning import (  # noqa: F401
     learning_cleanup,
     learning_session,
     make_feedback,
@@ -32,7 +32,8 @@ def test_feedback_endpoint_requires_auth(client: TestClient) -> None:
 
 
 def test_feedback_endpoint_404_for_unknown_incident(
-    client: TestClient, learning_cleanup: list[uuid.UUID]
+    client: TestClient,
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="API Feedback 404 Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -45,7 +46,9 @@ def test_feedback_endpoint_404_for_unknown_incident(
 
 
 def test_feedback_endpoint_409_for_untriaged_incident(
-    client: TestClient, learning_session: Session, learning_cleanup: list[uuid.UUID]
+    client: TestClient,
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="API Feedback 409 Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -73,7 +76,9 @@ def test_feedback_endpoint_409_for_untriaged_incident(
 
 
 def test_feedback_endpoint_records_feedback_and_returns_weight_changes(
-    client: TestClient, learning_session: Session, learning_cleanup: list[uuid.UUID]
+    client: TestClient,
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="API Feedback Success Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -109,7 +114,9 @@ def test_feedback_endpoint_records_feedback_and_returns_weight_changes(
 
 
 def test_feedback_endpoint_generates_suppression_candidate_on_dismissal(
-    client: TestClient, learning_session: Session, learning_cleanup: list[uuid.UUID]
+    client: TestClient,
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="API Feedback Suppression Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -138,7 +145,9 @@ def test_learning_metrics_endpoint_requires_auth(client: TestClient) -> None:
 
 
 def test_learning_metrics_endpoint_reflects_recorded_feedback(
-    client: TestClient, learning_session: Session, learning_cleanup: list[uuid.UUID]
+    client: TestClient,
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="API Metrics Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -166,18 +175,25 @@ def test_learning_metrics_endpoint_reflects_recorded_feedback(
 
 
 def test_suppressions_endpoints_list_and_accept(
-    client: TestClient, learning_session: Session, learning_cleanup: list[uuid.UUID]
+    client: TestClient,
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="API Suppressions Test Tenant")
     learning_cleanup.append(tenant.id)
     user = make_user(tenant_id=tenant.id, email=f"api-suppress-{uuid.uuid4()}@test.local")
     analysis = make_analysis(tenant_id=tenant.id, user_id=user.id)
+    # A run-unique detector_key, not the real "sigma.non_browser_user_agent" -- this test's own
+    # POST goes through the real HTTP feedback endpoint, which always retunes `detector_stats`
+    # (a global, not tenant-scoped, primary key -- see `tests.fixtures.learning.make_signal`'s
+    # docstring). The literal detector name is not itself under test here.
+    detector_key = f"test.api.suppress.{uuid.uuid4().hex[:8]}"
 
     sig = make_signal(
         learning_session,
         tenant_id=tenant.id,
         analysis_id=analysis.id,
-        detector_key="sigma.non_browser_user_agent",
+        detector_key=detector_key,
         entity_type="src_ip",
         entity_value="203.0.113.99",
     )
@@ -225,7 +241,8 @@ def test_suppressions_endpoints_list_and_accept(
 
 
 def test_suppressions_accept_404_for_unknown_candidate(
-    client: TestClient, learning_cleanup: list[uuid.UUID]
+    client: TestClient,
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="API Suppressions 404 Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -242,7 +259,9 @@ def test_models_calibration_endpoint_requires_auth(client: TestClient) -> None:
 
 
 def test_models_calibration_endpoint_reflects_feedback(
-    client: TestClient, learning_session: Session, learning_cleanup: list[uuid.UUID]
+    client: TestClient,
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="API Calibration Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -286,7 +305,8 @@ def test_models_versions_endpoint_requires_auth(client: TestClient) -> None:
 
 
 def test_models_versions_endpoint_returns_a_list(
-    client: TestClient, learning_cleanup: list[uuid.UUID]
+    client: TestClient,
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="API Versions Test Tenant")
     learning_cleanup.append(tenant.id)

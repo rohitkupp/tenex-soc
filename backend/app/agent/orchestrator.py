@@ -104,6 +104,19 @@ log = get_logger(__name__)
 
 MAX_TOKENS_PER_TURN = 8192
 MAX_ROLE_TURNS = 12  # safety cap independent of the tool-call budget — see _run_tool_role
+MAX_SIGNALS_IN_CONTEXT = 30  # highest-confidence first — see _build_incident_context_block
+MAX_EVIDENCE_IDS_IN_CONTEXT = 20  # per signal/timeline-phase, same reasoning
+
+# docs/07 "Bounds": "Input tokens | 60k per incident | Truncate oldest tool results." Checked
+# after every turn against that turn's own `usage.input_tokens` (the size of the request that
+# was just sent — the best available proxy for what the *next* request would cost before it's
+# built) — a live run without this measured 64.5k input tokens on a 9-signal incident, so this
+# is not a theoretical bound.
+MAX_INPUT_TOKENS = 60_000
+_TRUNCATED_TOOL_RESULT_PLACEHOLDER = (
+    "[earlier tool result omitted to stay within the 60k input-token budget — call the tool "
+    "again if you need this data]"
+)
 
 INVESTIGATOR_TOOLS: list[dict[str, Any]] = TOOL_DEFINITIONS
 DEVILS_ADVOCATE_TOOLS: list[dict[str, Any]] = [
@@ -172,12 +185,21 @@ def _build_incident_context_block(ctx: AgentContext) -> str:
     turns, everyone's) view of the incident as computed upstream — docs/05 correlation, docs/04
     detection, docs/05 timeline. Deterministic ordering (`app.graph.timeline.build_timeline`,
     read-only import, M10's own public function — never reimplemented here) means the model
-    never has to order raw events itself."""
+    never has to order raw events itself.
+
+    Signals are capped at `MAX_SIGNALS_IN_CONTEXT`, highest-confidence first — CLAUDE.md rule 1
+    ("The LLM never sees raw log volume... more than a few hundred events into a prompt, stop")
+    applies just as much to a large incident's signal list as to raw events: a real correlated
+    incident can carry thousands of signals (a whole beaconing/burst campaign on one entity, one
+    signal per window), and passing all of them would blow the 60k input-token budget on context
+    alone before the model ever calls a tool. `total_signal_count` tells the model the true size
+    so it knows to reach for `get_related_signals` on a specific entity for anything not shown
+    here, rather than assuming the shown list is exhaustive."""
     with tenant_scope(ctx.session, ctx.tenant_id):
         incident = ctx.session.get(Incident, ctx.incident_id)
         if incident is None:  # pragma: no cover - build_agent_context already proved this exists
             raise AgentContextError(f"incident {ctx.incident_id} vanished mid-run")
-        signals = (
+        all_signals = (
             ctx.session.execute(select(Signal).where(Signal.id.in_(incident.signal_ids)))
             .scalars()
             .all()
@@ -185,6 +207,9 @@ def _build_incident_context_block(ctx: AgentContext) -> str:
             else []
         )
         title, severity, fused_score = incident.title, incident.severity, incident.fused_score
+
+    total_signal_count = len(all_signals)
+    signals = sorted(all_signals, key=lambda s: s.confidence, reverse=True)[:MAX_SIGNALS_IN_CONTEXT]
 
     timeline_phases = build_timeline(list(signals))
 
@@ -197,7 +222,7 @@ def _build_incident_context_block(ctx: AgentContext) -> str:
             "entity_type": s.entity_type,
             "entity_value": ctx.pseudonymize_value(s.entity_value, s.entity_type),
             "mitre_technique": s.mitre_technique,
-            "evidence_event_ids": list(s.evidence_event_ids),
+            "evidence_event_ids": list(s.evidence_event_ids)[:MAX_EVIDENCE_IDS_IN_CONTEXT],
             "explanation": s.explanation,
         }
         for s in signals
@@ -206,7 +231,7 @@ def _build_incident_context_block(ctx: AgentContext) -> str:
         {
             "ts": p.ts.isoformat() if p.ts else None,
             "tactic": p.tactic,
-            "event_ids": p.event_ids,
+            "event_ids": p.event_ids[:MAX_EVIDENCE_IDS_IN_CONTEXT],
             "summary": p.summary,
         }
         for p in timeline_phases
@@ -223,6 +248,7 @@ def _build_incident_context_block(ctx: AgentContext) -> str:
         signals=signals_payload,
         timeline=timeline_payload,
         entity_scope=entity_scope_payload,
+        total_signal_count=total_signal_count,
     )
 
 
@@ -260,6 +286,48 @@ def _summarize_tool_result(name: str, result: Any) -> str:
             f"z_score={result.get('z_score')} n_baseline_windows={result.get('n_baseline_windows')}"
         )
     return "ok"
+
+
+def _truncate_oldest_tool_result(messages: list[dict[str, Any]]) -> bool:
+    """Finds the oldest not-yet-truncated `tool_result` content block anywhere in `messages`
+    and collapses it to a short placeholder, in place. Returns `False` once every tool result is
+    already collapsed (nothing left to shrink) so the caller can stop looping instead of spinning
+    forever on a conversation that's grown large for reasons other than tool-result bulk (e.g. a
+    naturally long system prompt or narrative — `_run_flow`'s per-role system prompts are static
+    and small, so this should not be the steady state, but the loop bounds itself regardless)."""
+    for message in messages:
+        if message.get("role") != "user":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if (
+                isinstance(block, dict)
+                and block.get("type") == "tool_result"
+                and block.get("content") != _TRUNCATED_TOOL_RESULT_PLACEHOLDER
+            ):
+                block["content"] = _TRUNCATED_TOOL_RESULT_PLACEHOLDER
+                return True
+    return False
+
+
+def _enforce_input_token_budget(
+    messages: list[dict[str, Any]], last_input_tokens: int, *, role: AgentRole
+) -> None:
+    """Called after every turn with that turn's own `usage.input_tokens` — the size of the
+    request that produced it, and the best available proxy for what the *next* request would
+    cost before it's built (a `count_tokens` call to measure precisely would itself spend
+    against the same budget it's trying to protect). Collapses exactly one oldest tool result
+    per over-budget turn rather than guessing how many to collapse at once: growth is
+    incremental (one tool call at a time), so shrinking incrementally and re-checking on the
+    next real `usage.input_tokens` converges without ever needing a precise token count."""
+    if last_input_tokens <= MAX_INPUT_TOKENS:
+        return
+    if _truncate_oldest_tool_result(messages):
+        log.info(
+            "agent.input_token_budget_truncated", role=role, last_input_tokens=last_input_tokens
+        )
 
 
 def _run_tool_role(
@@ -309,6 +377,7 @@ def _run_tool_role(
             effort=effort,
         )
         usage.add(response.usage)
+        _enforce_input_token_budget(messages, response.usage.input_tokens, role=role)
 
         if response.stop_reason == "refusal":
             category = (

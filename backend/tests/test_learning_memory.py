@@ -12,7 +12,7 @@ from app.learning.memory import (
     retrieve_prior_analyst_decisions,
 )
 from tests.conftest import make_analysis, make_tenant, make_user
-from tests.fixtures.learning import (
+from tests.fixtures.learning import (  # noqa: F401
     learning_cleanup,
     learning_session,
     make_feedback,
@@ -23,7 +23,8 @@ from tests.fixtures.learning import (
 
 
 def test_retrieve_returns_nearest_confirmed_incidents_first(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Memory Retrieval Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -74,7 +75,8 @@ def test_retrieve_returns_nearest_confirmed_incidents_first(
 
 
 def test_retrieve_excludes_incidents_with_no_feedback(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Memory No Feedback Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -103,7 +105,8 @@ def test_retrieve_excludes_incidents_with_no_feedback(
 
 
 def test_get_prior_analyst_decisions_for_incident_excludes_itself(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Memory Self Exclusion Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -141,7 +144,8 @@ def test_get_prior_analyst_decisions_for_incident_excludes_itself(
 
 
 def test_get_prior_analyst_decisions_returns_empty_for_incident_without_embedding(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Memory No Embedding Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -166,7 +170,8 @@ def test_get_prior_analyst_decisions_returns_empty_for_incident_without_embeddin
 
 
 def test_render_prior_analyst_decisions_block_matches_docs08_format(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Memory Render Test Tenant")
     learning_cleanup.append(tenant.id)

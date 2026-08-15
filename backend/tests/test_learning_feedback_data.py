@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.learning.feedback_data import effective_label, labeled_examples
 from tests.conftest import make_analysis, make_tenant, make_user
-from tests.fixtures.learning import (
+from tests.fixtures.learning import (  # noqa: F401
     learning_cleanup,
     learning_session,
     make_feedback,
@@ -40,7 +40,8 @@ def test_effective_label_correction_overrides_verdict_disposition() -> None:
 
 
 def test_labeled_examples_one_row_per_feedback_signal_pair(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Feedback Data Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -74,7 +75,8 @@ def test_labeled_examples_one_row_per_feedback_signal_pair(
 
 
 def test_labeled_examples_incident_with_no_signal_ids_is_skipped(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Feedback Data Empty Signals Tenant")
     learning_cleanup.append(tenant.id)

@@ -18,7 +18,7 @@ from app.detection.sigma.runner import SUPPRESSIONS_DIR
 from app.learning.suppression import generate_suppression_candidates
 from app.models.suppression_candidate import STATUS_PENDING, SuppressionCandidate
 from tests.conftest import make_analysis, make_tenant, make_user
-from tests.fixtures.learning import (
+from tests.fixtures.learning import (  # noqa: F401
     learning_cleanup,
     learning_session,
     make_feedback,
@@ -28,7 +28,8 @@ from tests.fixtures.learning import (
 
 
 def test_generate_suppression_candidates_requires_a_dismissal_reason(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Suppression No Reason Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -49,7 +50,8 @@ def test_generate_suppression_candidates_requires_a_dismissal_reason(
 
 
 def test_generate_suppression_candidates_one_per_distinct_detector_entity(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Suppression Multi Detector Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -99,7 +101,8 @@ def test_generate_suppression_candidates_one_per_distinct_detector_entity(
 
 
 def test_generate_suppression_candidates_reuses_existing_pending_candidate(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Suppression Reuse Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -136,7 +139,9 @@ def test_generate_suppression_candidates_reuses_existing_pending_candidate(
 
 
 def test_generated_rule_yaml_round_trips_through_the_real_sigma_loader(
-    learning_session: Session, learning_cleanup: list[uuid.UUID], tmp_path: Path
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
+    tmp_path: Path,
 ) -> None:
     """The generated candidate must actually be a well-formed Sigma rule (the same schema
     `app.detection.sigma.rule.load_rule_file` parses) *before* any human ever accepts it -- this
@@ -184,7 +189,8 @@ def test_generated_rule_yaml_round_trips_through_the_real_sigma_loader(
 
 
 def test_generate_suppression_candidates_never_writes_to_the_suppressions_directory(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     """docs/08: "Never auto-apply." The only assertion that actually matters in this file --
     generating candidates must never touch the real filesystem location detection reads from."""

@@ -12,7 +12,7 @@ from app.learning.benign_corpus import export_benign_baseline, flag_benign_basel
 from app.models.base import tenant_scope
 from app.models.benign_baseline_entry import BenignBaselineEntry
 from tests.conftest import make_analysis, make_tenant, make_user
-from tests.fixtures.learning import (
+from tests.fixtures.learning import (  # noqa: F401
     learning_cleanup,
     learning_session,
     make_feedback,
@@ -22,7 +22,8 @@ from tests.fixtures.learning import (
 
 
 def test_flag_benign_baseline_requires_the_flag(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Benign Corpus No Flag Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -42,7 +43,8 @@ def test_flag_benign_baseline_requires_the_flag(
 
 
 def test_flag_benign_baseline_creates_one_entry_per_distinct_entity_window(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Benign Corpus Dedup Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -90,7 +92,8 @@ def test_flag_benign_baseline_creates_one_entry_per_distinct_entity_window(
 
 
 def test_export_benign_baseline_returns_only_unconsumed_by_default(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Benign Corpus Export Test Tenant")
     learning_cleanup.append(tenant.id)

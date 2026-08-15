@@ -12,7 +12,7 @@ from app.learning.weights import MAX_FUSION_WEIGHT, MIN_FUSION_WEIGHT, retune_de
 from app.models.base import tenant_scope
 from app.models.detector_stats import DetectorStats
 from tests.conftest import make_analysis, make_tenant, make_user
-from tests.fixtures.learning import (
+from tests.fixtures.learning import (  # noqa: F401
     learning_cleanup,
     learning_session,
     make_feedback,
@@ -44,7 +44,8 @@ def _feedback_event(
 
 
 def test_retune_detector_weights_matches_the_documented_formula(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Weights Formula Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -100,7 +101,8 @@ def test_retune_detector_weights_matches_the_documented_formula(
 
 
 def test_retune_detector_weights_clamps_at_the_floor(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Weights Floor Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -138,7 +140,8 @@ def test_retune_detector_weights_clamps_at_the_floor(
 
 
 def test_retune_detector_weights_is_idempotent_and_updates_existing_row(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Weights Update Test Tenant")
     learning_cleanup.append(tenant.id)

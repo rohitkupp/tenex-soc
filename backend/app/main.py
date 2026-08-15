@@ -18,6 +18,7 @@ from app.api import (
     auth,
     events,
     health,
+    incident_detail,
     incidents,
     learning,
     models,
@@ -114,6 +115,7 @@ app.include_router(uploads.router, prefix="/api", tags=["uploads"])
 app.include_router(analyses.router, prefix="/api", tags=["analyses"])
 app.include_router(stream.router, prefix="/api", tags=["analyses"])
 app.include_router(events.router, prefix="/api", tags=["events"])
+app.include_router(incident_detail.router, prefix="/api", tags=["incidents"])
 app.include_router(incidents.router, prefix="/api", tags=["incidents"])
 app.include_router(plans.router, prefix="/api", tags=["response"])
 app.include_router(learning.router, prefix="/api", tags=["learning"])

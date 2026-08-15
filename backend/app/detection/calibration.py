@@ -205,7 +205,21 @@ class CalibratorStore:
         self._calibrators: dict[str, IsotonicCalibrator] = {}
         if directory.exists():
             for path in sorted(directory.glob("*.joblib")):
-                calibrator: IsotonicCalibrator = joblib.load(path)
+                try:
+                    calibrator: IsotonicCalibrator = joblib.load(path)
+                except Exception as exc:
+                    # A single unreadable/incompatible artifact (a partial write, a pickle from
+                    # an incompatible sklearn/joblib version, ...) must not take down every other
+                    # detector's calibrator with it -- skip it, loudly, and keep loading the
+                    # rest. A caller that actually needs that specific detector's calibrator
+                    # falls back to `clamp01` via `calibrate`'s own documented policy, the same
+                    # as a detector that was never fitted at all.
+                    log.warning(
+                        "calibration.store.unreadable_artifact",
+                        path=str(path),
+                        error=repr(exc),
+                    )
+                    continue
                 self._calibrators[calibrator.detector_key] = calibrator
 
     def __len__(self) -> int:

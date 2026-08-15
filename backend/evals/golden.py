@@ -24,7 +24,6 @@ import sys
 from pathlib import Path
 
 from app.core.logging import get_logger
-
 from evals.config import (
     BENIGN_PURE_DIRNAME,
     BENIGN_PURE_SEED,
@@ -71,7 +70,9 @@ def scenario_log_and_labels(key: str) -> tuple[Path, Path]:
     logs = sorted(d.glob("*.log"))
     labels = sorted(d.glob("*.labels.json"))
     if not logs or not labels:
-        raise FileNotFoundError(f"golden scenario {key!r} not generated at {d} — run ensure_golden_set()")
+        raise FileNotFoundError(
+            f"golden scenario {key!r} not generated at {d} — run ensure_golden_set()"
+        )
     return logs[0], labels[0]
 
 
@@ -105,7 +106,9 @@ def generate_scenario(key: str, seed: int, out_dir: Path, events: int) -> None:
         )
 
 
-def ensure_golden_set(*, seed: int, events: int = GOLDEN_EVENTS_PER_SCENARIO, regenerate: bool = False) -> dict[str, Path]:
+def ensure_golden_set(
+    *, seed: int, events: int = GOLDEN_EVENTS_PER_SCENARIO, regenerate: bool = False
+) -> dict[str, Path]:
     """Write the eight scenario dirs + `benign_pure/` under `evals/golden/` if not already
     present (or unconditionally, if `regenerate=True`). Returns `{key: directory}` for the eight
     scenario keys (`benign_pure` is available separately via `benign_pure_log()`)."""

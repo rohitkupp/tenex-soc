@@ -105,7 +105,7 @@ def make_signal(
     *,
     tenant_id: uuid.UUID,
     analysis_id: uuid.UUID,
-    detector_key: str = "signal.beaconing",
+    detector_key: str | None = None,
     detector_layer: str = "signal",
     raw_score: float = 0.7,
     confidence: float = 0.7,
@@ -113,11 +113,20 @@ def make_signal(
     entity_value: str = "10.0.0.1",
     mitre_technique: str | None = "T1071.001",
 ) -> Signal:
+    """`detector_key` defaults to a fresh, call-unique value (`signal.beaconing.<hex>`), not a
+    fixed literal. `detector_stats.detector_key` is a *global* primary key (docs/02, no
+    `tenant_id` in the uniqueness constraint -- see `app.models.detector_stats`'s docstring), so
+    any two tests that both accept a fixed default and both flow through `app.learning.weights.
+    retune_detector_weights` (directly, or via `app.learning.feedback.record_feedback`) would
+    contend for the *same* global row -- which, run concurrently with this project's other test
+    suites and `app/scripts/seed_feedback.py` against one shared Postgres instance, produced a
+    genuine multi-minute lock wait in practice, not a hypothetical. Pass an explicit
+    `detector_key` only when a test's own assertions need a specific, known value."""
     with tenant_scope(session, tenant_id):
         signal = Signal(
             analysis_id=analysis_id,
             tenant_id=tenant_id,
-            detector_key=detector_key,
+            detector_key=detector_key or f"signal.beaconing.{uuid.uuid4().hex[:8]}",
             detector_layer=detector_layer,
             raw_score=raw_score,
             confidence=confidence,

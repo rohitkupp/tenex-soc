@@ -18,7 +18,7 @@ from app.models.analyst_feedback import AnalystFeedback
 from app.models.base import tenant_scope
 from app.models.incident import Incident
 from tests.conftest import make_analysis, make_tenant, make_user
-from tests.fixtures.learning import (
+from tests.fixtures.learning import (  # noqa: F401
     learning_cleanup,
     learning_session,
     make_incident_with_verdict,
@@ -27,7 +27,8 @@ from tests.fixtures.learning import (
 
 
 def test_record_feedback_raises_for_unknown_incident(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Feedback Unknown Incident Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -44,7 +45,8 @@ def test_record_feedback_raises_for_unknown_incident(
 
 
 def test_record_feedback_raises_for_incident_without_a_verdict(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Feedback No Verdict Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -76,7 +78,8 @@ def test_record_feedback_raises_for_incident_without_a_verdict(
 
 
 def test_record_feedback_inserts_row_and_always_retunes_weights(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Feedback Orchestration Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -125,7 +128,8 @@ def test_record_feedback_inserts_row_and_always_retunes_weights(
 
 
 def test_record_feedback_triggers_suppression_and_benign_baseline_when_flagged(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant = make_tenant(name="Feedback Dismissal Test Tenant")
     learning_cleanup.append(tenant.id)
@@ -160,7 +164,8 @@ def test_record_feedback_triggers_suppression_and_benign_baseline_when_flagged(
 
 
 def test_record_feedback_triggers_calibration_and_retrain_at_the_cadence_threshold(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     """docs/08 §1's "every 50 feedback events" cadence, exercised for real: the 50th feedback
     event on one tenant should trigger both the calibration refit and a classifier retrain
@@ -173,7 +178,7 @@ def test_record_feedback_triggers_calibration_and_retrain_at_the_cadence_thresho
     `app/learning/classifier.py`'s module docstring.
     """
     try:
-        import lightgbm
+        import lightgbm  # noqa: F401
     except (ImportError, OSError) as exc:
         pytest.skip(f"lightgbm not loadable in this environment: {exc}")
 
@@ -211,7 +216,8 @@ def test_record_feedback_triggers_calibration_and_retrain_at_the_cadence_thresho
 
 
 def test_record_feedback_is_tenant_isolated(
-    learning_session: Session, learning_cleanup: list[uuid.UUID]
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
 ) -> None:
     tenant_a = make_tenant(name="Feedback Isolation Tenant A")
     tenant_b = make_tenant(name="Feedback Isolation Tenant B")
