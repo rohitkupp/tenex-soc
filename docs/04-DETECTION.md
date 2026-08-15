@@ -240,6 +240,21 @@ Per principal, session = events within a 30-minute idle gap. Truncate/pad to 64 
 
 `explanation` for both: `{surprising_transitions: [{from, to, log_prob}], session_score}`.
 
+**Mean negative log-probability is the wrong aggregation, measured.** The M9 benchmark showed
+scenario 5 is not detected by either sequence model: the eight genuine
+`deactivate -> activate -> token_create` chain sessions score ~2.08 against a best-F1 threshold of
+4.49, and the only session clearing that threshold is an incidental two-event
+`session.end -> session.end` fragment — a session-boundary artifact, not the attack. Nonzero recall
+here is an accident and must not be read as detection.
+
+The cause is the scoring formula above. Averaging over a session dilutes the one to three genuinely
+novel transitions across a 17-event session's ordinary ones, so an ordinary single-event benign
+session (`user.session.end` alone, score 3.78) outranks the actual attack chain. Both models rank
+the *designed* transition correctly as least-probable —
+`activate -> system.api_token.create` at p≈0.024 (Markov) and ≈0.0035 (LogBERT), right next to this
+document's own 0.0003 illustration — so the mechanism works and the aggregation discards it.
+Max or top-k transition surprise, not the mean, is what this formula should be.
+
 ---
 
 ## L5 — Graph anomaly features
