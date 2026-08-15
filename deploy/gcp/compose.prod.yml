@@ -26,6 +26,13 @@ x-worker-env: &worker-env
   ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-5}
   JWT_SECRET: ${JWT_SECRET:?}
   PSEUDONYM_SALT: ${PSEUDONYM_SALT:?}
+  # M14. Both are in `_SENTINELS` (app/core/config.py), so the app refuses to boot outside `local`
+  # while either is at its dev default — which is exactly how their absence here was found, on a
+  # deploy that built cleanly and then failed at `alembic upgrade head`. `:?` rather than `:-` so
+  # the next drift of this kind fails at `docker compose up` with the variable's name, instead of
+  # inside a Python traceback one layer further in.
+  TIER2_INDICATOR_SALT: ${TIER2_INDICATOR_SALT:?}
+  TIER2_READONLY_DB_PASSWORD: ${TIER2_READONLY_DB_PASSWORD:?}
   ENVIRONMENT: production
   CORS_ORIGINS: ${CORS_ORIGINS:?}
   DEMO_MODE: ${DEMO_MODE:-false}
