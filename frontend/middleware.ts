@@ -71,5 +71,16 @@ export async function middleware(request: NextRequest) {
 export const config = {
   // Everything except static assets and the favicon goes through the auth
   // check above; /login and /signup are handled inside the middleware itself.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
+  //
+  // `api` must be excluded, and it is load-bearing now in a way it wasn't before.
+  // `next.config.ts` proxies `/api/*` to the real API, so those paths are no longer
+  // hypothetical on this origin — without this exclusion the middleware answers them
+  // itself, and since an unauthenticated caller has no session it 307s them to
+  // /login. That turns *every* API call into a redirect, including the login request
+  // whose whole job is to create the session the middleware is looking for: the
+  // deadlock is total and presents as a login form that never resolves. Route
+  // protection is not weakened by this — the API authenticates and tenant-scopes
+  // every one of these requests itself, and always did; the middleware only ever
+  // decided whether to render an app shell.
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
 };
