@@ -101,9 +101,9 @@ Training is seeded and deterministic: same corpus, same models, ~165 s.
 | Response | action graph → topologically ordered plan, stateful simulated enforcement, rollback | `backend/app/response/` |
 | Learning | 5 feedback consumers, detector reweighting, suppression candidates, retraining gate | `backend/app/learning/` |
 | Tier 2 | cross-tenant indicator overlap, NL→SQL with a read-only role | `backend/app/tier2/` |
-| Frontend | 12 routes, per-detector explanation renderers, entity graph, case file | `frontend/` |
+| Frontend | 13 routes, per-detector explanation renderers, entity graph, case file | `frontend/` |
 
-**1,033 tests.** ~40k lines of Python across `app/`, `datagen/`, `evals/`; ~21k lines of tests.
+**1,044 tests.** ~40k lines of Python across `app/`, `datagen/`, `evals/`; ~21k lines of tests.
 
 ---
 
