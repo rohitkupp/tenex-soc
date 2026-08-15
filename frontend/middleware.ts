@@ -22,7 +22,13 @@ import { NextResponse, type NextRequest } from "next/server";
  * handoff notes for the same caveat and the two ways to close it.
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// The API's real origin, server-side only. Middleware calls the API directly rather
+// than through `next.config.ts`'s own `/api/*` rewrite: it already holds the cookie
+// header it needs to forward, so the extra proxy hop back through this same app would
+// buy nothing. `NEXT_PUBLIC_API_URL` is "" in production (same-origin, for the
+// browser), which is not a usable base for `fetch` here — hence a separate variable
+// rather than reusing that one.
+const API_ORIGIN = process.env.API_ORIGIN ?? "http://localhost:8000";
 const LOGIN_PATH = "/login";
 // Unauthenticated-only pages: an anonymous visitor must be able to reach
 // both without first having a session, and an already-authenticated visitor
@@ -31,7 +37,7 @@ const PUBLIC_PATHS = new Set([LOGIN_PATH, "/signup"]);
 
 async function hasValidSession(cookieHeader: string): Promise<boolean> {
   try {
-    const res = await fetch(`${API_URL}/api/auth/me`, {
+    const res = await fetch(`${API_ORIGIN}/api/auth/me`, {
       headers: { cookie: cookieHeader },
       cache: "no-store",
     });

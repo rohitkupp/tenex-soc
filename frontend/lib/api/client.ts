@@ -27,7 +27,22 @@ import {
   type SignupResponse,
 } from "./types";
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+/**
+ * Base for every browser-originated API call. `""` means same-origin: requests go to
+ * `/api/...` on the frontend's own host, and `next.config.ts`'s rewrite proxies them to
+ * the API. That indirection is what makes the session cookie first-party — see that
+ * file's comment for why addressing the API's own origin directly could never
+ * authenticate in a split-domain deploy.
+ *
+ * Same-origin is the default for any production build precisely because it is the safe
+ * one: a deploy that forgets to configure anything gets the arrangement that works,
+ * rather than silently falling back to a cross-domain URL that cannot carry a session.
+ * `NEXT_PUBLIC_API_URL` still overrides it, which is what the docker-compose frontend
+ * (`http://api:8000`, same-origin impossible across containers) relies on.
+ */
+export const API_URL =
+  process.env.NEXT_PUBLIC_API_URL ??
+  (process.env.NODE_ENV === "production" ? "" : "http://localhost:8000");
 
 export const CSRF_COOKIE_NAME = "tenex_csrf";
 export const CSRF_HEADER_NAME = "X-CSRF-Token";

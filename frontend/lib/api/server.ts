@@ -7,7 +7,12 @@
  * want: this file never runs in the browser.
  */
 import { cookies } from "next/headers";
-import { API_URL } from "./client";
+// Server-side calls go straight to the API's own origin, not through
+// `next.config.ts`'s `/api/*` rewrite: this module already forwards the cookie
+// explicitly, so the extra hop back through this same app would add latency and
+// nothing else. `NEXT_PUBLIC_API_URL` is "" in production (same-origin, for the
+// browser) and is not a usable `fetch` base on the server.
+const API_ORIGIN = process.env.API_ORIGIN ?? "http://localhost:8000";
 
 /**
  * Fetches from the API on behalf of the current request, forwarding
@@ -21,7 +26,7 @@ export async function fetchServer<T>(path: string): Promise<T | null> {
   const cookieHeader = cookieStore.toString();
 
   try {
-    const res = await fetch(`${API_URL}${path}`, {
+    const res = await fetch(`${API_ORIGIN}${path}`, {
       headers: cookieHeader ? { cookie: cookieHeader } : undefined,
       cache: "no-store",
     });
