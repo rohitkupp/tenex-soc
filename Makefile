@@ -34,6 +34,7 @@ revision: ## Autogenerate a migration: make revision m="add events"
 
 seed: ## Create the demo tenant, user, and seeded feedback history
 	$(BACKEND) python -m app.scripts.seed
+	$(BACKEND) python -m app.scripts.seed_feedback
 
 gen-data: ## Regenerate the synthetic corpus, eval scenarios, and demo file
 	$(BACKEND) python -m datagen all
