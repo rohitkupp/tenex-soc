@@ -33,7 +33,7 @@ Rate limited to 5/min. Generic failure message — never reveal whether the emai
 
 SSE event:
 ```json
-{ "stage": "detect", "progress": 0.62, "message": "Running sequence models",
+{ "stage": "detect", "progress": 0.62, "message": "Scoring entity windows",
   "counters": {"events": 1412903, "signals": 812, "incidents": 14, "needs_attention": 3} }
 ```
 
@@ -60,8 +60,10 @@ Incident list item shape — keep it flat, the queue view renders hundreds:
 { "id": "...", "title": "...", "severity": "high", "fused_score": 0.82,
   "disposition": "true_positive", "citation_valid": true,
   "mitre_techniques": ["T1071.001"], "entity_count": 4, "signal_count": 7,
-  "source_types": ["zscaler", "okta"], "recurrence_of": null, "created_at": "..." }
+  "recurrence_of": null, "created_at": "..." }
 ```
+
+No `source_types` field — with one source there is nothing to badge.
 
 ## Response plans
 

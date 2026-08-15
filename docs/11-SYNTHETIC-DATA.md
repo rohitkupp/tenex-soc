@@ -9,9 +9,11 @@ You cannot develop or evaluate detection without labeled ground truth.
 
 | Artifact | Purpose |
 |---|---|
-| `data/corpus/benign_*.log` | Large clean corpus for training the autoencoder and sequence models |
+| `data/corpus/benign_*.log` | Large clean corpus for training the autoencoder and other L3 models |
 | `data/eval/scenario_*.log` + `.labels.json` | Held-out labeled test files |
 | `data/demo/demo_mixed.log` | The file used in the walkthrough recording |
+
+All ZScaler NSS Web format — there is no Okta or CloudTrail emitter to maintain (`docs/03`).
 
 Benign corpus and eval scenarios use **different seeds and different simulated orgs**. Training
 on data that shares a generator seed with the test set is the classic way to fake good numbers.
@@ -27,7 +29,6 @@ generator. Mitigate by grounding distributions in real-world data rather than in
 | User-agent mix | Real-world browser share table |
 | Diurnal activity | Business-hours curve with weekend dropoff and per-user jitter |
 | Response sizes | Log-normal fit to realistic web content sizes |
-| Okta event mix | Proportions from documented enterprise tenant patterns |
 | Geography | Weighted by simulated org office locations |
 
 State this mitigation, and its limits, in the README.
@@ -44,26 +45,47 @@ device fingerprint. Service accounts get machine-like patterns — regular inter
 user agents, high volume — because they are the dominant source of realistic false positives and
 the model needs to learn them as normal.
 
+`n_departments=8` is not decorative — it is the cohort assignment `n_events_z_vs_cohort` and
+peer-group LOF (`docs/04` §L3) baseline against, and what scenario 5 below is built to defeat.
+
 ## Scenarios
 
-Each emits events into the benign stream and records ground truth.
+Each emits events into the benign stream and records ground truth. All proxy — there is no
+`Sources` column anymore, because there is nothing to vary it against.
 
-| # | Scenario | Sources | ATT&CK | What must fire |
-|---|---|---|---|---|
-| 1 | C2 beaconing | proxy | T1071.001 | beaconing, DGA, rare domain |
-| 2 | Data exfiltration | proxy | T1567.002 | volumetric burst, out/in ratio, newly-registered domain, autoencoder |
-| 3 | Password spray → success → new-geo browsing | okta + proxy | T1110.003, T1078 | spray rule, cross-source rule |
-| 4 | Impossible travel | okta | T1078 | impossible travel rule |
-| 5 | Account takeover chain | okta | T1556.006, T1098.001 | **sequence model** — each event legitimate, ordering is the attack |
-| 6 | MFA fatigue | okta | T1621 | MFA fatigue rule, sequence model |
-| 7 | Insider mass download | proxy | T1530 | volumetric, peer-group deviation |
-| 8 | Low-and-slow exfil | proxy | T1567 | autoencoder (correlation structure), not thresholds |
-| 9 | Prompt injection canary | proxy | — | disposition must be unchanged vs. control |
-| 10 | Benign-but-weird | proxy + okta | — | must **not** fire — sanctioned backup job, new hire onboarding, pen-test window |
+| # | Scenario | ATT&CK | What must fire |
+|---|---|---|---|
+| 1 | C2 beaconing | T1071.001 | beaconing, DGA, rare domain |
+| 2 | Data exfiltration | T1567.002 | volumetric burst, out/in ratio, newly-registered domain |
+| 3 | Insider mass download | T1530 | volumetric, peer-group deviation |
+| 4 | Low-and-slow exfil | T1567 | **autoencoder only** — no single feature in a tail |
+| 5 | Peer-group deviation | T1078 | **LOF** — a user adopting another department's behaviour profile. Globally normal, locally anomalous. Every feature sits inside the org-wide distribution; only the comparison to the user's own cohort reveals it. |
+| 6 | Seasonal deviation | T1029 | **STL residuals** — sustained off-hours and weekend volume that is unremarkable in daily aggregate. Defeats robust-z on 5-minute buckets, which has no seasonality model. |
+| 7 | Prompt injection canary | — | disposition unchanged vs. control |
+| 8 | Benign-but-weird | — | must **not** fire — sanctioned backup job, new-hire onboarding, pen-test window |
 
-Scenario 8 exists specifically to test whether the autoencoder earns its slot: low-and-slow
-exfil is invisible to per-feature thresholds and only detectable through the joint distribution.
-Scenario 10 is the false-positive control and matters as much as the attacks.
+Scenarios 3, 4, 5, and 6 are the analytical core of this submission — four different, falsifiable
+answers to "what does normal mean" (population-wide, this-entity's-own-history, peer-cohort, and
+seasonal-rhythm, respectively), each paired with the one model built to answer it.
+
+Scenario 4 exists specifically to test whether the autoencoder earns its slot: low-and-slow exfil
+is invisible to per-feature thresholds and only detectable through the joint distribution — and
+per the pre-registered prediction (`docs/12`), ECOD should **not** detect it. If ECOD also wins
+it, the autoencoder has no remaining justification and should be cut — a good outcome arrived at
+honestly.
+
+Scenarios 5 and 6 are new, replacing the four identity scenarios this design used to carry
+(password spray, impossible travel, account-takeover chain, MFA fatigue — all deleted along with
+Okta). Scenario 5 isolates peer-group deviation to test whether LOF's locally-relative view
+catches what the four globally-relative L3 models miss. Scenario 6 isolates seasonal deviation to
+test whether STL's model of an entity's own daily/weekly rhythm catches what a robust z-score over
+flat 5-minute buckets misses. Both are pre-registered predictions, `docs/12`.
+
+Scenario 8 is the false-positive control and matters as much as the attacks; its benign-but-weird
+half (new-hire onboarding, pen-test window) previously had an Okta counterpart — dropped along
+with the source, kept as a purely proxy-shaped false-positive test (a burst of new-domain browsing
+that looks like reconnaissance but is a new hire's first week, or an automated scan pattern that
+looks like a bot but is a scheduled pen test).
 
 ## Ground truth format
 
@@ -100,9 +122,9 @@ informative than a point estimate, and it shows you understand your own detector
 
 | Artifact | Events |
 |---|---|
-| Benign corpus | ~2M (proxy) + ~200k (okta) |
+| Benign corpus | ~2M (proxy) |
 | Eval scenario file | ~50k, one scenario each |
-| Demo file | ~150k, three scenarios plus scenario 10 |
+| Demo file | ~150k, three scenarios plus scenario 8 |
 
 The demo file should take under two minutes end to end. Time it.
 

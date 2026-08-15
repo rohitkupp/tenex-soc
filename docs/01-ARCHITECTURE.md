@@ -11,8 +11,6 @@ horizontal scale-out, and it is how the pattern works in production.
 | `api` | FastAPI | HTTP | publishes to `q.orchestrator` |
 | `orchestrator` | worker | `q.orchestrator` | routes to parser queues |
 | `parser-zscaler` | worker | `q.parse.zscaler` | `q.enrich` |
-| `parser-okta` | worker | `q.parse.okta` | `q.enrich` |
-| `parser-cloudtrail` | worker | `q.parse.cloudtrail` | `q.enrich` |
 | `enricher` | worker | `q.enrich` | `q.anonymize` |
 | `anonymizer` | worker | `q.anonymize` | `q.detect` |
 | `detector` | worker | `q.detect` | `q.correlate` |
@@ -28,8 +26,11 @@ Infra: `rabbitmq`, `postgres` (pgvector), `minio`, `redis` (SSE pub/sub only).
 - One durable queue per worker, prefetch 1.
 - Every queue has a paired `dlq.<name>` bound via `x-dead-letter-exchange`.
 - Retry policy: 3 attempts with exponential backoff (1s, 4s, 16s), then dead-letter.
-- Parser fan-out is **parallel** — one analysis containing three source types publishes to three
-  parser queues, and a completion counter in `analyses.pending_parsers` gates the move to enrich.
+- Parser fan-out is trivial today: one source type means ingest always publishes to a single
+  `q.parse.zscaler`, and `analyses.pending_parsers` is always 1. The completion-counter mechanism
+  stays anyway — it is what makes a second parser a queue-topology no-op instead of a rewrite. A
+  mixed upload would fan out to N parser queues in parallel and gate the move to `enrich` on N
+  completions, exactly as this mechanism already does at N=1.
 
 ## Message envelope
 
@@ -41,7 +42,7 @@ class StageMessage(BaseModel):
     tenant_id: UUID
     stage: str
     storage_ref: str | None      # s3://bucket/key for raw or parsed artifacts
-    source_type: str | None      # zscaler | okta | cloudtrail
+    source_type: str | None      # zscaler
     attempt: int = 0
     emitted_at: datetime
 ```
@@ -56,7 +57,7 @@ the next `StageMessage`.
 
 | Stage | Precondition | Postcondition |
 |---|---|---|
-| ingest | file in MinIO | `analyses` row, source types detected, `pending_parsers` set |
+| ingest | file in MinIO | `analyses` row, source type detected, `pending_parsers` set (always 1) |
 | parse | raw artifact exists | `events` rows written, `parse_failure_rate` recorded |
 | enrich | events exist | `events.enrichment` populated, `entities` seeded |
 | anonymize | events enriched | `pseudonym_map` written, `events.redacted` populated |
@@ -72,7 +73,7 @@ the next `StageMessage`.
 `analysis:{id}`; the API relays. Event shape:
 
 ```json
-{ "stage": "detect", "progress": 0.62, "message": "Running sequence models",
+{ "stage": "detect", "progress": 0.62, "message": "Scoring entity windows",
   "counters": { "events": 1412903, "signals": 812, "incidents": 14 } }
 ```
 

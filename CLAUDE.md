@@ -4,11 +4,15 @@ Project memory. Read this first, every session.
 
 ## What this is
 
-An AI SOC analyst pipeline. Ingests raw security logs (ZScaler web proxy, Okta system log,
-AWS CloudTrail), normalizes to OCSF, detects anomalies through a layered funnel, correlates
-signals into incidents on an entity graph, triages each incident with a Claude agent that
-cites its evidence, derives an ordered containment plan from an action graph, and learns from
-analyst feedback.
+An AI SOC analyst pipeline. Ingests ZScaler web proxy logs, normalizes to OCSF, detects
+anomalies through a layered funnel, correlates signals into incidents on an entity graph, triages
+each incident with a Claude agent that cites its evidence, derives an ordered containment plan
+from an action graph, and learns from analyst feedback.
+
+One log source, deliberately. The brief says "pick your favorite log format" — singular. Multi-
+source correlation was never asked for; the parser interface stays pluggable (`docs/03`) so
+adding a second source later is cheap, but shipping one is the scope that matches the brief and
+leaves room for analytical depth on it instead.
 
 Built as a take-home for an AI/ML Engineer role at Tenex.ai (an AI-native MDR provider).
 The reviewer is their CTO. Optimize for **technical depth in the AI/ML layer** and
@@ -39,7 +43,7 @@ The reviewer is their CTO. Optimize for **technical depth in the AI/ML layer** a
 | Workers | Python, `aio-pika` on RabbitMQ |
 | DB | Postgres 16 + pgvector |
 | Object store | MinIO (S3 API) |
-| ML | scikit-learn, PyTorch, LightGBM, Optuna, networkx, drain3 |
+| ML | scikit-learn, PyTorch, LightGBM, Optuna, networkx, drain3, pyod, statsmodels |
 | LLM | Anthropic Claude via `anthropic` SDK |
 
 ## Repo layout
@@ -57,13 +61,12 @@ The reviewer is their CTO. Optimize for **technical depth in the AI/ML layer** a
 │   │   ├── core/          # config, security, db, logging
 │   │   ├── models/        # SQLAlchemy
 │   │   ├── schemas/       # Pydantic
-│   │   ├── parsers/       # one module per log source
+│   │   ├── parsers/       # one module per log source (zscaler today — the interface is the point)
 │   │   ├── ocsf/          # OCSF classes + mappers
 │   │   ├── detection/
 │   │   │   ├── rules/     # Sigma YAML + evaluator
-│   │   │   ├── signal/    # beaconing, entropy, burst, rarity
-│   │   │   ├── ml/        # features, autoencoder, iforest, mahalanobis, lightgbm
-│   │   │   ├── sequence/  # drain3, markov, logbert
+│   │   │   ├── signal/    # beaconing, dga, burst, rarity, stl, url_path
+│   │   │   ├── ml/        # features, autoencoder, iforest, mahalanobis, ecod, lof, lightgbm
 │   │   │   └── fusion.py  # calibration + score fusion
 │   │   ├── graph/         # entity graph, correlation, incident scoring
 │   │   ├── privacy/       # pseudonymizer, redactor

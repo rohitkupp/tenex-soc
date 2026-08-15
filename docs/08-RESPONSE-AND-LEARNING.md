@@ -178,7 +178,8 @@ auto-suppression is how you miss a breach.
 benign training corpus. Highest-fidelity loop for UEBA, because most false positives are
 *weird but sanctioned*, and the fix is teaching the model that this shape of weird is normal.
 
-Triggers autoencoder and sequence-model retraining.
+Triggers retraining for the corpus-fitted L3 models (autoencoder, Isolation Forest, Mahalanobis —
+`docs/04` §L3).
 
 ## 6. Classifier retraining — retrain
 `corrected_technique` labels append to the LightGBM training set. Retrain on a schedule or at a

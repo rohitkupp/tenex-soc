@@ -80,14 +80,15 @@ log file to start." Errors say what broke and what to do.
 ## Key screens
 
 ### `/upload`
-Drop zone → immediate format sniff showing detected sources and a 5-line parse preview before
-committing. Then the funnel: stages as a horizontal sequence, current stage active, counters
+Drop zone → immediate format sniff confirming the file is recognized as ZScaler NSS Web, with a
+5-line parse preview before committing. Then the funnel: stages as a horizontal sequence, current
+stage active, counters
 incrementing from SSE. The funnel is the thesis of the architecture, so make it the hero.
 
 ### `/analyses/[id]/incidents`
-Dense table, sorted by `fused_score`. Columns: severity bar, title, techniques, source-type
-badges, signal count, disposition, citation-verified marker, recurrence indicator.
-Filters: severity, disposition, source type, technique, `needs_attention` only.
+Dense table, sorted by `fused_score`. Columns: severity bar, title, techniques, signal count,
+disposition, citation-verified marker, recurrence indicator.
+Filters: severity, disposition, technique, `needs_attention` only.
 Row click opens the case file. Keyboard: `j`/`k` to move, `Enter` to open.
 
 ### `/analyses/[id]/incidents/[iid]` — the case file
@@ -100,8 +101,9 @@ Vertical document, not a grid of widgets:
    above the fold, not hidden; it is what makes the verdict credible.
 5. **Timeline** — deterministic phases with ATT&CK tactic labels
 6. **Signals** — each with its structured `explanation` rendered by detector type: per-feature
-   reconstruction bars for the autoencoder, interval statistics for beaconing, surprising
-   transitions for the sequence model, SHAP bars for tree models. Never render raw JSON.
+   reconstruction bars for the autoencoder, interval statistics and FFT spectrum for beaconing,
+   trend/seasonal/residual charts for STL, neighbor-distance bars for LOF, SHAP bars for tree
+   models. Never render raw JSON.
 7. **Entity graph** — cytoscape, incident subgraph, severity-colored nodes
 8. **Response plan** — ordered steps with preconditions, blast-radius warnings, verification
    result, approve button. After execution: state diff and containment outcome.

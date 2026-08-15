@@ -25,19 +25,36 @@ F1        = 2PR / (P + R)
 Reported **per detector and per layer**, so the benchmark tables are automatic rather than
 hand-assembled.
 
-Plus a false-positive rate measured on scenario 10 (benign-but-weird) and on pure benign files:
+Plus a false-positive rate measured on scenario 8 (benign-but-weird) and on pure benign files:
 `fp_rate = flagged_benign_entity_windows / total_benign_entity_windows`.
 
 ### Model comparison — the headline tables
 
 | Table | Contenders | Metric |
 |---|---|---|
-| L3 unsupervised | Isolation Forest / Mahalanobis / Autoencoder | F1, AUC-PR, per-scenario recall |
-| L4 sequence | Markov n-gram / LogBERT | F1 on scenarios 5 and 6 |
+| L3 unsupervised | Isolation Forest / Mahalanobis (MCD) / ECOD / LOF / Autoencoder | F1, AUC-PR, per-scenario recall |
+| L2 detectors | Beaconing (CV + FFT) / DGA entropy / Volumetric burst (robust-z) / STL seasonal residual / URL path analysis / Rarity | precision, recall, F1 per detector; degradation curve where swept (`docs/11`) |
 | Classification | LightGBM / Claude zero-shot | multiclass accuracy, macro-F1 |
 
 Auto-generated into `evals/results.md`. A model losing its table is a valid result and gets
-reported as such — that is a stronger signal than a suspiciously clean win.
+reported as such — that is a stronger signal than a suspiciously clean win. There is no L4 table:
+that layer was built, benchmarked, and cut before this milestone — its numbers live in
+`docs/04` §L4 as a historical record, not in the live comparison tables.
+
+### Pre-registered predictions
+
+Stated before the eval runs, so a result that contradicts one is reported as a contradiction, not
+quietly reframed afterward. Scenarios 4, 5, and 6 (`docs/11`) exist specifically to test these.
+
+| # | Prediction | Falsified if |
+|---|---|---|
+| 1 | Scenario 4 (low-and-slow exfil): the autoencoder detects it; ECOD does not — ECOD aggregates per-dimension tails and nothing in this scenario sits in a marginal tail by construction. | ECOD also detects it at comparable recall. If so, the autoencoder has no remaining justification on this scenario and should be cut from primary contention — a good outcome arrived at honestly, not a failed prediction. |
+| 2 | Scenario 5 (peer-group deviation): LOF detects it; the four global L3 models (Isolation Forest, Mahalanobis, ECOD, Autoencoder) do not. | Any global model detects it at recall comparable to LOF. |
+| 3 | Scenario 6 (seasonal deviation): STL residuals detect it; none of the five L3 feature-vector models do — the signal lives in a time series, and L3's per-window snapshot does not represent it. | Any L3 model detects it via the entity-window feature vector. |
+
+Report all three against measured results in the same table as the headline benchmark. A
+falsified prediction goes in the report next to the confirmed ones, not buried in prose — the
+point of pre-registering is that it cannot be quietly dropped if it turns out wrong.
 
 ### Correlation
 ```

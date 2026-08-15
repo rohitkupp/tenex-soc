@@ -76,7 +76,7 @@ CREATE TABLE events (
   bytes_in BIGINT,
   bytes_out BIGINT,
   user_agent TEXT,
-  event_key TEXT,          -- discretized token for sequence models
+  event_key TEXT,          -- discretized token, Drain3-templated on url_path (see docs/03)
   ocsf JSONB NOT NULL,
   enrichment JSONB NOT NULL DEFAULT '{}'
 );
@@ -95,8 +95,8 @@ CREATE TABLE signals (
   id BIGSERIAL PRIMARY KEY,
   analysis_id UUID NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
   tenant_id UUID NOT NULL,
-  detector_key TEXT NOT NULL,      -- e.g. sigma.okta_mfa_fatigue, ml.autoencoder
-  detector_layer TEXT NOT NULL,    -- rule|signal|ml|sequence|graph
+  detector_key TEXT NOT NULL,      -- e.g. sigma.large_post_new_domain, ml.autoencoder
+  detector_layer TEXT NOT NULL,    -- rule|signal|ml|graph
   raw_score REAL NOT NULL,
   confidence REAL NOT NULL,        -- calibrated 0..1
   entity_type TEXT NOT NULL,
@@ -120,7 +120,7 @@ error; tree models write SHAP values; beaconing writes interval statistics. The 
 CREATE TABLE entities (
   id BIGSERIAL PRIMARY KEY,
   analysis_id UUID NOT NULL REFERENCES analyses(id) ON DELETE CASCADE,
-  type TEXT NOT NULL,              -- user|src_ip|domain|dst_ip|asn|session
+  type TEXT NOT NULL,              -- user|src_ip|domain|dst_ip|asn|country
   value TEXT NOT NULL,
   first_seen TIMESTAMPTZ,
   last_seen TIMESTAMPTZ,
@@ -250,7 +250,7 @@ CREATE TABLE detector_stats (
 
 CREATE TABLE model_versions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  model_key TEXT NOT NULL,         -- autoencoder|iforest|lightgbm|logbert|markov
+  model_key TEXT NOT NULL,         -- autoencoder|iforest|mahalanobis|ecod|lof|lightgbm
   version INT NOT NULL,
   artifact_ref TEXT NOT NULL,
   trained_at TIMESTAMPTZ NOT NULL,

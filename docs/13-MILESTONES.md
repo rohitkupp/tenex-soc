@@ -24,16 +24,16 @@ Next.js shell with login and an upload page. Deployed to Vercel + Fly.
 **Accept:** Log in on the deployed URL, upload a file, see it in MinIO. No cold start over 3s.
 
 ## M2 — Synthetic data generator
-`docs/11` in full. Benign corpus, all ten scenarios, ground truth, difficulty sweeps, demo file.
+`docs/11` in full. Benign corpus, all eight scenarios, ground truth, difficulty sweeps, demo file.
 
 **Accept:** `make gen-data` produces the corpus and every scenario with labels. Different seeds
 for corpus and eval. Demo file parses in under 2 minutes.
 
-## M3 — Parsers, OCSF, event store
-All three parsers, sniffing registry, OCSF mappers, bulk COPY, parse-failure tracking, event
-explorer UI.
+## M3 — Parser, OCSF, event store
+The ZScaler parser, sniffing registry (single-parser today, pluggable — `docs/03`), OCSF mapper,
+bulk COPY, parse-failure tracking, event explorer UI.
 
-**Accept:** All three sample formats parse with under 1% failures. Event explorer filters and
+**Accept:** The ZScaler sample format parses with under 1% failures. Event explorer filters and
 paginates 1M+ rows without timing out.
 
 ## M4 — Pipeline skeleton
@@ -49,29 +49,45 @@ Offline enrichment datasets, HMAC pseudonymization, redaction, injection-defense
 count surfaces in the UI. Unit tests cover every redaction pattern.
 
 ## M6 — Sigma rules
-Rule evaluator, full rule inventory, positive and negative fixture per rule, ATT&CK mapping.
+Rule evaluator, the proxy-only rule inventory (`docs/04` §L1), positive and negative fixture per
+rule, ATT&CK mapping. Smaller than the old multi-source design: no identity or cross-source
+tables to build, capacity redirected into the four added proxy rules.
 
 **Accept:** Every rule fires on its positive fixture and stays silent on its negative. Rules
-detect scenarios 3, 4, 6 end to end.
+detect scenario 2 (data exfiltration, via the large-POST/newly-registered-domain rule) end to
+end and correctly stay silent on scenario 8 (benign-but-weird).
 
 ## M7 — Signal processing
-Beaconing, DGA, volumetric burst, rarity. Fitted DGA coefficients as an artifact.
+Beaconing (CV + FFT periodicity), DGA, volumetric burst, STL seasonal residuals, URL path
+analysis, rarity. Fitted DGA coefficients as an artifact.
 
-**Accept:** Scenario 1 detected. Jitter sweep produces a degradation curve. Every detector writes
-a structured `explanation`.
+**Accept:** Scenario 1 detected via beaconing, with the FFT cross-check agreeing on a dominant
+period. Scenario 6 (seasonal deviation) detected via STL residuals. Jitter sweep produces a
+degradation curve. Every detector writes a structured `explanation`. (The pre-registered
+prediction that no L3 feature-vector model catches scenario 6 either, `docs/12`, is checked once
+M8 lands — flag it there if L3 detects it too.)
 
 ## M8 — L3 models + benchmark
-Feature extraction, Isolation Forest, Mahalanobis, autoencoder with Optuna, per-feature
-thresholds, calibration.
+Feature extraction — including the entity-relative and cohort-relative variants for volume,
+transfer, and domain families (`docs/04` §L3) — Isolation Forest, Mahalanobis, ECOD, LOF,
+autoencoder with Optuna, per-feature thresholds, calibration. Grows from three models to five
+relative to the old design; smaller feature vector (~35 vs ~50) with the identity-joined family
+gone.
 
-**Accept:** All three trained and benchmarked; `evals/results.md` has the comparison table with a
-winner. Scenario 8 (low-and-slow) detected by at least one. Per-feature attribution renders.
+**Accept:** All five trained and benchmarked; `evals/results.md` reports which of the five
+hypotheses (§L3) held, not just a winner. Scenario 4 (low-and-slow) detected by the autoencoder
+and, per the pre-registered prediction, **not** by ECOD. Scenario 5 (peer-group) detected by LOF
+and **not** by the four global models. Per-feature attribution renders.
 
-## M9 — Sequence models + benchmark
-Session construction, Markov baseline, LogBERT. Identity sources only.
+## M9 — removed
 
-**Accept:** Scenario 5 (account takeover ordering) detected by a sequence model and **not** by L3
-features — that contrast is the proof the layer earns its place. Comparison table published.
+Sequence models (Markov, LogBERT) were designed, built, and benchmarked under the old
+multi-source design, then cut when the system moved to ZScaler-only — their entire justification
+was identity-log ordering, and identity logs are gone. See `docs/04` §L4 for the rationale and the
+benchmark that was run before the cut (pooled F1: Markov 0.529, LogBERT 0.097; neither detected
+the account-takeover-chain scenario that motivated the layer). The milestone number is retired,
+not reused — the M8 → M10 gap in this document is the fossil record of a layer that was built,
+measured, and rejected, not a numbering error.
 
 ## M10 — Graph, correlation, fusion
 Entity graph, Louvain incidents, graph features, LightGBM classifier, calibration and fusion,

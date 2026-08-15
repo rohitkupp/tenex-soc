@@ -1,7 +1,8 @@
 # 05 — Entity Graph & Incident Correlation
 
 Turns hundreds of signals into a dozen readable incidents. This stage is what makes the output
-usable by a human, and it is where cross-source correlation becomes visible.
+usable by a human, and it is where cross-layer corroboration becomes visible — with one log
+source, that is the axis worth optimizing for, not cross-source correlation (`docs/03`).
 
 ## Graph construction
 
@@ -10,17 +11,21 @@ usable by a human, and it is where cross-source correlation becomes visible.
 **Nodes** (`entities` table)
 | Type | Value | Source |
 |---|---|---|
-| `user` | pseudonymized principal | all |
-| `src_ip` | client IP | all |
+| `user` | pseudonymized principal | proxy |
+| `src_ip` | client IP | proxy |
 | `domain` | registrable domain | proxy |
 | `dst_ip` | server IP | proxy |
 | `asn` | AS number | enrichment |
 | `country` | ISO code | enrichment |
-| `session` | session id | identity |
 
 **Edges** (`entity_edges`) — derived from co-occurrence within a single event:
 `user —accessed→ domain`, `user —from→ src_ip`, `src_ip —resolves_to→ asn`,
-`domain —hosted_at→ dst_ip`, `user —authenticated_from→ country`, `user —owns→ session`.
+`domain —hosted_at→ dst_ip`, `src_ip —located_in→ country`.
+
+`country` comes from IP geolocation on `src_ip` (`docs/03`'s enrichment step, MaxMind GeoLite2),
+not from an identity provider's login event — the old design derived it from Okta; that source is
+gone, so the edge now points from `src_ip`, which is where a proxy-only pipeline actually has
+geography.
 
 Edge `weight` = event count, log-scaled. Prune singleton edges below a configurable threshold to
 keep the graph tractable; record what was pruned.
@@ -35,21 +40,42 @@ keep the graph tractable; record what was pruned.
 6. Merge communities sharing ≥ 50% of their seed entities.
 
 Rationale to record in the README: alerting per signal produces alert fatigue; alerting per
-community produces stories. A single incident that contains an Okta impossible-travel signal and
-a ZScaler beaconing signal on the same principal is one investigation, not two alerts.
+community produces stories. A single incident that contains a Sigma rule hit (e.g. blocked-then-
+allowed to the same host) and a beaconing signal on the same principal is one investigation, not
+two alerts.
+
+## Infrastructure clustering
+
+The other reason to keep a real graph rather than scoring entities independently, and where the
+capacity freed by cutting L4 (`docs/04` §L4) went. Restrict the induced subgraph above to
+`domain`/`dst_ip` nodes below a rarity threshold, and look for nodes with ≥3 distinct `user` edges
+within the analysis window — multiple principals independently converging on the same rare
+destination. Each principal's own entity-window can look unremarkable in isolation (a handful of
+requests to one domain is not, by itself, a volumetric or transfer anomaly); the pattern is only
+visible in the graph. This is what `shared_infra_overlap` (`docs/04` §L5) scores. Shared C2
+infrastructure, a single compromised upstream resource, or coordinated exfiltration to one drop
+point all produce this shape.
 
 ## Incident scoring
 
 ```
 base       = fusion over member signals (docs/04 §Fusion)
 graph_bonus = 1 + 0.15*log1p(n_distinct_detector_layers)
-                + 0.20*(1 if multi_source else 0)
                 + 0.10*min(community_signal_density, 1)
 fused_score = min(base * graph_bonus, 0.99)
 ```
 
-The bonus encodes a real belief: corroboration across independent detection methods and
-independent log sources is stronger evidence than any single high-scoring signal.
+The bonus encodes a real belief: corroboration across independent detection methods — a Sigma
+rule, a signal-processing detector, an L3 model, a graph feature — landing on the same community
+is stronger evidence than any single high-scoring signal.
+
+This replaces the old design's separate `multi_source` term
+(`+ 0.20*(1 if multi_source else 0)`), which rewarded corroboration across log sources. With
+ZScaler as the only source, that axis no longer exists. No replacement term was added in its
+place: `n_distinct_detector_layers` already carries the full weight of "independent corroboration
+is stronger evidence," just measured by layer instead of by source, and `docs/04` §Fusion
+deliberately does not apply a second, separate layer-diversity bonus at the fusion stage —
+stacking both would double-count the same evidence at two pipeline stages instead of once.
 
 ## Incident titling
 
@@ -87,5 +113,5 @@ ordering is a fact, and getting it from the database is both accurate and free.
 Output shape:
 ```json
 [{ "ts": "...", "tactic": "Initial Access", "event_ids": [123, 124],
-   "summary": "Authentication from previously unseen ASN" }]
+   "summary": "Requests from a previously unseen ASN" }]
 ```
