@@ -69,6 +69,11 @@ make train               # fit the five L3 models (~165 s, seeded — see note b
 
 `make help` lists everything else.
 
+**Sample logs are committed.** `backend/data/samples/` holds three real-format ZScaler NSS logs
+with ground-truth labels — start with `01-mixed-week.log` (10,747 lines, three attack campaigns
+and one benign decoy hidden in a week of ordinary traffic). See that directory's README for what
+each contains and what the system should find in it.
+
 **The pipeline runs end to end without an Anthropic API key** — only agentic triage is skipped.
 `DEMO_MODE=true` serves the recorded verdicts in `backend/data/demo/verdicts/` (checked in, 44 KB)
 and makes zero API calls, so the agent layer is inspectable with no key and no spend.

@@ -51,4 +51,8 @@ backend/data/models/
 
 # Runtime
 *.log
+# ...except the committed sample logs. `*.log` above exists for stray runtime output; these are
+# a deliberate deliverable — the README tells a reviewer to upload one, so they have to be in the
+# repo. Seeded and reproducible via `datagen` (backend/data/samples/README.md).
+!backend/data/samples/*.log
 frontend/next-env.d.ts
