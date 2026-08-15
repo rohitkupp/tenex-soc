@@ -49,12 +49,19 @@ def zscaler_event(
     url_category: str | None = None,
     threat_name: str | None = None,
     threat_category: str | None = None,
+    risk_score: int | None = None,
+    dlp_engine: str | None = None,
+    dlp_dictionaries: str | None = None,
     enrichment: dict[str, Any] | None = None,
 ) -> SimpleEventRecord:
     """One ZScaler NSS Web event, in `HTTPActivity` (4002) OCSF shape."""
     unmapped: dict[str, Any] = {}
     if url_supercategory is not None:
         unmapped["url_supercategory"] = url_supercategory
+    if dlp_engine is not None:
+        unmapped["dlp_engine"] = dlp_engine
+    if dlp_dictionaries is not None:
+        unmapped["dlp_dictionaries"] = dlp_dictionaries
     malware: list[dict[str, Any]] = []
     if threat_name is not None:
         malware.append(
@@ -86,6 +93,7 @@ def zscaler_event(
         "http_response": {"code": status_code},
         "traffic": {"bytes_out": bytes_out, "bytes_in": bytes_in},
         "disposition": disposition,
+        "risk_score": risk_score,
         "malware": malware,
         "unmapped": unmapped,
     }

@@ -1,0 +1,37 @@
+title: Access to anonymizer/VPN/proxy-avoidance URL category
+id: anonymizer-proxy-avoidance-category
+status: stable
+logsource:
+  product: zscaler
+  service: web
+detection:
+  anonymizer_category:
+    url_category|contains:
+      - 'Anonymizer'
+      - 'Proxy Avoidance'
+      - 'VPN'
+  condition: anonymizer_category
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1090.003
+entity:
+  type: user
+  by: principal
+description: >
+  docs/04 §L1: "Access to anonymizer/VPN/proxy-avoidance URL category" (T1090.003) — the fourth
+  field the original seven rules never used, docs/04's own phrase for it: "`urlcategory`'s
+  anonymizer class". Distinct from `malicious-url-category.yml`, which keys on
+  `url_supercategory == 'Security'` (an already-confirmed-malicious verdict: malware, phishing,
+  botnet callback, ...): a proxy-avoidance/anonymizer/VPN destination is not itself malicious —
+  plenty of it is a user's personal VPN client checking in — but reaching it through the corporate
+  egress is itself the defense-evasion move (T1090 "Proxy", the `.003` "Multi-hop Proxy" variant):
+  routing traffic through a chain the proxy's own inspection cannot see behind, exactly the kind of
+  hop `blocked-then-allowed.yml` catches from the *retry* side rather than the *destination*
+  category side. `url_category|contains` (not a bare `==`) against a short keyword list rather than
+  one exact string, because ZScaler's own category-name spelling for this class varies by tenant
+  configuration ("Proxy Avoidance and Anonymizers", "Anonymizer", "VPN and Anonymizers" are all
+  attested real ZScaler category labels) — matching `credentials-in-url.yml`'s own preference for a
+  short, high-precision literal list over a single brittle exact match. Independent of disposition
+  for the same reason `malicious-url-category.yml` states: a policy miss that let the request
+  through is the more urgent case, not a less urgent one.

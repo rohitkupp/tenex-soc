@@ -1,0 +1,33 @@
+title: DLP engine trigger on an outbound request
+id: dlp-engine-triggered
+status: stable
+logsource:
+  product: zscaler
+  service: web
+detection:
+  dlp_triggered:
+    dlp_engine|contains: ''
+  condition: dlp_triggered
+level: high
+tags:
+  - attack.exfiltration
+  - attack.t1048.003
+entity:
+  type: user
+  by: principal
+description: >
+  docs/04 §L1: "DLP engine trigger on an outbound request" (T1048.003) — ZScaler's own Data Loss
+  Prevention engine names the specific policy engine it matched (`dlpengine`, e.g. "Corporate
+  Confidential" — `datagen/scenarios/s02_data_exfiltration.py`'s `_DLP_FIELDS`, alongside
+  `dlpdictionaries`, e.g. "Source Code,PII,Financial Records") when outbound content matches a
+  configured dictionary. That is a content-based match against the transaction body itself — a
+  stronger, more specific claim than any size- or destination-based exfiltration heuristic already
+  in this inventory (`large-post-to-new-domain.yml`), the same "signature beats reputation-guess"
+  reasoning `threat-name-present.yml` states for the malware side. `dlp_engine|contains: ''` is
+  that same rule's idiom for "the field is present and non-null" — every string contains the empty
+  string, and there is no bare `|exists` modifier in this evaluator's small modifier set
+  (`app.detection.sigma.compiler`); the field itself resolves to `unmapped.dlp_engine`
+  (`app.detection.sigma.fields`, docs/03's `dlpengine -> unmapped.dlp_*`). Deliberately
+  disposition-independent (no `allowed`/`blocked` filter): a DLP match on a request the proxy
+  still let through is the more urgent case, not a less urgent one — `malicious-url-category.yml`
+  makes the identical argument for its own security-category match.

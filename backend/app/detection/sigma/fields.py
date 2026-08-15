@@ -111,11 +111,22 @@ _OCSF_TEXT_PATHS: Final[dict[str, tuple[str, ...]]] = {
     # `app/parsers/zscaler.py` only creates a `Malware` record when `threatname` is present).
     "threat_name": ("malware", "0", "name"),
     "threat_category": ("malware", "0", "classification_ids", "0"),
+    # docs/03's ZScaler field table: `dlpengine` / `dlpdictionaries` -> `unmapped.dlp_*`
+    # (`app/parsers/zscaler.py` only populates these keys when the source field is non-`None`).
+    # Added for the docs/04 §L1 "DLP engine trigger on an outbound request" rule (T1048.003) — a
+    # field the surviving seven rules never used.
+    "dlp_engine": ("unmapped", "dlp_engine"),
+    "dlp_dictionaries": ("unmapped", "dlp_dictionaries"),
 }
 
 _OCSF_NUMERIC_PATHS: Final[dict[str, tuple[str, ...]]] = {
     "lat": ("src_endpoint", "location", "coordinates", "lat"),
     "lon": ("src_endpoint", "location", "coordinates", "lon"),
+    # docs/03's ZScaler field table: `riskscore` -> `risk_score`, a top-level `HTTPActivity` field
+    # (`app/ocsf/http_activity.py`), not a hot column — so it lives in `events.ocsf` at the
+    # single-segment path `risk_score`, not nested under `http_request`/`unmapped`. Added for the
+    # docs/04 §L1 "ZScaler risk score >= 80 on an otherwise-allowed request" rule (T1071).
+    "risk_score": ("risk_score",),
 }
 
 # ---------------------------------------------------------------------------- enrichment JSONB
@@ -137,7 +148,7 @@ _ENRICHMENT_TEXT_PATHS: Final[dict[str, tuple[str, ...]]] = {
 # compiler` needs to tell the two apart: `direct_to_ip: true` uses the expression as-is (or
 # negated for `false`); `principal: 'jdoe@corp.example'` compares a value column with `==`.
 BOOLEAN_FIELDS: Final[frozenset[str]] = frozenset(_ENRICHMENT_BOOL_PATHS) | frozenset(
-    {"direct_to_ip"}
+    {"direct_to_ip", "has_download_extension"}
 )
 
 
@@ -233,10 +244,29 @@ def _domain_event_count(entity: EventLike) -> ColumnElement[Any]:
     )
 
 
+# `has_download_extension` (docs/04 §L1 "Executable/archive download from an uncategorized or
+# newly-registered domain", T1105 — another field the surviving seven rules never used, per
+# docs/04's own note: "file extension on `url_path`"). A regex test on the already-indexed
+# `url_path` hot column (docs/03: ZScaler's `url` field, "path and query only") for a filename
+# extension associated with an executable payload or an archive commonly used to smuggle one,
+# immediately before the query string or the end of the path — same "test the syntactic fact on
+# the hot column directly, don't wait on enrichment" reasoning as `_direct_to_ip` above. Matched
+# case-insensitively (`~*`, not `~`): a real download URL's extension case is not a meaningful
+# signal here and treating `.EXE` as a miss would just be a free evasion.
+_DOWNLOAD_EXTENSION_RE: Final[str] = (
+    r"\.(exe|msi|dll|bat|cmd|ps1|vbs|scr|jar|apk|zip|rar|7z|tar\.gz|tgz|tar|gz|iso)(\?|$)"
+)
+
+
+def _has_download_extension(entity: EventLike) -> ColumnElement[bool]:
+    return entity.url_path.op("~*")(literal(_DOWNLOAD_EXTENSION_RE))
+
+
 _COMPUTED: Final[dict[str, FieldFn]] = {
     "direct_to_ip": _direct_to_ip,
     "hour_utc": _hour_utc,
     "domain_event_count": _domain_event_count,
+    "has_download_extension": _has_download_extension,
 }
 
 

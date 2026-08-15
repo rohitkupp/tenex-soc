@@ -1,0 +1,37 @@
+title: ZScaler risk score >= 80 on an otherwise-allowed request
+id: high-risk-score-allowed
+status: stable
+logsource:
+  product: zscaler
+  service: web
+detection:
+  high_risk:
+    risk_score|gte: 80
+  was_allowed:
+    disposition: 'allowed'
+  condition: high_risk and was_allowed
+level: high
+tags:
+  - attack.command_and_control
+  - attack.t1071
+entity:
+  type: domain
+  by: domain
+description: >
+  docs/04 §L1: "ZScaler risk score >= 80 on an otherwise-allowed request" (T1071) — the last field
+  the original seven rules never used: `riskscore` (docs/03's ZScaler field table ->
+  `risk_score`, a top-level `HTTPActivity` field, `app/ocsf/http_activity.py`, not nested under
+  `http_request`/`unmapped`). ZScaler's risk engine folds together category baseline risk,
+  destination reputation, and content inspection into one 0-100 number per transaction
+  (`datagen/emitters/zscaler.py`'s `UrlCategory.risk` plus its own blocked-request bonus) — this
+  rule trusts that composite score directly rather than re-deriving it from the category/threat
+  fields the other rules already read individually. `was_allowed` is the deliberate second half:
+  a high-risk request the proxy *blocked* already shows up as a policy success, nothing new to
+  surface; a high-risk request the proxy nonetheless let through is a policy miss actively worth an
+  analyst's attention, the same "disposition-conditional, not disposition-blind" framing
+  `blocked-then-allowed.yml` uses for its own anchor. `>= 80` sits comfortably above every
+  benign-category baseline risk in the corpus (`datagen/emitters/zscaler.py`'s `CATEGORIES` tops
+  out at 25, plus a 25-point blocked-request bonus that never applies here because `was_allowed` is
+  required) and below the `Security`-supercategory floor (70-98) `malicious-url-category.yml`
+  already covers by name — this rule is the net that catches a risky-but-not-yet-categorized
+  destination the category engine hasn't labeled "Security" yet.

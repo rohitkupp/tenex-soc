@@ -170,6 +170,103 @@ _register(
     ],
 )
 
+# ---------------------------------------------------------------------------- docs/04 §L1 expansion
+# (dlpengine, file extension on url_path, urlcategory's anonymizer class, riskscore — fields the
+# original seven rules above never used.)
+
+_register(
+    "dlp-engine-triggered",
+    positive=[
+        zscaler_event(
+            "vic@corp.example",
+            T0,
+            "personal-storage.example",
+            http_method="POST",
+            url_path="/upload",
+            dlp_engine="Corporate Confidential",
+            dlp_dictionaries="Source Code,PII,Financial Records",
+        ),
+    ],
+    negative=[
+        # Same shape, but no DLP engine matched this transaction's content.
+        zscaler_event(
+            "vic@corp.example",
+            T0,
+            "personal-storage.example",
+            http_method="POST",
+            url_path="/upload",
+        ),
+    ],
+)
+
+_register(
+    "executable-archive-download-new-domain",
+    positive=[
+        zscaler_event(
+            "vic@corp.example",
+            T0,
+            "freshly-registered.top",
+            url_path="/dl/update.exe",
+            url_category="Newly Registered and Revived Domains",
+            src_ip="203.0.113.21",
+        ),
+    ],
+    negative=[
+        # Same uncategorized/NRD domain, but the path carries no download extension.
+        zscaler_event(
+            "vic@corp.example",
+            T0,
+            "freshly-registered.top",
+            url_path="/index.html",
+            url_category="Newly Registered and Revived Domains",
+            src_ip="203.0.113.21",
+        ),
+    ],
+)
+
+_register(
+    "anonymizer-proxy-avoidance-category",
+    positive=[
+        zscaler_event(
+            "vic@corp.example",
+            T0,
+            "hide-my-traffic.example",
+            url_category="Proxy Avoidance and Anonymizers",
+        ),
+    ],
+    negative=[
+        zscaler_event(
+            "vic@corp.example",
+            T0,
+            "docs.google.com",
+            url_category="Web-based Productivity Apps",
+        ),
+    ],
+)
+
+_register(
+    "high-risk-score-allowed",
+    positive=[
+        zscaler_event(
+            "vic@corp.example",
+            T0,
+            "risky-uncategorized.example",
+            disposition="allowed",
+            risk_score=95,
+        ),
+    ],
+    negative=[
+        # Same risk score, but the proxy already blocked it -- not a policy miss.
+        zscaler_event(
+            "vic@corp.example",
+            T0,
+            "risky-uncategorized.example",
+            disposition="blocked",
+            risk_score=95,
+        ),
+    ],
+)
+
 assert set(CASES) == {
     "malicious-url-category",
     "threat-name-present",
@@ -178,4 +275,8 @@ assert set(CASES) == {
     "non-browser-user-agent",
     "large-post-to-new-domain",
     "direct-to-ip-request",
+    "dlp-engine-triggered",
+    "executable-archive-download-new-domain",
+    "anonymizer-proxy-avoidance-category",
+    "high-risk-score-allowed",
 }, "every rule id in app/detection/rules/*.yml must have a fixture case"

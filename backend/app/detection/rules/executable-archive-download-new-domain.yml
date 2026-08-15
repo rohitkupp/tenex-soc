@@ -1,0 +1,38 @@
+title: Executable/archive download from an uncategorized or newly-registered domain
+id: executable-archive-download-new-domain
+status: stable
+logsource:
+  product: zscaler
+  service: web
+detection:
+  download_extension:
+    has_download_extension: true
+  uncategorized_or_nrd:
+    url_category:
+      - 'Miscellaneous or Unknown'
+      - 'Newly Registered and Revived Domains'
+  enriched_nrd:
+    is_newly_registered_domain: true
+  condition: download_extension and (uncategorized_or_nrd or enriched_nrd)
+level: high
+tags:
+  - attack.command_and_control
+  - attack.t1105
+entity:
+  type: src_ip
+  by: src_ip
+description: >
+  docs/04 §L1: "Executable/archive download from an uncategorized or newly-registered domain"
+  (T1105, "another field the original seven did not yet use ... file extension on `url_path`") —
+  a workstation pulling an `.exe`/`.msi`/`.dll`/`.ps1`/`.zip`/... payload (the full list is
+  `app.detection.sigma.fields._DOWNLOAD_EXTENSION_RE`) from a destination the proxy's own category
+  engine cannot yet place, or one registered days ago, is what staged tool transfer (T1105) looks
+  like from the log alone: an established SaaS or CDN vendor serving the identical file extension
+  has nowhere near the same story. `download_extension` is the new `has_download_extension`
+  computed field — a case-insensitive regex test against the indexed `url_path` hot column, chosen
+  over waiting on enrichment for the same reason `direct-to-ip-request.yml` gives for its own
+  computed field. `uncategorized_or_nrd`/`enriched_nrd` are copied verbatim from
+  `large-post-to-new-domain.yml` — the identical "category engine hasn't caught up, OR the M5
+  enrichment snapshot has" OR, reused rather than restated. Entity is `src_ip`, not `principal`:
+  T1105 lands the tool *on a host*, and the host is what a responder isolates first, matching
+  `non-browser-user-agent.yml`'s own choice of entity for the same reasoning.
