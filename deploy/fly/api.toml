@@ -6,7 +6,10 @@
 # long-lived container rather than a serverless function.
 
 app = "tenex-soc-api"
-primary_region = "sjc"
+# iad, not sjc: Supabase hosts the database in us-east-1. Co-locating the API cuts
+# per-query round trip from ~70ms to ~5ms, and this pipeline issues a great many
+# queries per analysis, so the difference compounds across a run.
+primary_region = "iad"
 
 [build]
   dockerfile = "Dockerfile"

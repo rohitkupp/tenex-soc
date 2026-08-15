@@ -4,8 +4,13 @@
  * here reach 200 MB). XMLHttpRequest is used instead of `fetch` because it
  * is the well-supported way to get real upload-progress events — this is
  * genuine progress from the browser, not a simulation.
+ *
+ * This is a POST, so it's subject to the same double-submit CSRF check as
+ * every other mutating call (see `lib/api/client.ts`'s module docstring) —
+ * `apiFetch` isn't used here (this is XHR, not `fetch`), so the
+ * `X-CSRF-Token` header is attached by hand below.
  */
-import { API_URL, ApiError } from "./client";
+import { API_URL, ApiError, CSRF_HEADER_NAME, readCsrfToken } from "./client";
 import { isApiErrorBody, type UploadResponse } from "./types";
 
 export interface UploadHandle {
@@ -22,6 +27,11 @@ export function uploadLogFile(
   const done = new Promise<UploadResponse>((resolve, reject) => {
     xhr.open("POST", `${API_URL}/api/uploads`);
     xhr.withCredentials = true;
+
+    const csrfToken = readCsrfToken();
+    if (csrfToken) {
+      xhr.setRequestHeader(CSRF_HEADER_NAME, csrfToken);
+    }
 
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable) {

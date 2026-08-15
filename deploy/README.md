@@ -13,7 +13,7 @@ removes the body-size problem rather than working around it.
 | `web` (Next.js) | Vercel | Edge-cached, and it is the bonus the brief asks for |
 | `api` (FastAPI) | Fly | Long-lived container, large request bodies, SSE |
 | workers | Fly, one app with per-stage process groups | Topology of docs/01 without paying for 12 separate apps |
-| Postgres + pgvector | Fly Managed Postgres | Same provider as the API — no cross-cloud latency on the hot path |
+| Postgres + pgvector | Supabase (free tier) | pgvector 0.8.2, IPv4-reachable. Fly's managed Postgres is $38/mo — untenable for a demo database holding very little |
 | Object store | Fly Tigris | S3-compatible; replaces MinIO in production |
 | Redis (SSE pub/sub) | Fly (Upstash) | Only used to relay progress events |
 | RabbitMQ | Fly app | No managed option; small instance with a volume |
@@ -26,14 +26,14 @@ reviewer opens the link once; a minute of blank page is the whole first impressi
 ```bash
 export PATH="/Applications/Docker.app/Contents/Resources/bin:$PATH"   # if docker is not on PATH
 
-# Postgres (pgvector is available on Fly MPG)
-flyctl mpg create --org personal --name tenex-soc-db --region sjc
-
+# Postgres lives on Supabase — see backend/.env for SUPABASE_DATABASE_URL.
+# Use the SESSION pooler (port 5432): the direct endpoint is IPv6-only and the
+# transaction pooler (6543) lacks prepared statements, which breaks Alembic.
 # S3-compatible object storage; prints AWS_* credentials — capture them
 flyctl storage create --org personal --name tenex-soc-uploads
 
 # Redis for SSE fan-out
-flyctl redis create --org personal --name tenex-soc-redis --region sjc
+flyctl redis create --org personal --name tenex-soc-redis --region iad
 
 # The API itself
 cd backend

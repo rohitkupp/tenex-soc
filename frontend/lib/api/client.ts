@@ -3,10 +3,43 @@
  * (never a Next.js route handler) and sends `credentials: "include"` so the
  * httpOnly session cookie the API sets rides along — see docs/09 and
  * docs/06. Do not add a proxy layer here.
+ *
+ * **CSRF.** The API's session cookie is `SameSite=None` in every deployed
+ * environment (Vercel web + Fly api are different registrable domains, so
+ * `SameSite=Lax` would never ride along on a cross-site fetch at all) — see
+ * `backend/app/core/csrf.py` and docs/06's "SameSite decision record". That
+ * gives up the browser's own CSRF defense, so the API compensates with a
+ * double-submit token: login also sets a second, JS-readable cookie
+ * (`tenex_csrf`), and every mutating request (POST/PUT/PATCH/DELETE) must
+ * echo its value back in an `X-CSRF-Token` header or the API rejects it
+ * with 403. `apiFetch` reads that cookie and attaches the header
+ * automatically for every mutating call, so callers never have to think
+ * about it — including `login`/`logout` below and `lib/api/upload.ts`'s
+ * separate XHR-based upload path, which reads the same cookie the same way.
  */
 import { isApiErrorBody, type LoginRequest, type LoginResponse } from "./types";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+export const CSRF_COOKIE_NAME = "tenex_csrf";
+export const CSRF_HEADER_NAME = "X-CSRF-Token";
+
+const MUTATING_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/**
+ * Reads the CSRF cookie straight out of `document.cookie`. It is
+ * deliberately NOT httpOnly (see the module docstring) — that's what makes
+ * this possible at all. Returns `null` before the first login, when the
+ * cookie doesn't exist yet (e.g. the login request itself, which the API
+ * exempts from the token check for exactly this reason).
+ */
+export function readCsrfToken(): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie.match(
+    new RegExp(`(?:^|; )${CSRF_COOKIE_NAME}=([^;]*)`),
+  );
+  return match ? decodeURIComponent(match[1] ?? "") : null;
+}
 
 export class ApiError extends Error {
   readonly status: number;
@@ -31,11 +64,15 @@ async function parseErrorBody(res: Response): Promise<{ detail: string; code: st
 }
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method ?? "GET").toUpperCase();
+  const csrfToken = MUTATING_METHODS.has(method) ? readCsrfToken() : null;
+
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
     credentials: "include",
     headers: {
       ...(init?.body ? { "Content-Type": "application/json" } : {}),
+      ...(csrfToken ? { [CSRF_HEADER_NAME]: csrfToken } : {}),
       ...init?.headers,
     },
   });

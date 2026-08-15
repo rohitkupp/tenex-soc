@@ -25,7 +25,7 @@ from app.models.tenant import Tenant
 from app.models.upload import Upload
 from app.models.user import User
 from app.storage.client import get_s3_client
-from tests.conftest import authenticate, make_tenant, make_user
+from tests.conftest import TEST_ORIGIN, authenticate, make_tenant, make_user
 
 ZSCALER_LINE = (
     "2024-01-01T00:00:00Z\tu1@example.com\t10.0.0.1\texample.com\t/\tGET\t200\tAllowed\t"
@@ -211,7 +211,9 @@ def test_list_analyses_is_tenant_scoped_and_newest_first(
         assert resp.status_code == 201
         ids.append(resp.json()["analysis_id"])
 
-    other_client = TestClient(client.app)
+    # Built directly (not via the `client` fixture), so it needs its own Origin header
+    # to clear app.core.csrf's allowlist check — see tests/conftest.py's TEST_ORIGIN.
+    other_client = TestClient(client.app, headers={"origin": TEST_ORIGIN})
     authenticate(other_client, other_user)
     other_resp = other_client.post(
         "/api/uploads", files={"file": ("other.log", _zscaler_text(), "text/plain")}
@@ -242,7 +244,9 @@ def test_get_analysis_from_another_tenant_is_not_found(
     other_tenant = make_tenant(name="Not Yours")
     tenant_cleanup.append(other_tenant.id)
     other_user = make_user(tenant_id=other_tenant.id, email="notyours@example.com")
-    other_client = TestClient(client.app)
+    # Built directly (not via the `client` fixture), so it needs its own Origin header
+    # to clear app.core.csrf's allowlist check — see tests/conftest.py's TEST_ORIGIN.
+    other_client = TestClient(client.app, headers={"origin": TEST_ORIGIN})
     authenticate(other_client, other_user)
     other_upload = other_client.post(
         "/api/uploads", files={"file": ("theirs.log", _zscaler_text(), "text/plain")}

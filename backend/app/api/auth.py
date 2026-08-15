@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette import status
 
+from app.core.csrf import clear_csrf_cookie, issue_csrf_cookie
 from app.core.db import get_db
 from app.core.errors import ApiError
 from app.core.logging import get_logger
@@ -56,6 +57,10 @@ def login(
 
     token = create_access_token(user_id=user.id, tenant_id=user.tenant_id)
     set_session_cookie(response, token)
+    # Second, JS-readable cookie for the double-submit CSRF check every mutating
+    # request after this one must pass (app.core.csrf). Its value is derived from
+    # `token`, so it is bound to this session without any server-side token storage.
+    issue_csrf_cookie(response, token)
     log.info("auth.login_succeeded", tenant_id=str(user.tenant_id))
     return LoginResponse(user=UserOut.model_validate(user))
 
@@ -63,6 +68,7 @@ def login(
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
 def logout(response: Response) -> None:
     clear_session_cookie(response)
+    clear_csrf_cookie(response)
 
 
 @router.get("/me", response_model=MeResponse)

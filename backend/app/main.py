@@ -15,6 +15,7 @@ from slowapi.errors import RateLimitExceeded
 
 from app.api import analyses, auth, health, uploads
 from app.core.config import get_settings
+from app.core.csrf import CSRFMiddleware
 from app.core.errors import ApiError, api_error_handler
 from app.core.logging import configure_logging, get_logger
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
@@ -49,11 +50,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Order matters here. Starlette wraps middleware so the *last* one added via
+# `add_middleware` ends up outermost (runs first on the way in, last on the way out).
+# CSRFMiddleware is added first (so it sits inside CORSMiddleware) precisely so that a
+# 403 it raises still passes back out *through* CORSMiddleware on the way to the
+# client: without CORS headers on an error response, a cross-origin `fetch` in the
+# browser can't read the response at all (it surfaces as an opaque network failure,
+# not the 403 with a body the frontend needs to render). See app.core.csrf.
+app.add_middleware(CSRFMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_credentials=True,
+    allow_credentials=True,  # required for the httpOnly session + CSRF cookies to ride
     allow_methods=["*"],
+    # "*" here does not literally echo "*" back (which the fetch spec forbids for
+    # credentialed requests) — Starlette's CORSMiddleware mirrors the exact
+    # Access-Control-Request-Headers value on preflight, which already covers
+    # CSRF_HEADER_NAME ("X-CSRF-Token") and every other header the frontend sends.
     allow_headers=["*"],
 )
 

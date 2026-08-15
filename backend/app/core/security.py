@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, Literal
 
 import jwt
 from argon2 import PasswordHasher
@@ -25,7 +25,7 @@ from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.core.db import get_db
 from app.core.errors import ApiError
 from app.models.base import tenant_scope
@@ -82,30 +82,54 @@ def decode_access_token(token: str) -> _TokenClaims:
         raise InvalidTokenError from exc
 
 
-def set_session_cookie(response: Response, token: str) -> None:
-    settings = get_settings()
+def cookie_security_flags(settings: Settings | None = None) -> tuple[bool, Literal["lax", "none"]]:
+    """`(secure, samesite)` for every cookie this app sets — one branch, shared by the
+    session cookie (below) and the CSRF cookie (`app.core.csrf`), so the two can never
+    silently disagree.
+
+    **Why this branches at all.** The deployed topology is Vercel (`*.vercel.app`) +
+    Fly (`*.fly.dev`) — different registrable domains, so every browser -> API call is
+    cross-site. `SameSite=Lax` cookies are never attached to cross-site fetch/XHR (only
+    to top-level GET navigations), which would silently drop the session cookie on
+    every login in production. `SameSite=None` is required to make cross-site
+    credentialed requests work at all, and the cookie spec requires `None` to be paired
+    with `Secure`. A `Secure` cookie is dropped by the browser (and never sent by curl)
+    over plain HTTP, which is exactly what local dev (`http://localhost`) is — so local
+    keeps the old `Lax` + non-`Secure` pair, which works there because the frontend and
+    API are same-site on `localhost` regardless of port. This is a documented deviation
+    between environments, not an oversight: see docs/06-PRIVACY-SECURITY.md, "SameSite
+    decision record", for the full reasoning and the compensating CSRF controls
+    (`app.core.csrf`) this trade requires.
+    """
+    settings = settings or get_settings()
+    if settings.environment == "local":
+        return False, "lax"
+    return True, "none"
+
+
+def set_session_cookie(response: Response, token: str, *, settings: Settings | None = None) -> None:
+    settings = settings or get_settings()
+    secure, samesite = cookie_security_flags(settings)
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
         max_age=settings.jwt_ttl_minutes * 60,
         httponly=True,
-        # Secure everywhere except local dev, where the reviewer/curl talks plain HTTP
-        # to localhost. staging/production (Vercel + Fly, both HTTPS) always get it.
-        # See docs/06-PRIVACY-SECURITY.md; documented deviation, not a silent one.
-        secure=settings.environment != "local",
-        samesite="lax",
+        secure=secure,
+        samesite=samesite,
         path="/",
     )
 
 
-def clear_session_cookie(response: Response) -> None:
-    settings = get_settings()
+def clear_session_cookie(response: Response, *, settings: Settings | None = None) -> None:
+    settings = settings or get_settings()
+    secure, samesite = cookie_security_flags(settings)
     response.delete_cookie(
         key=COOKIE_NAME,
         path="/",
         httponly=True,
-        secure=settings.environment != "local",
-        samesite="lax",
+        secure=secure,
+        samesite=samesite,
     )
 
 
