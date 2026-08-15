@@ -23,6 +23,7 @@ from app.models.base import tenant_scope
 from app.models.incident import Incident
 from app.models.response_plan import ResponsePlan
 from app.models.synthetic_seed_marker import SyntheticSeedMarker
+from app.models.triage_verdict import TriageVerdict
 
 __all__ = [
     "AlignmentPoint",
@@ -194,9 +195,22 @@ def compute_learning_metrics(session: Session, tenant_id: uuid.UUID) -> Learning
     synthetic_ids = synthetic_feedback_ids(session, tenant_id)
 
     with tenant_scope(session, tenant_id):
+        # The join through `triage_verdicts` -> `incidents` is what makes this tenant-scoped, and
+        # it is not optional. `analyst_feedback` carries no `tenant_id` column and no
+        # `TenantScopedMixin` (docs/02: it is isolated transitively, the same way
+        # `app.learning.feedback_data.labeled_examples` and `app.learning.classifier` already do
+        # it) — so a bare `select(AnalystFeedback)` inside `tenant_scope` receives no loader
+        # criteria at all and silently returns *every tenant's* feedback. That is what this query
+        # used to do: on a single-tenant database it looked correct, and it took a database
+        # holding several tenants' rows for `GET /api/learning/metrics` to start reporting a
+        # cross-tenant count and alignment percentage.
         feedback_rows = [
-            (row.id, row.agrees, row.created_at)
-            for row in session.execute(select(AnalystFeedback)).scalars().all()
+            (feedback.id, feedback.agrees, feedback.created_at)
+            for feedback, _verdict, _incident in session.execute(
+                select(AnalystFeedback, TriageVerdict, Incident)
+                .join(TriageVerdict, AnalystFeedback.verdict_id == TriageVerdict.id)
+                .join(Incident, TriageVerdict.incident_id == Incident.id)
+            ).all()
         ]
 
     examples = labeled_examples(session, tenant_id)

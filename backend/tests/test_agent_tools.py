@@ -21,7 +21,12 @@ from app.agent.tools import (
     query_events,
 )
 from app.core.db import get_session_factory
-from tests.conftest import make_analysis, make_tenant, make_user, tenant_cleanup
+
+# `tenant_cleanup` is deliberately NOT imported: it lives in tests/conftest.py, which pytest
+# discovers automatically. Importing a conftest fixture by name only creates a module-level
+# rebinding that every test parameter then shadows (F811). Fixtures under tests/fixtures/**
+# are the ones that must be imported, because that package is not a conftest.
+from tests.conftest import make_analysis, make_tenant, make_user
 from tests.fixtures.agent import make_event
 from tests.fixtures.response import make_incident, make_signal
 

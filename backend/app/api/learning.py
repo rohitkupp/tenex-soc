@@ -39,7 +39,7 @@ from app.learning.feedback import (
 )
 from app.learning.metrics import compute_learning_metrics
 from app.learning.retrain import RetrainAttempt
-from app.models.base import tenant_scope
+from app.models.base import get_scoped, tenant_scope
 from app.models.suppression_candidate import STATUS_ACCEPTED, STATUS_PENDING, SuppressionCandidate
 from app.schemas.learning import (
     AlignmentPointOut,
@@ -59,9 +59,12 @@ from app.schemas.learning import (
 router = APIRouter()
 log = get_logger(__name__)
 
-# `app/detection/rules/suppressions/{id}.yml` written relative to `backend/` in `written_path`
-# (SUPPRESSIONS_DIR is .../backend/app/detection/rules/suppressions; three parents up is backend).
-_BACKEND_ROOT = SUPPRESSIONS_DIR.parents[2]
+# `written_path` is stored relative to `backend/`, so it reads as
+# `app/detection/rules/suppressions/{id}.yml` — the path a reviewer can paste into an editor.
+# SUPPRESSIONS_DIR is `.../backend/app/detection/rules/suppressions`, so counting up:
+# parents[0]=rules, [1]=detection, [2]=app, [3]=backend. It must be [3]; [2] silently produced
+# paths missing their leading `app/` segment.
+_BACKEND_ROOT = SUPPRESSIONS_DIR.parents[3]
 
 
 def _retrain_attempt_out(attempt: RetrainAttempt | None) -> RetrainAttemptOut | None:
@@ -235,7 +238,7 @@ def accept_suppression_candidate(
     no automated caller anywhere in this codebase.
     """
     with tenant_scope(db, current.tenant.id):
-        candidate = db.get(SuppressionCandidate, candidate_id)
+        candidate = get_scoped(db, SuppressionCandidate, candidate_id)
         if candidate is None:
             raise _not_found_suppression()
         if candidate.status == STATUS_ACCEPTED and candidate.written_path is not None:

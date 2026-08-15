@@ -44,12 +44,15 @@ from __future__ import annotations
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
+from typing import TypeVar
 
-from sqlalchemy import ForeignKey, Uuid, event
+from sqlalchemy import ForeignKey, Uuid, event, select
 from sqlalchemy.orm import Mapped, Session, mapped_column, with_loader_criteria
 from sqlalchemy.orm.session import ORMExecuteState
 
 from app.core.db import get_session_factory
+
+_T = TypeVar("_T")
 
 _BYPASS_KEY = "_bypass_tenant_scope"
 _TENANT_KEY = "tenant_id"
@@ -131,6 +134,29 @@ def tenant_scope(session: Session, tenant_id: uuid.UUID) -> Iterator[Session]:
             session.info.pop(_TENANT_KEY, None)
         else:
             session.info[_TENANT_KEY] = previous
+
+
+def get_scoped(session: Session, model: type[_T], pk: object) -> _T | None:
+    """Primary-key lookup that is actually tenant-filtered. Use this instead of `Session.get()`
+    for any tenant-scoped model whose id came from outside the process (a URL path, a queue
+    message, a user-supplied filter).
+
+    `Session.get()` consults the identity map *before* it emits SQL, and returns the cached object
+    directly on a hit. `with_loader_criteria` — the mechanism the whole `_enforce_tenant_scope`
+    hook above is built on — only ever applies to a statement that is actually executed, so an
+    identity-map hit walks straight past it. On a warm session that already holds tenant A's
+    incident, `session.get(Incident, that_id)` inside `tenant_scope(session, tenant_b)` returns
+    tenant A's row.
+
+    Request handlers get a fresh session per request (`app.core.db.get_db`), so nothing in the
+    current HTTP surface can warm a session with another tenant's rows — but "isolation holds
+    because of how the caller happens to manage sessions" is exactly the property this module
+    exists to stop depending on. A `select()` always emits SQL, so it always receives the
+    criteria.
+    """
+    return session.execute(
+        select(model).where(model.__mapper__.primary_key[0] == pk)  # type: ignore[attr-defined]
+    ).scalar_one_or_none()
 
 
 @contextmanager

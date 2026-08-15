@@ -1,0 +1,18 @@
+title: Suppress test.api.suppress.1a316475 for src_ip=203.0.113.99
+id: auto-test-api-suppress-1a316475-203-0-113-99-ac6e75a8
+status: experimental
+applies_to:
+- test.api.suppress.1a316475
+reason: API-generated candidate for accept test
+logsource:
+  product: zscaler
+  service: web
+detection:
+  dismissed_entity:
+    src_ip: 203.0.113.99
+  condition: dismissed_entity
+level: informational
+tags: []
+entity:
+  type: src_ip
+  by: src_ip

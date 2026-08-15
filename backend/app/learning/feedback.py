@@ -46,7 +46,7 @@ from app.learning.retrain import RetrainAttempt, run_classifier_retrain
 from app.learning.suppression import generate_suppression_candidates
 from app.learning.weights import WeightTuningResult, retune_detector_weights
 from app.models.analyst_feedback import AnalystFeedback
-from app.models.base import tenant_scope
+from app.models.base import get_scoped, tenant_scope
 from app.models.benign_baseline_entry import BenignBaselineEntry
 from app.models.incident import Incident
 from app.models.suppression_candidate import SuppressionCandidate
@@ -115,7 +115,7 @@ def record_feedback(
     data: FeedbackInput,
 ) -> FeedbackOutcome:
     with tenant_scope(session, tenant_id):
-        incident = session.get(Incident, incident_id)
+        incident = get_scoped(session, Incident, incident_id)
         if incident is None:
             raise IncidentNotFoundError(f"no incident {incident_id} for tenant {tenant_id}")
 

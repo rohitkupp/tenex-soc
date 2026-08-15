@@ -31,7 +31,9 @@ REQUIRED_TECHNIQUE_IDS = (
 def test_corpus_covers_every_referenced_technique() -> None:
     ids = set(all_technique_ids())
     missing = [t for t in REQUIRED_TECHNIQUE_IDS if t not in ids]
-    assert not missing, f"corpus is missing technique(s) referenced elsewhere in the repo: {missing}"
+    assert not missing, (
+        f"corpus is missing technique(s) referenced elsewhere in the repo: {missing}"
+    )
 
 
 def test_corpus_has_no_duplicate_ids() -> None:

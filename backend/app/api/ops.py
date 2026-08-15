@@ -30,6 +30,7 @@ from app.core.db import get_db, get_engine
 from app.core.errors import ApiError
 from app.core.logging import get_logger
 from app.core.security import CurrentUser, require_user
+from app.models.base import get_scoped
 from app.models.dead_letter import DeadLetter
 from app.pipeline import state
 from app.pipeline.messages import StageMessage
@@ -110,7 +111,7 @@ async def retry_dead_letter(
     db: Annotated[Session, Depends(get_db)],
     current: Annotated[CurrentUser, Depends(require_user)],
 ) -> DeadLetterRetryResponse:
-    row = db.get(DeadLetter, dead_letter_id)
+    row = get_scoped(db, DeadLetter, dead_letter_id)
     if row is None:
         raise _not_found()
 

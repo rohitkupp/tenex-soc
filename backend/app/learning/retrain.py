@@ -237,11 +237,12 @@ def run_classifier_retrain(
     Tests pass a run-unique key; nothing else should.
     """
     rows = build_training_rows(session, tenant_id)
-    if len(rows) < min_rows:
+
+    def _skip(reason: str) -> RetrainAttempt:
         return RetrainAttempt(
             attempted_at=datetime.now(UTC),
             skipped=True,
-            skip_reason=f"only {len(rows)} labeled row(s), need >= {min_rows}",
+            skip_reason=reason,
             n_training_rows=len(rows),
             model_version_id=None,
             version=None,
@@ -249,6 +250,23 @@ def run_classifier_retrain(
             gate=None,
             eval_scores=None,
             baseline_version=None,
+        )
+
+    if len(rows) < min_rows:
+        return _skip(f"only {len(rows)} labeled row(s), need >= {min_rows}")
+
+    # A multiclass objective needs at least two classes to be defined at all; LightGBM raises
+    # "Number of classes should be specified and greater than 1" rather than training a degenerate
+    # model. This is the ordinary early state of a real tenant, not an error — an analyst who has
+    # agreed with every verdict so far has produced a perfectly valid, entirely single-class
+    # feedback history. Report it the same way as "not enough rows" so the learning page can say
+    # *why* nothing retrained, instead of the feedback endpoint returning a 500.
+    distinct_labels = {row.label for row in rows}
+    if len(distinct_labels) < 2:
+        only = next(iter(distinct_labels))
+        return _skip(
+            f"all {len(rows)} labeled row(s) share one label ({only!r}); "
+            f"multiclass training needs >= 2 distinct labels"
         )
 
     result = train_fn(rows)

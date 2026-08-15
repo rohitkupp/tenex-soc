@@ -29,11 +29,24 @@ from app.models.user import User
 
 
 @pytest.fixture
-def learning_session() -> Iterator[Session]:
+def learning_session(learning_cleanup: list[uuid.UUID]) -> Iterator[Session]:
     """A plain, unscoped `Session` -- `tests/test_learning_*.py`'s equivalent of the ad hoc
     `get_session_factory()()` every other test file in this suite constructs inline
     (`tests/test_ops_dead_letters.py`, e.g.), just factored out once since so many learning tests
-    need one."""
+    need one.
+
+    **Why this depends on `learning_cleanup` even though it never reads it.** pytest tears fixtures
+    down in reverse setup order, and a test that lists `learning_session` before `learning_cleanup`
+    in its own signature therefore used to have cleanup run *first* -- issuing `DELETE FROM
+    analyst_feedback` on a fresh pooled connection while this session still held row locks from an
+    uncommitted `INSERT`. Neither side could proceed: the delete waited on the lock, and the
+    session could not release it because its own teardown was queued behind the delete. That is not
+    a slow test, it is a permanent hang -- it wedged the suite for hours before it was diagnosed.
+    Declaring the dependency here forces `learning_cleanup` to be set up first and therefore torn
+    down last, so this session is always closed (and its transaction released) before any DELETE
+    runs. Ordering now comes from the dependency graph rather than from each test's parameter
+    order, which no test author should have to remember.
+    """
     s = get_session_factory()()
     try:
         yield s
@@ -68,6 +81,11 @@ def learning_cleanup(tenant_cleanup: list[uuid.UUID]) -> Iterator[list[uuid.UUID
     if not tenant_ids:
         return
     with get_engine().begin() as conn:
+        # A backstop for the failure mode `learning_session`'s docstring describes: if some future
+        # fixture ordering again leaves a transaction open while these DELETEs run, this makes the
+        # suite fail in five seconds with a lock timeout rather than hang indefinitely. A test-only
+        # teardown has no legitimate reason to wait on a lock at all.
+        conn.execute(text("SET LOCAL lock_timeout = '5s'"))
         conn.execute(
             text("DELETE FROM learning_synthetic_seed WHERE tenant_id = ANY(:ids)"),
             {"ids": tenant_ids},
