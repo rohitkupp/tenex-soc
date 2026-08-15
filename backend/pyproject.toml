@@ -37,6 +37,8 @@ dependencies = [
   "networkx>=3.4",
   "python-louvain>=0.16",
   "drain3>=0.9.11",
+  "pyod>=2.0",
+  "statsmodels>=0.14",
   # Parsing / enrichment
   "pyyaml>=6.0",
   "ua-parser>=1.0",
