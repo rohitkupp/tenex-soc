@@ -81,9 +81,15 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S", "T20"]
+# F401/F811: pytest fixtures shared via tests/fixtures/** (not conftest.py) are imported by name
+# and then re-used as a same-named test-function parameter for pytest's fixture lookup to find --
+# e.g. `from tests.fixtures.learning import learning_cleanup` then
+# `def test_x(learning_cleanup): ...`. That is the correct, idiomatic pytest pattern, not a bug;
+# ruff's static analysis has no way to know the parameter isn't shadowing dead code.
+"tests/**" = ["S", "T20", "F401", "F811"]
 "datagen/**" = ["S311"]  # non-cryptographic RNG is the point
 "evals/**" = ["T20"]
+"app/scripts/seed_feedback.py" = ["S311"]  # synthetic demo data, not security-sensitive
 
 # ---------------------------------------------------------------- mypy
 # Strict on the layers the reviewer will read closely. The rest is checked loosely.

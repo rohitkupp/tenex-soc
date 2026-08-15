@@ -30,9 +30,11 @@ __all__ = ["EventRow", "fetch_event_rows", "persist_signals", "rows_with_domain"
 
 @dataclass(frozen=True, slots=True)
 class EventRow:
-    """The five `events` columns every L2 detector needs. Deliberately narrow -- none of the
-    four detectors touch `bytes_in`/`bytes_out`/`status_code`/etc., and a wider row type would
-    invite a detector to reach for a column docs/04 never asked it to use.
+    """The `events` columns L2 detectors need. Originally five columns (the four pre-M8b
+    detectors between them); `url_path` was added for `url_path.py` (docs/04 §L2 "URL path
+    analysis") -- still deliberately narrow, no detector here touches `bytes_in`/`status_code`/
+    etc., and a wider row type would invite one to reach for a column docs/04 never asked it to
+    use.
     """
 
     id: int
@@ -40,6 +42,7 @@ class EventRow:
     src_ip: str | None
     domain: str | None
     principal: str | None
+    url_path: str | None = None
 
 
 def fetch_event_rows(session: Session, analysis_id: uuid.UUID) -> list[EventRow]:
@@ -59,6 +62,7 @@ def fetch_event_rows(session: Session, analysis_id: uuid.UUID) -> list[EventRow]
             Event.src_ip,
             Event.domain,
             Event.principal,
+            Event.url_path,
         )
         .where(Event.analysis_id == analysis_id)
         .order_by(Event.ts)
@@ -71,6 +75,7 @@ def fetch_event_rows(session: Session, analysis_id: uuid.UUID) -> list[EventRow]
             src_ip=str(r.src_ip) if r.src_ip is not None else None,
             domain=r.domain,
             principal=r.principal,
+            url_path=r.url_path,
         )
         for r in rows
     ]

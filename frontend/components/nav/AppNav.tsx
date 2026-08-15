@@ -31,6 +31,24 @@ export async function AppNav() {
             Upload
           </Link>
           <Link
+            href="/models"
+            className="text-[var(--color-text-mid)] transition-colors hover:text-[var(--color-text-hi)]"
+          >
+            Models
+          </Link>
+          <Link
+            href="/learning"
+            className="text-[var(--color-text-mid)] transition-colors hover:text-[var(--color-text-hi)]"
+          >
+            Learning
+          </Link>
+          <Link
+            href="/tier2"
+            className="text-[var(--color-text-mid)] transition-colors hover:text-[var(--color-text-hi)]"
+          >
+            Tier 2
+          </Link>
+          <Link
             href="/ops"
             className="text-[var(--color-text-mid)] transition-colors hover:text-[var(--color-text-hi)]"
           >

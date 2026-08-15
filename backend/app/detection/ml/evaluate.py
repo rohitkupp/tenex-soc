@@ -1,5 +1,5 @@
 """The L3 benchmark (docs/12 §"Model comparison — the headline tables", row "L3 unsupervised":
-Isolation Forest / Mahalanobis / Autoencoder, F1 / AUC-PR / per-scenario recall).
+Isolation Forest / Mahalanobis / ECOD / LOF / Autoencoder, F1 / AUC-PR / per-scenario recall).
 
     python -m app.detection.ml.evaluate --eval-seed 7 --eval-dir /tmp/m8_eval
 
@@ -53,8 +53,10 @@ from app.core.logging import configure_logging, get_logger
 from app.detection.ml.artifacts import MODELS_DIR
 from app.detection.ml.detect import (
     ML_AUTOENCODER,
+    ML_ECOD,
     ML_IFOREST,
     ML_MAHALANOBIS,
+    ML_PEER_GROUP,
     SIGNAL_CONFIDENCE_THRESHOLD,
     MLModelBundle,
 )
@@ -63,25 +65,36 @@ from app.detection.ml.features import build_entity_window_features
 
 log = get_logger(__name__)
 
-# docs/11's six scenarios (down from ten -- password_spray, impossible_travel,
+# docs/11's eight scenarios (down from ten -- password_spray, impossible_travel,
 # account_takeover_chain, and mfa_fatigue were Okta/identity-only and removed along with that
-# source), verbatim key order from that doc's table. Hardcoded rather than
-# `datagen.scenarios.scenario_keys()` -- `app.detection.ml` does not import `datagen` (module
-# docstrings across this package explain why); `tests/test_ml_evaluate.py` asserts this tuple
-# stays in sync with the registered scenario keys as an independent audit.
+# source; peer_group_deviation and seasonal_deviation were added at M8b for the docs/12
+# prediction #2/#3 pre-registered tests), verbatim key order from docs/11's table. Hardcoded
+# rather than `datagen.scenarios.scenario_keys()` -- `app.detection.ml` does not import
+# `datagen` (module docstrings across this package explain why); `tests/test_ml_evaluate.py`
+# asserts this tuple stays in sync with the registered scenario keys as an independent audit.
 SCENARIO_KEYS: tuple[str, ...] = (
     "c2_beaconing",
     "data_exfiltration",
     "insider_mass_download",
     "low_and_slow_exfil",
+    "peer_group_deviation",
+    "seasonal_deviation",
     "prompt_injection_canary",
     "benign_but_weird",
 )
 SCENARIO_EVENTS = 50_000
 FP_CONTROL_SCENARIO = "benign_but_weird"
 LOW_AND_SLOW_SCENARIO = "low_and_slow_exfil"
+PEER_GROUP_SCENARIO = "peer_group_deviation"
+SEASONAL_SCENARIO = "seasonal_deviation"
 
-MODEL_KEYS: tuple[str, str, str] = (ML_IFOREST, ML_MAHALANOBIS, ML_AUTOENCODER)
+MODEL_KEYS: tuple[str, str, str, str, str] = (
+    ML_IFOREST,
+    ML_MAHALANOBIS,
+    ML_ECOD,
+    ML_PEER_GROUP,
+    ML_AUTOENCODER,
+)
 BASELINE_MODEL = ML_IFOREST
 
 
@@ -226,6 +239,8 @@ def evaluate(
         for model_key, model in (
             (ML_IFOREST, bundle.iforest),
             (ML_MAHALANOBIS, bundle.mahalanobis),
+            (ML_ECOD, bundle.ecod),
+            (ML_PEER_GROUP, bundle.lof),
             (ML_AUTOENCODER, bundle.autoencoder),
         ):
             raw = model.raw_scores(x_scaled)
@@ -254,6 +269,17 @@ def evaluate(
     low_and_slow_detectors = [
         m.model for m in per_scenario_metrics if m.scenario == LOW_AND_SLOW_SCENARIO and m.detected
     ]
+    peer_group_detectors = [
+        m.model for m in per_scenario_metrics if m.scenario == PEER_GROUP_SCENARIO and m.detected
+    ]
+    seasonal_l3_detectors = [
+        m.model for m in per_scenario_metrics if m.scenario == SEASONAL_SCENARIO and m.detected
+    ]
+    predictions = _pre_registered_predictions(
+        low_and_slow_detectors=low_and_slow_detectors,
+        peer_group_detectors=peer_group_detectors,
+        seasonal_l3_detectors=seasonal_l3_detectors,
+    )
 
     total_seconds = time.perf_counter() - t0
     result = {
@@ -266,9 +292,76 @@ def evaluate(
         "winner": winner,
         "baseline": BASELINE_MODEL,
         "low_and_slow_detectors": low_and_slow_detectors,
+        "peer_group_detectors": peer_group_detectors,
+        "seasonal_l3_detectors": seasonal_l3_detectors,
+        "pre_registered_predictions": predictions,
         "ground_truths": ground_truths,
     }
     return result
+
+
+def _pre_registered_predictions(
+    *,
+    low_and_slow_detectors: list[str],
+    peer_group_detectors: list[str],
+    seasonal_l3_detectors: list[str],
+) -> dict[str, dict[str, object]]:
+    """docs/12's three pre-registered predictions, evaluated against measured L3 results (#3's
+    L2-side half -- whether `signal.stl_residual` itself detects scenario 6 -- is measured by a
+    separate L2 harness this module does not own the input rows for, and merged into `evals/
+    results.md` alongside this dict's own `l3_models_detected` field, not computed here).
+
+    Each entry's `outcome` is `"CONFIRMED"` or `"FALSIFIED"` per docs/12's own stated falsification
+    condition, decided by the rule alone -- never reframed after seeing the numbers.
+    """
+    ae_detected = ML_AUTOENCODER in low_and_slow_detectors
+    ecod_detected = ML_ECOD in low_and_slow_detectors
+    prediction_1_confirmed = ae_detected and not ecod_detected
+
+    global_models = {ML_IFOREST, ML_MAHALANOBIS, ML_ECOD, ML_AUTOENCODER}
+    lof_detected = ML_PEER_GROUP in peer_group_detectors
+    any_global_detected = bool(global_models & set(peer_group_detectors))
+    prediction_2_confirmed = lof_detected and not any_global_detected
+
+    return {
+        "1_low_and_slow_ae_not_ecod": {
+            "statement": (
+                "Scenario 4 (low-and-slow exfil): the autoencoder detects it; ECOD does not."
+            ),
+            "autoencoder_detected": ae_detected,
+            "ecod_detected": ecod_detected,
+            "all_detectors": low_and_slow_detectors,
+            "outcome": "CONFIRMED" if prediction_1_confirmed else "FALSIFIED",
+            "note": (
+                "ECOD also detected it at comparable recall -- per docs/12, the autoencoder has "
+                "no remaining justification on this scenario, a good outcome reached honestly."
+                if (ecod_detected and ae_detected)
+                else ""
+            ),
+        },
+        "2_peer_group_lof_not_global": {
+            "statement": (
+                "Scenario 5 (peer-group deviation): LOF (ml.peer_group) detects it; the four "
+                "global L3 models (iforest, mahalanobis, ecod, autoencoder) do not."
+            ),
+            "lof_detected": lof_detected,
+            "global_models_that_detected": sorted(global_models & set(peer_group_detectors)),
+            "all_detectors": peer_group_detectors,
+            "outcome": "CONFIRMED" if prediction_2_confirmed else "FALSIFIED",
+        },
+        "3_seasonal_stl_not_l3": {
+            "statement": (
+                "Scenario 6 (seasonal deviation): STL residuals (signal.stl_residual) detect it; "
+                "none of the five L3 feature-vector models do."
+            ),
+            "l3_models_detected": seasonal_l3_detectors,
+            "l3_falsifies_prediction": bool(seasonal_l3_detectors),
+            "note": (
+                "STL-detection half measured separately (L2 harness, not this L3 evaluate.py) -- "
+                "see evals/results.md for the combined verdict."
+            ),
+        },
+    }
 
 
 def _aggregate_metrics(rows: list[ScenarioModelMetrics]) -> dict[str, dict[str, float]]:

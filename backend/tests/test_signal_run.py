@@ -27,6 +27,8 @@ from app.detection.signal.constants import (
     SIGNAL_BURST,
     SIGNAL_DGA,
     SIGNAL_RARITY,
+    SIGNAL_STL_RESIDUAL,
+    SIGNAL_URL_PATH,
 )
 from app.detection.signal.run import run_signal_layer
 from app.models.analysis import Analysis
@@ -82,6 +84,7 @@ def _record(
     principal: str,
     src_ip: str,
     domain: str,
+    url_path: str | None = None,
 ) -> SimpleEventRecord:
     return SimpleEventRecord(
         ts=ts,
@@ -92,10 +95,30 @@ def _record(
         principal=principal,
         src_ip=src_ip,
         domain=domain,
+        url_path=url_path,
         action="allowed",
         http_method="GET",
         status_code=200,
     )
+
+
+# Realistic REST-shaped path segments -- see `test_signal_url_path.py`'s own fixture for why
+# these specifically (hyphenated English words) are the false-positive risk this detector's own
+# heuristic is built to reject.
+_ORDINARY_WORDS = (
+    "check-in-endpoint",
+    "user-profile-settings",
+    "deployments-and-releases",
+    "notifications-preferences",
+    "account-management-panel",
+    "organization-billing-info",
+    "warehouse-query-statement",
+    "dashboard-overview-panel",
+    "repository-commit-history",
+    "search-results-page-two",
+    "invoice-download-receipt",
+    "api-v2-user-profile",
+)
 
 
 def _mixed_fixture() -> Iterator[SimpleEventRecord]:
@@ -140,6 +163,49 @@ def _mixed_fixture() -> Iterator[SimpleEventRecord]:
             )
             line += 1
 
+    # -- STL seasonal residual: one principal's own history is too short for a seasonal profile
+    # (docs/04: "~3 weeks minimum"), so this exercises the short-history fallback path -- four
+    # quiet hourly buckets, then a sharp spike in a fifth, the same "must fire" shape burst.py's
+    # own fixture uses, just bucketed hourly instead of every 5 minutes.
+    for hour_idx, count in enumerate([2, 2, 2, 2, 30]):
+        hour_start = _T0 + timedelta(hours=hour_idx)
+        for offset in range(count):
+            yield _record(
+                ts=hour_start + timedelta(seconds=offset * 10),
+                line_no=line,
+                principal="stl-victim@corp.example",
+                src_ip="10.0.0.80",
+                domain="dashboard.corp-tools.example",
+            )
+            line += 1
+
+    # -- URL path analysis: enough (src_ip, domain) pairs on one domain for a meaningful org-wide
+    # percentile (`URL_PATH_MIN_PAIRS_FOR_PERCENTILE`), all but one using ordinary hyphenated REST
+    # paths, one pair using high-entropy hex tokens in the path (docs/04's own worked example:
+    # a beacon ID encoded in the path rather than the query string).
+    for i in range(25):
+        for j in range(6):
+            yield _record(
+                ts=_T0 + timedelta(minutes=line),
+                line_no=line,
+                principal="url-benign@corp.example",
+                src_ip=f"10.0.1.{i}",
+                domain="api.corp-tools.example",
+                url_path=f"/api/v2/{_ORDINARY_WORDS[(i + j) % len(_ORDINARY_WORDS)]}",
+            )
+            line += 1
+    for j in range(6):
+        token = f"{j:08x}c7f3a9e1b2a4f093deadbeef{j:08x}"
+        yield _record(
+            ts=_T0 + timedelta(minutes=line),
+            line_no=line,
+            principal="url-victim@corp.example",
+            src_ip="10.0.2.99",
+            domain="api.corp-tools.example",
+            url_path=f"/api/v2/{token}/checkin",
+        )
+        line += 1
+
 
 def _seed(analysis_id: uuid.UUID, tenant_id: uuid.UUID) -> int:
     conn = _raw_connection()
@@ -151,7 +217,7 @@ def _seed(analysis_id: uuid.UUID, tenant_id: uuid.UUID) -> int:
         conn.close()
 
 
-def test_run_signal_layer_fires_all_four_detectors_and_persists_signals(
+def test_run_signal_layer_fires_all_six_detectors_and_persists_signals(
     analysis: Analysis,
 ) -> None:
     n_written = _seed(analysis.id, analysis.tenant_id)
@@ -167,6 +233,8 @@ def test_run_signal_layer_fires_all_four_detectors_and_persists_signals(
         assert summary.counts_by_detector[SIGNAL_DGA] >= 1
         assert summary.counts_by_detector[SIGNAL_BURST] >= 1
         assert summary.counts_by_detector[SIGNAL_RARITY] >= 1
+        assert summary.counts_by_detector[SIGNAL_STL_RESIDUAL] >= 1
+        assert summary.counts_by_detector[SIGNAL_URL_PATH] >= 1
         assert summary.total_signals == sum(summary.counts_by_detector.values())
 
         with tenant_scope(session, analysis.tenant_id):

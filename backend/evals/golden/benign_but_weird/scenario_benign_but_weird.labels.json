@@ -1,0 +1,23 @@
+{
+  "log_file": "scenario_benign_but_weird.log",
+  "seed": 7,
+  "org_fingerprint": "dc298f11182b937df292826921781db4",
+  "total_lines": 18112,
+  "window_start": "2026-02-15T00:00:00Z",
+  "window_end": "2026-03-01T00:00:00Z",
+  "scenarios": [
+    {
+      "scenario_id": "benign_but_weird_001",
+      "technique": null,
+      "malicious_line_numbers": [],
+      "primary_entity": {
+        "type": "user",
+        "value": "svc-backup-s3@corp.example"
+      },
+      "expected_detectors": [],
+      "expected_disposition": "false_positive",
+      "must_correlate_into_one_incident": false,
+      "notes": "docs/11 false-positive control, three unrelated sanctioned motifs, none malicious. (1) backup: svc-backup-s3 (Nightly object-store backup) -> box.com every 3600s, 55 chunks from 2026-02-18T10:00:00+00:00, automation UA rclone/v1.68.1. (2) onboarding: kfulmer (Sales) visited 24 org-common domains new to them starting 2026-02-22T10:00:00+00:00, own device and address. (3) pen-test: dedea (Engineering) ran 2 scan pass(es) (32 requests) across 12 sanctioned hosts from 192.0.2.12 with a security-scanner UA, over 90m starting 2026-02-25T11:00:00+00:00: pre-approved change window, no security-category or malicious traffic. [backup_chunk_sigma=0.55, backup_events=55, backup_local_hour=2.0, backup_mean_chunk_mb=90.0, backup_start_fraction=0.28, onboarding_domains=24, onboarding_duration_h=2.0, onboarding_local_hour=10.0, onboarding_start_fraction=0.5, pentest_duration_min=90.0, pentest_local_hour=11.0, pentest_passes=2, pentest_paths=16, pentest_start_fraction=0.72]"
+    }
+  ]
+}

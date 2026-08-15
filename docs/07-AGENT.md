@@ -141,8 +141,14 @@ CI-gated.
 
 ## Determinism
 
-`temperature=0`. Tests use recorded responses from `tests/fixtures/llm/`, never live calls.
-A `--record` flag refreshes fixtures deliberately. CI must never require an API key.
+**Correction:** this section originally said `temperature=0`. Sampling parameters
+(`temperature`/`top_p`/`top_k`) are removed on `claude-opus-5` — the model this build targets —
+and sending `temperature` returns a 400. Nothing about `temperature=0` on any model ever
+guaranteed byte-identical output either, so it was never the real determinism mechanism.
+Determinism instead comes from schema-validated tool output (structured verdicts via tool-use,
+`agent/schemas.py`) plus recorded LLM responses in tests. Tests use recorded responses from
+`tests/fixtures/llm/`, never live calls. A `--record` flag refreshes fixtures deliberately. CI
+must never require an API key.
 
 ## DEMO_MODE
 

@@ -1,0 +1,219 @@
+"""`GET /api/learning/metrics` (docs/09): "alignment %, per-detector precision trend, containment
+rate." This module computes all three, live, from `analyst_feedback`/`signals`/`response_plans` —
+no separate metrics table; the source data is small enough at this scale that a stored rollup
+would just be a second, driftable copy.
+
+Every returned figure that could be influenced by `make seed`'s synthetic feedback history
+(`app/scripts/seed_feedback.py`) is paired with a synthetic count so `GET /api/learning/metrics`
+never presents seeded numbers as if they were real analyst activity (docs/08 "Demo honesty").
+"""
+
+from __future__ import annotations
+
+import uuid
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.learning.feedback_data import LabeledExample, labeled_examples
+from app.models.analyst_feedback import AnalystFeedback
+from app.models.base import tenant_scope
+from app.models.incident import Incident
+from app.models.response_plan import ResponsePlan
+from app.models.synthetic_seed_marker import SyntheticSeedMarker
+
+__all__ = [
+    "AlignmentPoint",
+    "ContainmentSummary",
+    "DetectorPrecisionPoint",
+    "LearningMetrics",
+    "compute_learning_metrics",
+    "synthetic_feedback_ids",
+]
+
+_TREND_BUCKET = timedelta(days=7)
+
+
+def synthetic_feedback_ids(session: Session, tenant_id: uuid.UUID) -> set[uuid.UUID]:
+    """Every `analyst_feedback.id` `app/scripts/seed_feedback.py` created, per the
+    `learning_synthetic_seed` marker table (`app.models.synthetic_seed_marker`'s docstring).
+    Public: `app/api/models.py`'s calibration route reuses this directly rather than
+    re-deriving the same query."""
+    with tenant_scope(session, tenant_id):
+        rows = (
+            session.execute(
+                select(SyntheticSeedMarker.row_id).where(
+                    SyntheticSeedMarker.table_name == "analyst_feedback"
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return {uuid.UUID(r) for r in rows}
+
+
+def _bucket_start(ts: datetime, epoch: datetime) -> datetime:
+    elapsed = ts - epoch
+    n_buckets = int(elapsed / _TREND_BUCKET)
+    return epoch + n_buckets * _TREND_BUCKET
+
+
+@dataclass(frozen=True, slots=True)
+class AlignmentPoint:
+    period_start: datetime
+    period_end: datetime
+    alignment_pct: float
+    n: int
+    synthetic: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DetectorPrecisionPoint:
+    detector_key: str
+    period_start: datetime
+    period_end: datetime
+    precision: float | None
+    n: int
+    synthetic: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ContainmentSummary:
+    contained: int
+    partially_contained: int
+    failed: int
+    total_with_outcome: int
+    rate: float | None  # `contained / total_with_outcome`, None if no plan has resolved yet
+
+
+@dataclass(slots=True)
+class LearningMetrics:
+    tenant_id: uuid.UUID
+    computed_at: datetime
+    n_feedback_events: int
+    n_synthetic_feedback_events: int
+    alignment_pct: float | None
+    alignment_trend: list[AlignmentPoint] = field(default_factory=list)
+    detector_precision_trend: list[DetectorPrecisionPoint] = field(default_factory=list)
+    containment: ContainmentSummary = field(
+        default_factory=lambda: ContainmentSummary(0, 0, 0, 0, None)
+    )
+
+
+def _alignment_trend(
+    feedback_rows: list[tuple[uuid.UUID, bool, datetime]], synthetic_ids: set[uuid.UUID]
+) -> list[AlignmentPoint]:
+    if not feedback_rows:
+        return []
+    epoch = min(ts for _, _, ts in feedback_rows)
+    buckets: dict[datetime, list[tuple[bool, bool]]] = {}
+    for feedback_id, agrees, ts in feedback_rows:
+        bucket = _bucket_start(ts, epoch)
+        buckets.setdefault(bucket, []).append((agrees, feedback_id in synthetic_ids))
+
+    points: list[AlignmentPoint] = []
+    for bucket in sorted(buckets):
+        entries = buckets[bucket]
+        n = len(entries)
+        alignment = sum(1 for agrees, _ in entries if agrees) / n
+        all_synthetic = all(is_synth for _, is_synth in entries)
+        points.append(
+            AlignmentPoint(
+                period_start=bucket,
+                period_end=bucket + _TREND_BUCKET,
+                alignment_pct=alignment,
+                n=n,
+                synthetic=all_synthetic,
+            )
+        )
+    return points
+
+
+def _detector_precision_trend(
+    examples: list[LabeledExample], synthetic_ids: set[uuid.UUID]
+) -> list[DetectorPrecisionPoint]:
+    if not examples:
+        return []
+    epoch = min(e.created_at for e in examples)
+    buckets: dict[tuple[str, datetime], list[LabeledExample]] = {}
+    for ex in examples:
+        bucket = _bucket_start(ex.created_at, epoch)
+        buckets.setdefault((ex.detector_key, bucket), []).append(ex)
+
+    points: list[DetectorPrecisionPoint] = []
+    for (detector_key, bucket), exs in sorted(buckets.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+        tp = sum(1 for e in exs if e.label == 1)
+        n = len(exs)
+        all_synthetic = all(e.feedback_id in synthetic_ids for e in exs)
+        points.append(
+            DetectorPrecisionPoint(
+                detector_key=detector_key,
+                period_start=bucket,
+                period_end=bucket + _TREND_BUCKET,
+                precision=tp / n if n else None,
+                n=n,
+                synthetic=all_synthetic,
+            )
+        )
+    return points
+
+
+def _containment_summary(session: Session, tenant_id: uuid.UUID) -> ContainmentSummary:
+    """docs/08 Part 1's headline response metric, surfaced here because docs/09 groups it into
+    `GET /api/learning/metrics` alongside the two consumer-facing figures. `response_plans` has
+    no `tenant_id` column (see `app.models.response_plan`'s docstring) -- the join against
+    `incidents` below is not optional decoration, it is what makes this query tenant-scoped at
+    all (`app.models.base`'s guard only ever fires for a *touched* `TenantScopedMixin` table)."""
+    with tenant_scope(session, tenant_id):
+        outcomes = (
+            session.execute(
+                select(ResponsePlan.outcome)
+                .join(Incident, ResponsePlan.incident_id == Incident.id)
+                .where(ResponsePlan.outcome.is_not(None))
+            )
+            .scalars()
+            .all()
+        )
+
+    contained = sum(1 for o in outcomes if o == "contained")
+    partial = sum(1 for o in outcomes if o == "partially_contained")
+    failed = sum(1 for o in outcomes if o == "failed")
+    total = len(outcomes)
+    return ContainmentSummary(
+        contained=contained,
+        partially_contained=partial,
+        failed=failed,
+        total_with_outcome=total,
+        rate=(contained / total) if total else None,
+    )
+
+
+def compute_learning_metrics(session: Session, tenant_id: uuid.UUID) -> LearningMetrics:
+    synthetic_ids = synthetic_feedback_ids(session, tenant_id)
+
+    with tenant_scope(session, tenant_id):
+        feedback_rows = [
+            (row.id, row.agrees, row.created_at)
+            for row in session.execute(select(AnalystFeedback)).scalars().all()
+        ]
+
+    examples = labeled_examples(session, tenant_id)
+
+    n_feedback = len(feedback_rows)
+    n_synthetic = sum(1 for fid, _, _ in feedback_rows if fid in synthetic_ids)
+    alignment_pct = (
+        sum(1 for _, agrees, _ in feedback_rows if agrees) / n_feedback if n_feedback else None
+    )
+
+    return LearningMetrics(
+        tenant_id=tenant_id,
+        computed_at=datetime.now(UTC),
+        n_feedback_events=n_feedback,
+        n_synthetic_feedback_events=n_synthetic,
+        alignment_pct=alignment_pct,
+        alignment_trend=_alignment_trend(feedback_rows, synthetic_ids),
+        detector_precision_trend=_detector_precision_trend(examples, synthetic_ids),
+        containment=_containment_summary(session, tenant_id),
+    )

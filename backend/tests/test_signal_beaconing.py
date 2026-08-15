@@ -8,6 +8,8 @@ from __future__ import annotations
 import random
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from app.detection.signal.beaconing import detect_beaconing
 from app.detection.signal.constants import BEACONING_SCORE_THRESHOLD, SIGNAL_BEACONING
 from app.detection.signal.events_dao import EventRow
@@ -47,9 +49,21 @@ def test_regular_beacon_fires() -> None:
     assert draft.explanation["cv"] == 0.0
     assert draft.explanation["n_events"] == 60
     assert draft.explanation["domain"] == "abcdefgh.top"
-    # docs/04's exact explanation shape must be present.
-    for key in ("mean_interval", "cv", "mad_jitter", "n_events", "duration_h", "dominant_lag"):
+    # docs/04's exact (REWRITTEN, FFT) explanation shape must be present.
+    for key in (
+        "mean_interval",
+        "cv",
+        "mad_jitter",
+        "n_events",
+        "duration_h",
+        "dominant_period_s",
+        "fft_peak_power_ratio",
+    ):
         assert key in draft.explanation
+    # A near-perfectly-regular 240s beacon is exactly the shape the FFT cross-check exists to
+    # confirm: one dominant frequency bin, comfortably above the k=6 power-ratio bar.
+    assert draft.explanation["fft_has_dominant_peak"] is True
+    assert draft.explanation["dominant_period_s"] == pytest.approx(240.0, rel=0.1)
 
 
 def test_irregular_browsing_does_not_fire() -> None:
@@ -97,6 +111,51 @@ def test_different_src_ip_domain_pairs_are_scored_independently() -> None:
 
     entity_values = {d.entity_value for d in drafts}
     assert entity_values == {"10.0.0.5", "10.0.0.6"}
+
+
+def test_fft_periodicity_finds_no_dominant_peak_in_random_browsing() -> None:
+    """docs/04's own claim for the FFT cross-check: "interleaved human browsing does not
+    concentrate power anywhere." Directly exercises `_fft_periodicity` (not gated behind the
+    CV-based score threshold, which this traffic shape wouldn't clear anyway) against a Poisson-
+    like random arrival process -- no single frequency bin should dominate.
+
+    A periodogram's per-bin power under a white-noise null is itself exponentially distributed,
+    so the *maximum* bin's power over *many* bins grows with bin count by ordinary extreme-value
+    statistics, independent of any real periodicity (verified empirically while building this
+    test: a several-thousand-bucket random series routinely exceeds `k=6` on power alone). This
+    is exactly why docs/04's own `k=6` is stated as tuned empirically against realistic candidate-
+    group shapes (docs/11's difficulty sweep) rather than derived analytically -- this test picks
+    a fixed seed at a realistic candidate-group scale (a couple hundred one-minute buckets, the
+    same order of magnitude `test_regular_beacon_fires` and `test_irregular_browsing_does_not_
+    fire` use) and asserts the concrete, reproducible outcome for it, rather than a statistical
+    claim that holds for every seed at every scale.
+    """
+    from app.detection.signal.beaconing import _fft_periodicity
+
+    rng = random.Random(11)
+    ts = _T0
+    timestamps = []
+    for _ in range(120):
+        timestamps.append(ts)
+        ts += timedelta(seconds=rng.expovariate(1 / 90.0))  # mean 90s, exponential inter-arrival
+
+    _period, ratio, n_buckets, _width = _fft_periodicity(timestamps)
+    assert n_buckets > 1
+    assert ratio < 6.0  # BEACONING_FFT_POWER_RATIO_K -- no dominant peak
+
+
+def test_fft_periodicity_finds_dominant_peak_for_a_regular_beacon() -> None:
+    from app.detection.signal.beaconing import _fft_periodicity
+
+    ts = _T0
+    timestamps = []
+    for _ in range(200):
+        timestamps.append(ts)
+        ts += timedelta(seconds=120.0)
+
+    period, ratio, _n_buckets, _width = _fft_periodicity(timestamps)
+    assert ratio >= 6.0
+    assert period == pytest.approx(120.0, rel=0.1)
 
 
 def test_jitter_degrades_the_score_monotonically() -> None:

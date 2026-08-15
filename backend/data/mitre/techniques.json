@@ -1,0 +1,674 @@
+{
+  "_meta": {
+    "source": "MITRE ATT&CK for Enterprise (curated subset, hand-maintained)",
+    "purpose": "docs/07-AGENT.md search_mitre RAG corpus. Covers every technique ID referenced by app/detection rules, app/graph/titling.py, and datagen/scenarios, plus a broader set of techniques relevant to a web-proxy egress log source (ZScaler). Never edit a technique's id/name from outside this file; app/agent/mitre.py treats this file as the sole source of truth and validates every LLM-returned technique id against it.",
+    "note": "Descriptions and detection guidance are written for this system's data source (proxy/web egress logs) where applicable, not copied verbatim from attack.mitre.org."
+  },
+  "techniques": [
+    {
+      "id": "T1071",
+      "name": "Application Layer Protocol",
+      "tactics": ["Command and Control"],
+      "description": "Adversaries communicate using OSI application layer protocols (HTTP, HTTPS, DNS, SMTP, etc.) to blend command-and-control traffic with legitimate traffic, avoiding detection by network filtering that inspects only lower-layer headers.",
+      "detection": "Look for periodic, low-variance request intervals to a single host (beaconing), requests that don't match the declared protocol's normal shape (e.g. HTTP GETs with no Referer/Accept headers), or traffic to domains with no legitimate business purpose. In proxy logs: repeated small requests at near-constant intervals to the same host."
+    },
+    {
+      "id": "T1071.001",
+      "name": "Web Protocols",
+      "tactics": ["Command and Control"],
+      "description": "Adversaries use HTTP/HTTPS specifically for command-and-control, since web traffic is rarely blocked outbound and is easy to blend with normal browsing.",
+      "detection": "Beaconing interval analysis (coefficient of variation, FFT periodicity) on HTTP/HTTPS requests; non-browser user-agents fetching from newly-registered or rare domains; consistent small request/response sizes suggesting a polling C2 heartbeat rather than page loads."
+    },
+    {
+      "id": "T1071.004",
+      "name": "DNS",
+      "tactics": ["Command and Control"],
+      "description": "Adversaries use the DNS protocol for command-and-control, encoding commands or data in subdomains or TXT records, since DNS is almost always permitted outbound.",
+      "detection": "High volume of DNS queries to a single parent domain, unusually long or high-entropy subdomain labels, TXT record queries at a rate inconsistent with normal resolution traffic."
+    },
+    {
+      "id": "T1090",
+      "name": "Proxy",
+      "tactics": ["Command and Control"],
+      "description": "Adversaries route traffic through an intermediate system to obscure the true source or destination of command-and-control communications and hinder attribution.",
+      "detection": "Egress traffic to known open-proxy or VPN-exit-node IP ranges; a single internal host relaying disproportionate traffic volume to many external destinations; connections to infrastructure with no reverse DNS or hosting reputation."
+    },
+    {
+      "id": "T1090.003",
+      "name": "Multi-hop Proxy",
+      "tactics": ["Command and Control"],
+      "description": "Adversaries chain multiple proxies (e.g. Tor, commercial VPN chains) to obscure the C2 destination, making network-layer attribution and simple IP blocking ineffective.",
+      "detection": "Connections to known Tor entry/exit nodes or anonymization-service ASNs; a destination IP with no consistent geolocation/ASN across sessions with the same host header."
+    },
+    {
+      "id": "T1102",
+      "name": "Web Service",
+      "tactics": ["Command and Control"],
+      "description": "Adversaries use legitimate, popular third-party web services (cloud storage, social media, code-hosting) as a C2 or data relay channel to hide in traffic that is rarely blocked.",
+      "detection": "Unusual API-style traffic to consumer web services from a non-browser user-agent; a single principal making high-frequency, low-volume requests to a service (e.g. pastebin, Slack webhooks, GitHub raw) with no corresponding business use."
+    },
+    {
+      "id": "T1102.002",
+      "name": "Bidirectional Communication",
+      "tactics": ["Command and Control"],
+      "description": "The adversary's use of a legitimate web service to both send commands to and receive output from an implant, rather than one-way exfiltration.",
+      "detection": "Alternating request/response size patterns to a third-party web service consistent with command issuance followed by result retrieval, rather than one-directional upload or download."
+    },
+    {
+      "id": "T1105",
+      "name": "Ingress Tool Transfer",
+      "tactics": ["Command and Control"],
+      "description": "Adversaries transfer tools or files from an external system into the compromised environment, typically to stage additional malware or utilities after initial access.",
+      "detection": "Large or unusually-shaped download (bytes_in) from a rare or newly-registered domain, executable/script content-types fetched by a non-browser client, downloads immediately followed by new outbound C2-shaped traffic from the same host."
+    },
+    {
+      "id": "T1132",
+      "name": "Data Encoding",
+      "tactics": ["Command and Control"],
+      "description": "Adversaries encode C2 traffic (e.g. base64, custom schemes) to evade content inspection and make payloads harder to signature.",
+      "detection": "High-entropy URL query parameters or POST bodies that don't correspond to a known application encoding; consistent unusual character-set distribution in request paths."
+    },
+    {
+      "id": "T1132.001",
+      "name": "Standard Encoding",
+      "tactics": ["Command and Control"],
+      "description": "Use of a standard encoding scheme (base64, gzip) to obscure C2 payloads within otherwise ordinary-looking web traffic.",
+      "detection": "Base64-shaped strings in URL paths/query parameters or user-agent fields with no legitimate application reason to carry encoded data there."
+    },
+    {
+      "id": "T1568",
+      "name": "Dynamic Resolution",
+      "tactics": ["Command and Control"],
+      "description": "Adversaries use dynamic DNS resolution techniques so C2 infrastructure can change IP addresses without changing the domain used by an implant, resisting IP-based blocking.",
+      "detection": "A single hostname resolving to many distinct IPs over a short window, or requests to domains under dynamic-DNS provider zones."
+    },
+    {
+      "id": "T1568.002",
+      "name": "Domain Generation Algorithms",
+      "tactics": ["Command and Control"],
+      "description": "Malware algorithmically generates a large number of candidate domain names and attempts to resolve them, so the operator only needs to register a small subset ahead of time — resistant to takedown and blocklisting.",
+      "detection": "High-entropy, dictionary-atypical domain labels (n-gram / character-frequency scoring); a host querying many newly-seen domains in short succession with mostly NXDOMAIN responses; domains with short registration age."
+    },
+    {
+      "id": "T1573",
+      "name": "Encrypted Channel",
+      "tactics": ["Command and Control"],
+      "description": "Adversaries encrypt C2 traffic to defeat content inspection, either with a standard protocol (TLS) or a custom symmetric/asymmetric scheme layered on top.",
+      "detection": "TLS sessions with self-signed or mismatched-SNI certificates; JA3/JA3S fingerprints inconsistent with the claimed client; encrypted traffic on non-standard ports."
+    },
+    {
+      "id": "T1573.002",
+      "name": "Asymmetric Cryptography",
+      "tactics": ["Command and Control"],
+      "description": "C2 channel encrypted with public-key cryptography, often layered inside an otherwise-plaintext protocol to defeat inspection without relying on standard TLS.",
+      "detection": "High-entropy payload bodies inside protocols that are not normally encrypted at that layer (e.g. binary blobs in an HTTP POST body with no matching Content-Type)."
+    },
+    {
+      "id": "T1219",
+      "name": "Remote Access Software",
+      "tactics": ["Command and Control"],
+      "description": "Adversaries use legitimate remote access / remote monitoring tools (already present or freshly installed) as a C2 and hands-on-keyboard channel, blending in with sanctioned IT usage.",
+      "detection": "Traffic to known RMM-tool vendor domains from hosts that don't have that tool sanctioned by IT; RMM installer downloads immediately preceding sustained outbound connections."
+    },
+    {
+      "id": "T1090.001",
+      "name": "Internal Proxy",
+      "tactics": ["Command and Control"],
+      "description": "Adversaries use an internal system already inside the environment as a proxy point to relay C2 traffic between compromised hosts and external infrastructure.",
+      "detection": "An internal host that itself makes very few direct external connections but shows heavy east-west relay traffic to other internal hosts that do beacon externally."
+    },
+    {
+      "id": "T1020",
+      "name": "Automated Exfiltration",
+      "tactics": ["Exfiltration"],
+      "description": "Adversaries automate collection and exfiltration of data, typically via a script or built-in exfiltration feature of their tooling, rather than manual transfer.",
+      "detection": "Regularly-spaced large outbound transfers with consistent size/timing (robotic regularity distinguishable from human-driven uploads); transfer cadence that continues off business hours."
+    },
+    {
+      "id": "T1029",
+      "name": "Scheduled Transfer",
+      "tactics": ["Exfiltration"],
+      "description": "Adversaries schedule data exfiltration to occur at specific times or intervals, often to blend with normal traffic patterns or to minimize the chance of detection during active monitoring hours.",
+      "detection": "Recurring outbound transfer at a fixed time of day/week from a host with no legitimate scheduled job explaining it; STL seasonal-residual analysis flagging a new periodic component in an entity's transfer volume."
+    },
+    {
+      "id": "T1030",
+      "name": "Data Transfer Size Limits",
+      "tactics": ["Exfiltration"],
+      "description": "Adversaries break exfiltrated data into smaller chunks below a size threshold to avoid detection thresholds or network transfer-size alerting — the low-and-slow pattern.",
+      "detection": "Many small, similarly-sized POST requests to the same destination over an extended window whose cumulative bytes_out is large, even though no single request would trip a large-transfer threshold; entity-window features that aggregate transfer volume over longer baselines catch what a single-event threshold misses."
+    },
+    {
+      "id": "T1041",
+      "name": "Exfiltration Over C2 Channel",
+      "tactics": ["Exfiltration"],
+      "description": "Adversaries exfiltrate data over the same channel already used for command-and-control, rather than opening a separate exfiltration channel.",
+      "detection": "A host already flagged for beaconing-shaped C2 traffic showing an increase in outbound byte volume on the same connections, rather than a new destination appearing."
+    },
+    {
+      "id": "T1048",
+      "name": "Exfiltration Over Alternative Protocol",
+      "tactics": ["Exfiltration"],
+      "description": "Adversaries exfiltrate data over a different protocol than the one used for C2 — e.g. FTP, DNS, or raw sockets — to separate exfiltration from detection focused on the C2 channel.",
+      "detection": "Large outbound transfer on a protocol/port not otherwise used by the host; DNS query volume/size spikes inconsistent with normal name resolution (DNS tunneling)."
+    },
+    {
+      "id": "T1048.003",
+      "name": "Exfiltration Over Unencrypted Non-C2 Protocol",
+      "tactics": ["Exfiltration"],
+      "description": "Data is exfiltrated over a cleartext protocol distinct from the C2 channel, often chosen because it is unmonitored rather than because it is stealthy.",
+      "detection": "Large plaintext POST bodies or file uploads over HTTP (not HTTPS) to an external destination; a large-POST-to-newly-registered-domain pattern is a strong proxy-log signal for this technique."
+    },
+    {
+      "id": "T1567",
+      "name": "Exfiltration Over Web Service",
+      "tactics": ["Exfiltration"],
+      "description": "Adversaries use a legitimate external web service (cloud storage, code repository, paste site, chat webhook) to exfiltrate data, since traffic to popular services is rarely blocked.",
+      "detection": "Uploads to consumer cloud-storage or paste-site domains from a business account/host with no sanctioned use of that service; API-shaped upload traffic (multipart POST, auth tokens in headers) to such a domain."
+    },
+    {
+      "id": "T1567.001",
+      "name": "Exfiltration to Code Repository",
+      "tactics": ["Exfiltration"],
+      "description": "Data is pushed to a code-hosting service (e.g. as a new repository, gist, or commit) under attacker or victim-compromised credentials.",
+      "detection": "Git push / API traffic to a code-hosting domain from a host with no developer profile, or volume inconsistent with normal commit activity for that principal."
+    },
+    {
+      "id": "T1567.002",
+      "name": "Exfiltration to Cloud Storage",
+      "tactics": ["Exfiltration"],
+      "description": "Data is uploaded to a cloud storage bucket or object-storage API the adversary controls, or a sanctioned provider under an unsanctioned account.",
+      "detection": "Large PUT/POST traffic to cloud-storage API hostnames outside the org's known-good bucket/tenant list; sustained upload volume from a single principal that departs from their historical baseline."
+    },
+    {
+      "id": "T1537",
+      "name": "Transfer Data to Cloud Account",
+      "tactics": ["Exfiltration"],
+      "description": "Adversaries with access to a cloud environment move data into a storage resource in an account they control, exfiltrating within the cloud provider's own network rather than over the public Internet.",
+      "detection": "From a proxy-log vantage point this often looks identical to T1567.002; corroborate with cloud provider audit logs where available. In proxy data: transfer to a cloud-storage endpoint whose account/tenant identifier does not match the organization's own."
+    },
+    {
+      "id": "T1090.004",
+      "name": "Domain Fronting",
+      "tactics": ["Command and Control"],
+      "description": "Adversaries route C2 traffic through a high-reputation CDN, presenting one hostname at the TLS/SNI layer while requesting a different, attacker-controlled hostname at the HTTP layer, so network filtering that trusts the CDN's domain is bypassed.",
+      "detection": "Mismatch between the TLS SNI hostname and the HTTP Host header for the same connection; connections to CDN edge IPs carrying a Host header not otherwise associated with that CDN customer."
+    },
+    {
+      "id": "T1552",
+      "name": "Unsecured Credentials",
+      "tactics": ["Credential Access"],
+      "description": "Adversaries search for credentials stored insecurely — in files, scripts, browser stores, or transmitted in the clear — rather than cracking or intercepting them.",
+      "detection": "Requests carrying credential-shaped strings (API keys, bearer tokens, passwords) in URL query parameters or unencrypted POST bodies — exactly what docs/06's redaction patterns target before any such value reaches storage or a prompt."
+    },
+    {
+      "id": "T1552.001",
+      "name": "Credentials In Files",
+      "tactics": ["Credential Access"],
+      "description": "Adversaries search local file systems and remote file shares for files containing credentials — config files, source code, key files, browser data.",
+      "detection": "Outbound transfer of files with credential-bearing names/extensions (.env, .pem, .kdbx, config.*) shortly after directory-listing or file-discovery-shaped browsing activity."
+    },
+    {
+      "id": "T1555",
+      "name": "Credentials from Password Stores",
+      "tactics": ["Credential Access"],
+      "description": "Adversaries acquire credentials from a centralized password store (browser credential manager, OS keychain, password manager) rather than an individual file.",
+      "detection": "Not directly visible in proxy logs; corroborating signal is a burst of new successful authentications to many distinct services from one host shortly after a credential-store access event on the endpoint."
+    },
+    {
+      "id": "T1110",
+      "name": "Brute Force",
+      "tactics": ["Credential Access"],
+      "description": "Adversaries attempt many credential guesses against an authentication service, either exhaustively or via a curated list.",
+      "detection": "High rate of 401/403 authentication failures from one source IP against one login endpoint; the rarity/burst detector on failed-auth event volume per source entity."
+    },
+    {
+      "id": "T1110.003",
+      "name": "Password Spraying",
+      "tactics": ["Credential Access"],
+      "description": "Adversaries try one or a few common passwords across many different accounts to avoid per-account lockout thresholds while still guessing widely.",
+      "detection": "One source IP generating authentication attempts against many distinct usernames in a short window, with a low per-account attempt count that would evade a naive per-account lockout rule."
+    },
+    {
+      "id": "T1078",
+      "name": "Valid Accounts",
+      "tactics": ["Defense Evasion", "Persistence", "Privilege Escalation", "Initial Access"],
+      "description": "Adversaries obtain and use legitimate credentials to access systems, blending in with normal user activity and evading detections tuned to unauthorized-access indicators.",
+      "detection": "Anomalous access patterns for an otherwise-legitimate account: login from a new geography/ASN, activity at hours far outside the user's historical baseline, or access to resources the account has never touched before (peer-group / LOF-style deviation)."
+    },
+    {
+      "id": "T1098",
+      "name": "Account Manipulation",
+      "tactics": ["Persistence"],
+      "description": "Adversaries modify account properties or permissions to maintain access — adding credentials, changing recovery options, or altering permission grants.",
+      "detection": "Unexpected changes to an account's authentication factors or delegated permissions immediately following a suspicious session; a spike in account-management API calls from a session that otherwise shows compromise indicators."
+    },
+    {
+      "id": "T1098.001",
+      "name": "Additional Cloud Credentials",
+      "tactics": ["Persistence"],
+      "description": "Adversaries add a new credential (API key, app password, OAuth grant) to a compromised cloud account so they retain access even if the original credential is revoked.",
+      "detection": "New API key or OAuth application grant creation events for an account shortly after suspicious sign-in activity; API traffic authenticated with a token that has no corresponding interactive login."
+    },
+    {
+      "id": "T1136",
+      "name": "Create Account",
+      "tactics": ["Persistence"],
+      "description": "Adversaries create a new local, domain, or cloud account to maintain access to a system or environment.",
+      "detection": "Account-provisioning API calls or admin-console traffic from a session already exhibiting other anomaly signals; a newly created account beginning to generate traffic within an unusually short time of creation."
+    },
+    {
+      "id": "T1195",
+      "name": "Supply Chain Compromise",
+      "tactics": ["Initial Access"],
+      "description": "Adversaries compromise a product, update mechanism, or dependency before it reaches the victim, gaining access when the victim installs or uses the tainted component.",
+      "detection": "Outbound traffic to a software vendor's update/telemetry domain that changes in destination or shape shortly after a routine software update; a rare/newly-observed process establishing connections consistent with a supply-chain implant."
+    },
+    {
+      "id": "T1199",
+      "name": "Trusted Relationship",
+      "tactics": ["Initial Access"],
+      "description": "Adversaries gain access through a third party (MSP, contractor, business partner) that already has legitimate, trusted access into the target environment.",
+      "detection": "Suspicious activity originating from IP ranges or accounts belonging to a known third-party integration, outside that integration's normal usage envelope."
+    },
+    {
+      "id": "T1189",
+      "name": "Drive-by Compromise",
+      "tactics": ["Initial Access"],
+      "description": "A user's browser is compromised simply by visiting a website that hosts adversary-controlled content, without any other user interaction required.",
+      "detection": "Browser session to a rarely-visited or newly-registered domain immediately followed by an unexpected outbound connection or file download from the same host."
+    },
+    {
+      "id": "T1190",
+      "name": "Exploit Public-Facing Application",
+      "tactics": ["Initial Access"],
+      "description": "Adversaries exploit a vulnerability in an Internet-facing application (web app, API, service) to gain initial access.",
+      "detection": "Request paths containing exploit-shaped payloads (path traversal, SQLi/command-injection tokens) in URL query strings; anomalous URL path structure relative to that application's normal path grammar (URL-path-analysis detector)."
+    },
+    {
+      "id": "T1133",
+      "name": "External Remote Services",
+      "tactics": ["Initial Access", "Persistence"],
+      "description": "Adversaries use legitimate remote-access services exposed externally (VPN, RDP gateway, VDI) to gain and maintain access.",
+      "detection": "Authentication to a remote-access gateway from an unusual source geography/ASN, or outside a user's normal access-time baseline."
+    },
+    {
+      "id": "T1566",
+      "name": "Phishing",
+      "tactics": ["Initial Access"],
+      "description": "Adversaries send fraudulent messages to trick a user into revealing credentials, running malicious content, or granting access.",
+      "detection": "A click-through to a newly-registered or typosquat domain shortly after an inbound message; credential-entry-shaped POST to a domain that mimics a known login page."
+    },
+    {
+      "id": "T1566.002",
+      "name": "Spearphishing Link",
+      "tactics": ["Initial Access"],
+      "description": "A targeted phishing message contains a malicious link rather than an attachment, relying on the user to click through.",
+      "detection": "Outbound click to a link-shortener or newly-registered domain with a URL path resembling a credential-harvesting page, correlated to a single targeted user."
+    },
+    {
+      "id": "T1204",
+      "name": "User Execution",
+      "tactics": ["Execution"],
+      "description": "An adversary relies on a user taking an action — opening a file, clicking a link, running a macro — to execute malicious code.",
+      "detection": "A file download immediately followed by new outbound connections from the same host consistent with the downloaded content executing (staging or C2 traffic starting within seconds of the download completing)."
+    },
+    {
+      "id": "T1204.001",
+      "name": "Malicious Link",
+      "tactics": ["Execution"],
+      "description": "A user clicks a link that leads to code execution, typically by triggering a download or an exploit page.",
+      "detection": "Click-through to a link followed immediately by a binary/script download and then new C2-shaped traffic from the same host."
+    },
+    {
+      "id": "T1059",
+      "name": "Command and Scripting Interpreter",
+      "tactics": ["Execution"],
+      "description": "Adversaries abuse a command or scripting interpreter (PowerShell, bash, Python, JavaScript) already present on the system to execute commands.",
+      "detection": "Not directly observable from proxy logs alone; the network-visible corroborating signal is a script-hosting or LOLbin-associated user-agent making outbound requests it would not normally make."
+    },
+    {
+      "id": "T1053",
+      "name": "Scheduled Task/Job",
+      "tactics": ["Execution", "Persistence", "Privilege Escalation"],
+      "description": "Adversaries abuse task scheduling functionality to execute code at a specific time or on a recurring basis, for both execution and persistence.",
+      "detection": "A host generating a new, precisely periodic pattern of outbound requests that begins abruptly (consistent with a newly-created scheduled task) rather than gradually, as normal user behavior would."
+    },
+    {
+      "id": "T1547",
+      "name": "Boot or Logon Autostart Execution",
+      "tactics": ["Persistence", "Privilege Escalation"],
+      "description": "Adversaries configure a program to run automatically at system boot or user logon to maintain persistence.",
+      "detection": "Not directly visible in proxy logs; look for a host's outbound beaconing pattern that restarts immediately after every reboot/logon event with identical timing characteristics."
+    },
+    {
+      "id": "T1027",
+      "name": "Obfuscated Files or Information",
+      "tactics": ["Defense Evasion"],
+      "description": "Adversaries encode, encrypt, or otherwise obscure files or command-line content to make it harder for defenders and tools to detect or analyze.",
+      "detection": "High-entropy content in URL parameters, POST bodies, or downloaded file content where the declared content-type does not explain the entropy."
+    },
+    {
+      "id": "T1036",
+      "name": "Masquerading",
+      "tactics": ["Defense Evasion"],
+      "description": "Adversaries rename or otherwise disguise malicious artifacts (files, processes, domains) to look legitimate and evade allowlist or reputation-based controls.",
+      "detection": "A domain name that is a lookalike/typosquat of a known-good brand; a user-agent string claiming to be a common browser while otherwise behaving like a scripted client (missing headers, no referer chain, mechanical timing)."
+    },
+    {
+      "id": "T1070",
+      "name": "Indicator Removal",
+      "tactics": ["Defense Evasion"],
+      "description": "Adversaries delete or modify evidence of their activity (files, logs, history) to impede detection and investigation.",
+      "detection": "Not directly visible in proxy logs; a gap in an otherwise continuously-logging host's telemetry immediately following suspicious activity is a secondary, weaker signal worth noting in a narrative but not asserting as direct evidence."
+    },
+    {
+      "id": "T1070.004",
+      "name": "File Deletion",
+      "tactics": ["Defense Evasion"],
+      "description": "Adversaries delete files (tools, logs, staged data) to remove evidence of their presence or actions from a host.",
+      "detection": "Not directly visible in proxy logs; inferred only from corroborating endpoint telemetry outside this data source."
+    },
+    {
+      "id": "T1112",
+      "name": "Modify Registry",
+      "tactics": ["Defense Evasion"],
+      "description": "Adversaries modify Windows Registry keys/values to store data, hide configuration, or achieve persistence and evasion.",
+      "detection": "Not directly visible in proxy logs; a network corroborating signal is a persistence mechanism re-establishing an identical beacon pattern across reboots."
+    },
+    {
+      "id": "T1562",
+      "name": "Impair Defenses",
+      "tactics": ["Defense Evasion"],
+      "description": "Adversaries disable or weaken defensive tools and logging to operate with reduced risk of detection.",
+      "detection": "A sudden, otherwise-unexplained gap or drop in expected telemetry volume from a host, especially one immediately preceded by other suspicious activity from that host."
+    },
+    {
+      "id": "T1562.001",
+      "name": "Disable or Modify Tools",
+      "tactics": ["Defense Evasion"],
+      "description": "Adversaries disable or tamper with a specific security tool (EDR, AV, logging agent) rather than defenses broadly.",
+      "detection": "A host's expected periodic telemetry/heartbeat traffic (e.g. EDR check-in) stopping abruptly with no corresponding uninstall or maintenance record."
+    },
+    {
+      "id": "T1140",
+      "name": "Deobfuscate/Decode Files or Information",
+      "tactics": ["Defense Evasion"],
+      "description": "Adversaries decode or decrypt content that was obfuscated to evade detection, as a step before using it.",
+      "detection": "Not directly visible from network metadata alone; corroborating signal is a downloaded, high-entropy file followed shortly by new local process/network activity consistent with the payload having been unpacked and run."
+    },
+    {
+      "id": "T1218",
+      "name": "System Binary Proxy Execution",
+      "tactics": ["Defense Evasion"],
+      "description": "Adversaries abuse a trusted, signed system binary to execute arbitrary or malicious code, so security tools trust the executing process.",
+      "detection": "Not directly visible in proxy logs; network corroborating signal is outbound traffic whose user-agent or TLS fingerprint is consistent with a scripting engine rather than the OS-native binary it claims to be."
+    },
+    {
+      "id": "T1218.005",
+      "name": "Mshta",
+      "tactics": ["Defense Evasion"],
+      "description": "Adversaries abuse `mshta.exe` to execute malicious HTA scripts, often fetched from a remote server, taking advantage of the binary's trusted signature.",
+      "detection": "Outbound request for an `.hta` file or content served with an HTA-consistent content-type from a rare or newly-registered domain."
+    },
+    {
+      "id": "T1218.011",
+      "name": "Rundll32",
+      "tactics": ["Defense Evasion"],
+      "description": "Adversaries abuse `rundll32.exe` to execute arbitrary DLL code under a trusted, signed process.",
+      "detection": "Not directly visible in proxy logs; a preceding download of a `.dll`-shaped file from a rare domain is the closest network-observable precursor."
+    },
+    {
+      "id": "T1082",
+      "name": "System Information Discovery",
+      "tactics": ["Discovery"],
+      "description": "Adversaries gather detailed information about the operating system and hardware to inform follow-on actions.",
+      "detection": "Not directly visible in proxy logs; may correlate with a burst of requests to system-info-reporting endpoints if the malware phones home discovery results."
+    },
+    {
+      "id": "T1016",
+      "name": "System Network Configuration Discovery",
+      "tactics": ["Discovery"],
+      "description": "Adversaries enumerate network configuration details (interfaces, routing, DNS settings) to understand the environment they've landed in.",
+      "detection": "Not directly visible in proxy logs; look for an early-stage implant's first outbound beacon carrying what appears to be system/network metadata in its request body."
+    },
+    {
+      "id": "T1018",
+      "name": "Remote System Discovery",
+      "tactics": ["Discovery"],
+      "description": "Adversaries enumerate other systems on the network by IP range, hostname, or other means to plan lateral movement.",
+      "detection": "Not directly visible from egress proxy logs (this activity is typically internal/east-west); if a proxy is used as an internal forward proxy, look for a burst of connection attempts to many internal-looking addresses in a short window."
+    },
+    {
+      "id": "T1046",
+      "name": "Network Service Discovery",
+      "tactics": ["Discovery"],
+      "description": "Adversaries scan a network to identify open ports, running services, and potential targets for exploitation or lateral movement.",
+      "detection": "A single source generating connection attempts across many distinct destination ports/hosts in a short window — a burst detector on distinct-destination cardinality per source entity."
+    },
+    {
+      "id": "T1083",
+      "name": "File and Directory Discovery",
+      "tactics": ["Discovery"],
+      "description": "Adversaries enumerate files and directories to find information of interest before collection or exfiltration.",
+      "detection": "Not directly visible in proxy logs; often precedes an exfiltration-shaped transfer from the same host within a short window."
+    },
+    {
+      "id": "T1087",
+      "name": "Account Discovery",
+      "tactics": ["Discovery"],
+      "description": "Adversaries enumerate accounts on a system, domain, or cloud tenant to identify targets for further access or privilege escalation.",
+      "detection": "A burst of directory-service or IAM-API lookup calls from one session in a short window, especially against many distinct usernames."
+    },
+    {
+      "id": "T1590",
+      "name": "Gather Victim Network Information",
+      "tactics": ["Reconnaissance"],
+      "description": "Adversaries gather information about the target's network (domains, IP ranges, DNS records) before an operation, often via passive OSINT rather than active scanning.",
+      "detection": "Not directly observable in the target's own proxy logs, since this reconnaissance typically happens against public sources before the adversary ever touches the target network."
+    },
+    {
+      "id": "T1592",
+      "name": "Gather Victim Host Information",
+      "tactics": ["Reconnaissance"],
+      "description": "Adversaries gather information about specific victim hosts (software, hardware, configuration) to tailor their tooling.",
+      "detection": "Not directly observable in proxy logs; may correlate with unusually detailed fingerprinting requests (JS-based fingerprinting scripts) served from a malicious landing page a user visited."
+    },
+    {
+      "id": "T1589",
+      "name": "Gather Victim Identity Information",
+      "tactics": ["Reconnaissance"],
+      "description": "Adversaries gather information about specific people (employees, credentials, email addresses) to support phishing or credential attacks.",
+      "detection": "Not directly observable in proxy logs; a corroborating signal is a subsequent targeted phishing click from the same identified individual."
+    },
+    {
+      "id": "T1595",
+      "name": "Active Scanning",
+      "tactics": ["Reconnaissance"],
+      "description": "Adversaries actively probe victim infrastructure (port scans, vulnerability scans) to gather information before an operation, typically from external infrastructure they control.",
+      "detection": "From the victim side this is an inbound signal, not proxy-egress; noted here because a compromised internal host can itself perform outbound active scanning against third parties, which the burst/rarity detectors on distinct-destination cardinality would flag."
+    },
+    {
+      "id": "T1583",
+      "name": "Acquire Infrastructure",
+      "tactics": ["Resource Development"],
+      "description": "Adversaries obtain infrastructure (domains, servers, hosting, certificates) they will use during an operation.",
+      "detection": "Not directly observable pre-operation; once used, the resulting domain typically shows a short registration age at first contact — the newly-registered-domain signal is the downstream, victim-visible trace of this technique."
+    },
+    {
+      "id": "T1583.001",
+      "name": "Domains",
+      "tactics": ["Resource Development"],
+      "description": "Adversaries register domain names for use as C2, phishing, or staging infrastructure, often just before an operation to minimize the domain's exposure time.",
+      "detection": "First-contact traffic to a domain registered very recently (small `age_days`) is the strongest single proxy-log correlate of this technique."
+    },
+    {
+      "id": "T1584",
+      "name": "Compromise Infrastructure",
+      "tactics": ["Resource Development"],
+      "description": "Adversaries take over infrastructure already owned by a third party (a legitimate but poorly-secured server, an abandoned domain) rather than acquiring their own, to inherit reputation.",
+      "detection": "A domain with an established registration age and prior benign reputation abruptly begins serving C2-shaped traffic — distinguishable from T1583.001 by the domain's age not being new."
+    },
+    {
+      "id": "T1608",
+      "name": "Stage Capabilities",
+      "tactics": ["Resource Development"],
+      "description": "Adversaries upload, install, or configure capabilities (malware, tools, exploit code) on infrastructure they control, in preparation for use against a target.",
+      "detection": "Not directly observable pre-operation; the victim-visible trace is the eventual Ingress Tool Transfer (T1105) event."
+    },
+    {
+      "id": "T1021",
+      "name": "Remote Services",
+      "tactics": ["Lateral Movement"],
+      "description": "Adversaries use legitimate remote-access protocols (RDP, SSH, SMB/WinRM) to move between systems using valid or stolen credentials.",
+      "detection": "If the proxy also relays these protocols: connections to internal management ports/services from a source that doesn't normally use them, or at a volume/time inconsistent with the account's baseline."
+    },
+    {
+      "id": "T1021.001",
+      "name": "Remote Desktop Protocol",
+      "tactics": ["Lateral Movement"],
+      "description": "Adversaries use RDP with valid credentials to log into and control a remote system.",
+      "detection": "RDP session establishment from a source/time combination outside the account's historical baseline; a burst of RDP connection attempts across many destination hosts from one source."
+    },
+    {
+      "id": "T1021.004",
+      "name": "SSH",
+      "tactics": ["Lateral Movement"],
+      "description": "Adversaries use SSH with valid credentials or keys to access and control remote *nix systems.",
+      "detection": "SSH connections from a source host with no prior history of SSH client behavior, or to an unusually large set of destination hosts in a short window."
+    },
+    {
+      "id": "T1570",
+      "name": "Lateral Tool Transfer",
+      "tactics": ["Lateral Movement"],
+      "description": "Adversaries move tools or files between systems within a compromised environment to support further stages of an operation.",
+      "detection": "Not directly visible from egress-only proxy logs (internal transfer); if the proxy relays internal traffic, look for file-transfer-shaped traffic between two internal hosts shortly after one of them showed initial-access indicators."
+    },
+    {
+      "id": "T1091",
+      "name": "Replication Through Removable Media",
+      "tactics": ["Lateral Movement", "Initial Access"],
+      "description": "Adversaries move between air-gapped or isolated systems, or gain initial access, by copying malicious code onto removable media that is then connected to a target system.",
+      "detection": "Not observable in network/proxy logs at all; included here only because it appears in comprehensive technique enumerations and the corpus should not silently omit a canonical ATT&CK ID a detection engineer might ask about."
+    },
+    {
+      "id": "T1005",
+      "name": "Data from Local System",
+      "tactics": ["Collection"],
+      "description": "Adversaries search a local system for files of interest to collect before exfiltration.",
+      "detection": "Not directly visible in proxy logs; typically the precursor stage immediately before an exfiltration-shaped transfer from the same host."
+    },
+    {
+      "id": "T1039",
+      "name": "Data from Network Shared Drive",
+      "tactics": ["Collection"],
+      "description": "Adversaries search network shares for files of interest to collect before exfiltration.",
+      "detection": "Not directly visible from egress proxy logs; internal file-share access volume spikes are the corroborating signal, outside this data source."
+    },
+    {
+      "id": "T1074",
+      "name": "Data Staged",
+      "tactics": ["Collection"],
+      "description": "Adversaries stage collected data in a central location or format before exfiltrating it, often compressing or archiving it first.",
+      "detection": "Not directly visible in proxy logs; a large local archive-creation event followed shortly by a single large outbound transfer is the typical pattern, only the second half of which is proxy-visible."
+    },
+    {
+      "id": "T1074.002",
+      "name": "Remote Data Staging",
+      "tactics": ["Collection"],
+      "description": "Adversaries stage collected data on a separate, often centrally-located remote system (e.g. an internal server) before final exfiltration.",
+      "detection": "An internal host with no normal file-server role suddenly receiving many inbound internal transfers, followed by that same host initiating an outbound transfer."
+    },
+    {
+      "id": "T1560",
+      "name": "Archive Collected Data",
+      "tactics": ["Collection"],
+      "description": "Adversaries compress and/or encrypt collected data before exfiltration to reduce transfer size and obscure content from inspection.",
+      "detection": "Outbound transfer with a content-type/extension indicating a compressed archive (.zip, .7z, .rar, .tar.gz) to a destination with no legitimate reason to receive one from that host."
+    },
+    {
+      "id": "T1560.001",
+      "name": "Archive via Utility",
+      "tactics": ["Collection"],
+      "description": "Adversaries use a standard archival utility already present on the system to compress data before exfiltration.",
+      "detection": "Not directly visible in proxy logs; the network-visible trace is the same as T1560 generally — an archive-shaped upload."
+    },
+    {
+      "id": "T1114",
+      "name": "Email Collection",
+      "tactics": ["Collection"],
+      "description": "Adversaries target a user's email for collection of sensitive information, either from a local client, a server, or webmail.",
+      "detection": "API-shaped traffic to a webmail or mail-API endpoint from a non-mail-client user-agent, or export/download-shaped requests against a mailbox at unusual volume."
+    },
+    {
+      "id": "T1213",
+      "name": "Data from Information Repositories",
+      "tactics": ["Collection"],
+      "description": "Adversaries collect data from internal collaboration or knowledge-management platforms (wikis, ticketing systems, SharePoint, Confluence).",
+      "detection": "A burst of read/export requests against a collaboration platform's API from one session, well above that principal's historical baseline for that service."
+    },
+    {
+      "id": "T1119",
+      "name": "Automated Collection",
+      "tactics": ["Collection"],
+      "description": "Adversaries use scripts or built-in tooling to automatically gather data from a system, rather than manual browsing.",
+      "detection": "Machine-regular request timing/shape against multiple internal data sources in sequence, inconsistent with interactive human browsing patterns."
+    },
+    {
+      "id": "T1530",
+      "name": "Data from Cloud Storage",
+      "tactics": ["Collection"],
+      "description": "Adversaries access cloud storage (buckets, blobs, shared drives) directly to collect data of interest, often after obtaining cloud credentials.",
+      "detection": "API calls listing or downloading objects from a cloud-storage bucket at a scope or volume outside the account's normal usage; access to buckets the account does not normally touch."
+    },
+    {
+      "id": "T1552.007",
+      "name": "Container API",
+      "tactics": ["Credential Access"],
+      "description": "Adversaries query a container orchestration platform's API to retrieve credentials or secrets exposed to a running workload.",
+      "detection": "Not directly visible in proxy logs; included for corpus completeness on cloud-native environments this proxy does not currently instrument."
+    },
+    {
+      "id": "T1621",
+      "name": "Multi-Factor Authentication Request Generation",
+      "tactics": ["Credential Access"],
+      "description": "Adversaries who already hold valid credentials repeatedly trigger MFA push prompts, hoping the user approves one out of fatigue or confusion (\"MFA bombing\").",
+      "detection": "A burst of authentication attempts for one account in a short window, each generating a new MFA challenge, followed by a successful login."
+    },
+    {
+      "id": "T1556",
+      "name": "Modify Authentication Process",
+      "tactics": ["Credential Access", "Defense Evasion", "Persistence"],
+      "description": "Adversaries interfere with an authentication mechanism (bypass MFA, register a rogue IdP, patch an auth module) to gain access or evade normal login controls.",
+      "detection": "New identity-provider federation or authentication-policy configuration changes shortly before or after anomalous login activity for the affected accounts."
+    },
+    {
+      "id": "T1486",
+      "name": "Data Encrypted for Impact",
+      "tactics": ["Impact"],
+      "description": "Adversaries encrypt data on target systems (ransomware) to disrupt availability and extort the victim.",
+      "detection": "Not directly visible in proxy logs; a corroborating pre-impact signal is a large exfiltration transfer (double-extortion staging) immediately preceding a broad availability disruption reported through other channels."
+    },
+    {
+      "id": "T1498",
+      "name": "Network Denial of Service",
+      "tactics": ["Impact"],
+      "description": "Adversaries flood network resources with traffic to degrade or deny availability of a service.",
+      "detection": "A sharp spike in inbound connection/request volume to one service from many sources, or from few sources at very high per-source rate — a burst/volumetric detector on request rate."
+    },
+    {
+      "id": "T1499",
+      "name": "Endpoint Denial of Service",
+      "tactics": ["Impact"],
+      "description": "Adversaries exhaust the resources of a specific endpoint or application to deny its availability, rather than the broader network.",
+      "detection": "Sustained, abnormally high request rate to one application endpoint from one or a few sources, with response-time/error-rate degradation as a corroborating signal outside proxy data alone."
+    },
+    {
+      "id": "T1657",
+      "name": "Financial Theft",
+      "tactics": ["Impact"],
+      "description": "Adversaries steal funds or extort a victim for financial gain, e.g. business email compromise, fraudulent transfers, or ransomware payment.",
+      "detection": "Not directly visible in proxy logs; noted for narrative/technique-mapping completeness when an incident's ultimate objective is financial rather than purely data-focused."
+    }
+  ]
+}

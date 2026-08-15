@@ -28,6 +28,13 @@ domain/TLD-risk/age/popularity for domains, family/is_browser/is_automation_tool
 agents) — the same offline, network-free datasets the real ingestion path uses (docs/03
 "Enrichment").
 
+## Department (the `*_z_vs_cohort` family's own baseline)
+
+`MLEvent.department` feeds `features.py`'s department-cohort z-score family (docs/04 §L3 "Peer-
+group cohorts": "the cohort variants ... against the entity's department"). See
+`_department_from_groups` below for how it is recovered from `actor.user.groups` without this
+package importing `app.parsers`/`datagen` internals beyond what it already does.
+
 ## Identity events
 
 `EntityKind` still carries an `"identity"` variant and `features.py` still computes
@@ -43,7 +50,7 @@ is simply always zero.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -98,6 +105,34 @@ class MLEvent:
     # An identity source's `target[]` type strings (docs/03) -- always empty today, see module
     # docstring's "Identity events" note.
     resources: tuple[str, ...] = field(default_factory=tuple)
+    # Best-effort department label -- see `_department_from_groups` below. `None` when the
+    # source event carried no `actor.user.groups` at all (e.g. a service account with neither
+    # `location` nor `department` populated).
+    department: str | None = None
+
+
+def _department_from_groups(groups: Sequence[str]) -> str | None:
+    """Best-effort `department` extraction from `actor.user.groups` (docs/03: "`location` /
+    `department` -> `actor.user.groups`", with no further OCSF field to keep the two apart).
+
+    `app/parsers/zscaler.py` (out of this milestone's ownership) builds that list as
+    `[g for g in (location, department) if g is not None]` — i.e. it preserves `(location,
+    department)` order while dropping whichever side is absent. That means: whenever `department`
+    is present, it is always the *last* entry, regardless of whether `location` also is. Every
+    `datagen` emitter (`datagen/org.py`'s `User.department` is a required, non-optional field)
+    populates both together for every human and service-account principal, so this resolves
+    unambiguously against the corpus this package trains and evaluates against — see
+    `app.detection.ml.features`'s module docstring for what this feeds (the docs/04 §L3
+    department-cohort feature family).
+
+    Ambiguous only in the case this project's own corpus never produces: a real deployment where
+    a principal has a `location` but genuinely no `department` on file — that lone entry would be
+    misread as a department. Documented rather than silently assumed away, matching this
+    package's existing convention for a heuristic that is correct on the corpus it can be
+    verified against (`estimate_work_hours`'s own module docstring states the same kind of
+    caveat for its self-inclusive baseline).
+    """
+    return groups[-1] if groups else None
 
 
 def _hostname_is_ip(hostname: str) -> bool:
@@ -155,6 +190,7 @@ def _from_http_activity(event: HTTPActivity) -> MLEvent:
         domain_is_top_site=bool(domain_info and domain_info["is_top_site"]),
         threat_present=bool(event.malware),
         is_direct_ip=is_direct_ip,
+        department=_department_from_groups(event.actor.user.groups),
     )
 
 

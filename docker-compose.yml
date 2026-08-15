@@ -11,6 +11,8 @@ x-backend-env: &backend-env
   JWT_SECRET: ${JWT_SECRET:-dev-only-insecure-change-me}
   JWT_TTL_MINUTES: ${JWT_TTL_MINUTES:-60}
   PSEUDONYM_SALT: ${PSEUDONYM_SALT:-dev-only-insecure-salt}
+  TIER2_INDICATOR_SALT: ${TIER2_INDICATOR_SALT:-dev-only-insecure-shared-indicator-salt}
+  TIER2_READONLY_DB_PASSWORD: ${TIER2_READONLY_DB_PASSWORD:-dev-only-insecure-tier2-readonly-password}
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-5}
   MAX_TRIAGE_INCIDENTS: ${MAX_TRIAGE_INCIDENTS:-15}

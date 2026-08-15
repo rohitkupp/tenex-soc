@@ -7,6 +7,7 @@ itself), matching the rest of this codebase's convention of pure, DB-free detect
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime, timedelta
 
 import numpy as np
@@ -52,6 +53,7 @@ def _event(
     domain_is_top_site: bool = True,
     threat_present: bool = False,
     is_direct_ip: bool = False,
+    department: str | None = "engineering",
 ) -> MLEvent:
     return MLEvent(
         line_no=line_no,
@@ -81,6 +83,7 @@ def _event(
         domain_is_top_site=domain_is_top_site,
         threat_present=threat_present,
         is_direct_ip=is_direct_ip,
+        department=department,
     )
 
 
@@ -108,6 +111,8 @@ def test_feature_vector_includes_every_docs04_named_feature() -> None:
         "n_unique_domains",
         "n_rare_domains",
         "rare_domain_ratio",
+        "rare_domain_ratio_z_vs_own_history",
+        "rare_domain_ratio_z_vs_cohort",
         "n_new_domains_for_user",
         "mean_domain_entropy",
         "max_domain_entropy",
@@ -116,7 +121,8 @@ def test_feature_vector_includes_every_docs04_named_feature() -> None:
         "bytes_in_sum",
         "out_in_ratio",
         "bytes_out_max",
-        "bytes_out_z_vs_own",
+        "bytes_out_sum_z_vs_own_history",
+        "bytes_out_sum_z_vs_cohort",
         "n_large_uploads",
         "post_ratio",
         "blocked_ratio",
@@ -280,6 +286,52 @@ def test_n_events_z_vs_cohort_fires_when_one_entity_spikes_relative_to_peers() -
     assert loud_row["n_events_z_vs_cohort"] > 3.5
 
 
+def test_n_events_z_vs_cohort_is_department_scoped_not_window_wide() -> None:
+    """The M8-measured defect this milestone fixes (docs/04 "Peer-group cohorts"): the cohort
+    population must be the entity's own *department*, not every entity active in the same
+    window. Constructed so the two readings disagree, proving this is a real behavior change and
+    not a no-op rename.
+
+    Three quiet `sales` peers (2 events) plus one `sales` entity spiking to 40, alongside three
+    `engineering` peers who are *always* at 40 (ordinary for them). Department-scoped: `sales`'s
+    40 is a stark outlier against its own quiet department (MAD == 0 among the sales peers ->
+    `robust_z`'s documented `x != median -> inf` policy) -- correctly flagged. Window-wide pooled
+    (the pre-fix behavior): the population would be `[2,2,2,40,40,40,40]`, whose median is 40 --
+    the same spiking entity would score `z == 0.0`, invisible. If this test passed under the old
+    pooled semantics it would prove the department fix regressed to a no-op.
+    """
+    events = []
+    line_no = 1
+    for i in range(3):
+        for _ in range(2):
+            events.append(
+                _event(line_no=line_no, principal=f"sales{i}@corp.example", department="sales")
+            )
+            line_no += 1
+    for _ in range(40):
+        events.append(_event(line_no=line_no, principal="loud@corp.example", department="sales"))
+        line_no += 1
+    for i in range(3):
+        for _ in range(40):
+            events.append(
+                _event(
+                    line_no=line_no,
+                    principal=f"eng{i}@corp.example",
+                    department="engineering",
+                )
+            )
+            line_no += 1
+
+    df = build_entity_window_features(events)
+    user_rows = df[df["entity_type"] == "user"]
+    loud_row = user_rows[user_rows["entity_value"] == "loud@corp.example"].iloc[0]
+    eng_row = user_rows[user_rows["entity_value"] == "eng0@corp.example"].iloc[0]
+
+    assert loud_row["n_events_z_vs_cohort"] == math.inf
+    # Ordinary for its own (engineering) cohort -- z stays finite and small.
+    assert eng_row["n_events_z_vs_cohort"] == 0.0
+
+
 # ---------------------------------------------------------------------------- domains
 
 
@@ -304,6 +356,45 @@ def test_n_new_domains_for_user_only_counts_first_seen_windows() -> None:
     user_rows = df[df["entity_type"] == "user"].sort_values("window_start")
     assert user_rows.iloc[0]["n_new_domains_for_user"] == 1.0  # a.com, first hour
     assert user_rows.iloc[1]["n_new_domains_for_user"] == 1.0  # b.com only, not a.com again
+
+
+def test_bytes_out_sum_and_rare_domain_ratio_cohort_variants_are_present_and_finite() -> None:
+    """Smoke test for the other two docs/04-normative cohort pairs (transfer, domain families) --
+    `test_n_events_z_vs_cohort_is_department_scoped_not_window_wide` already covers the
+    department-scoping behavior itself in depth for the volume family; this only asserts the
+    other two families were wired the same way and never leak a raw `inf`/`nan` for an ordinary
+    row (`to_feature_matrix` is what substitutes the finite sentinel -- these raw feature columns
+    legitimately carry `inf` under `robust_z`'s own MAD==0 policy, so this checks the *value*
+    computed, not that it survives matrix conversion, which `test_to_feature_matrix_*` covers).
+    """
+    events = [
+        _event(line_no=1, principal="alice@corp.example", department="engineering"),
+        _event(line_no=2, principal="bob@corp.example", department="engineering"),
+    ]
+    df = build_entity_window_features(events)
+    row = df[df["entity_type"] == "user"].iloc[0]
+    for col in (
+        "bytes_out_sum_z_vs_own_history",
+        "bytes_out_sum_z_vs_cohort",
+        "rare_domain_ratio_z_vs_own_history",
+        "rare_domain_ratio_z_vs_cohort",
+    ):
+        assert col in df.columns
+        assert row[col] == 0.0  # single window each, x == median -> 0.0 per robust_z
+
+
+def test_src_ip_entity_cohort_falls_back_to_window_wide_population() -> None:
+    """`src_ip` has no department of its own (module docstring, `features.py`) -- its
+    `n_events_z_vs_cohort` must still compute (department-blind, same-window population) rather
+    than erroring or silently omitting the column."""
+    events = [
+        _event(line_no=1, src_ip="10.0.0.1", department="engineering"),
+        _event(line_no=2, src_ip="10.0.0.2", department="sales"),
+    ]
+    df = build_entity_window_features(events)
+    ip_rows = df[df["entity_type"] == "src_ip"]
+    assert "n_events_z_vs_cohort" in ip_rows.columns
+    assert (ip_rows["n_events_z_vs_cohort"] == 0.0).all()  # both at 1 event -> matches median
 
 
 # ---------------------------------------------------------------------------- transfer

@@ -1,4 +1,5 @@
-"""Shared constants for the four L2 detectors (docs/04 "L2 -- Signal processing").
+"""Shared constants for the six L2 detectors (docs/04 "L2 -- Signal processing"): beaconing, DGA,
+volumetric burst, rarity, STL seasonal residual, and URL path analysis.
 
 ## `detector_key` values
 
@@ -70,6 +71,15 @@ SIGNAL_BEACONING: Final[str] = "signal.beaconing"
 SIGNAL_DGA: Final[str] = "signal.dga"
 SIGNAL_BURST: Final[str] = "signal.burst"
 SIGNAL_RARITY: Final[str] = "signal.rarity"
+# Must stay byte-identical to `datagen.types.SIGNAL_STL_RESIDUAL` -- that constant already exists
+# ahead of this detector (added for `datagen/scenarios/s06_seasonal_deviation.py`'s own ground
+# truth), so this is the one `SIGNAL_*` literal in this module declared to *match* a pre-existing
+# value rather than mint a fresh one. `tests/test_signal_constants.py` audits the two stay equal.
+SIGNAL_STL_RESIDUAL: Final[str] = "signal.stl_residual"
+# No pre-existing ground-truth reference for this one (docs/11 names no scenario dedicated to URL
+# path analysis specifically) -- this package's own natural key for docs/04 §L2's "URL path
+# analysis" detector.
+SIGNAL_URL_PATH: Final[str] = "signal.url_path_entropy"
 
 # ---------------------------------------------------------------------------- entity_type
 
@@ -81,13 +91,19 @@ ENTITY_DOMAIN: Final[str] = "domain"
 
 BEACONING_MIN_EVENTS: Final[int] = 8
 BEACONING_SCORE_THRESHOLD: Final[float] = 0.3
-# Autocorrelation cross-check: bucket width divides the group's own mean inter-arrival time so
-# a truly periodic beacon lands close to one event per `BEACONING_ACF_BUCKET_DIVISOR` buckets;
-# the bucket count is separately capped (`BEACONING_ACF_MAX_BUCKETS`) so a long-running, fast
-# beacon can't blow up the O(buckets^2) `numpy.correlate(mode="full")` call.
-BEACONING_ACF_BUCKET_DIVISOR: Final[int] = 10
-BEACONING_ACF_MAX_BUCKETS: Final[int] = 2000
-BEACONING_ACF_MIN_BUCKET_SECONDS: Final[float] = 1.0
+# FFT periodicity cross-check (docs/04 §L2 "Beaconing", REWRITTEN -- "frequency-domain
+# cross-check, primary"), replacing the earlier bucketed-autocorrelation-at-a-single-guessed-lag
+# cross-check: "autocorrelation only tests the lags it is told to test, and a beacon period that
+# does not land on a bucket boundary is invisible to it, while the FFT scans every candidate
+# period in one pass." `BEACONING_FFT_BUCKET_SECONDS` (1-minute buckets, docs literal) and
+# `BEACONING_FFT_POWER_RATIO_K` (k=6, docs literal: "tuned on the beaconing difficulty sweep,
+# docs/11") are both given verbatim, not tuned here. `BEACONING_FFT_MAX_BUCKETS` bounds the FFT
+# array size for a long-duration group the same way `BEACONING_ACF_MAX_BUCKETS` bounded the old
+# autocorrelation's O(buckets^2) `numpy.correlate` -- an FFT is only O(n log n), so this cap
+# exists purely as a memory/latency ceiling for a pathological group, not for algorithmic safety.
+BEACONING_FFT_BUCKET_SECONDS: Final[int] = 60
+BEACONING_FFT_POWER_RATIO_K: Final[float] = 6.0
+BEACONING_FFT_MAX_BUCKETS: Final[int] = 43_200  # 30 days at 1-minute resolution
 
 # ---------------------------------------------------------------------------- DGA
 
@@ -105,6 +121,109 @@ BURST_Z_THRESHOLD: Final[float] = 3.5
 # very first event of the day. An entity needs at least this many active buckets before it has
 # enough self-history to be scored against at all (mirrors beaconing's own `n >= 8` floor).
 BURST_MIN_ACTIVE_BUCKETS: Final[int] = 4
+
+# ---------------------------------------------------------------------------- STL seasonal residual
+
+# docs/04 §L2 "Seasonal residuals (STL)": "period=24 for daily; a second pass at period=168 for
+# weekly *where there is enough history*" and "~3 weeks minimum" for a full seasonal profile.
+# Three tiers, not two, follow directly from that "where there is enough history" qualifier on
+# the weekly pass specifically:
+#
+# * >= `STL_MIN_HOURS_FOR_WEEKLY_SEASONAL` -- daily + weekly MSTL (docs/04's full decomposition).
+# * >= `STL_MIN_HOURS_FOR_DAILY_SEASONAL` (but short of weekly) -- daily-only MSTL. Still a real
+#   seasonal decomposition, not the no-model fallback -- an entity with, say, 8 days of history
+#   has no trustworthy *weekly* rhythm to fit yet, but its *daily* 9-to-5-shaped rhythm is already
+#   well-supported.
+# * below `STL_MIN_HOURS_FOR_DAILY_SEASONAL` -- plain robust-z over active hourly buckets, no
+#   decomposition at all (module docstring's "Two scoring paths").
+#
+# `STL_MIN_HOURS_FOR_WEEKLY_SEASONAL` is `MSTL`'s own hard minimum for `period=168`
+# (`2 * 168 == 336`, verified directly against the installed statsmodels) -- 14 days, which is
+# also `datagen.corpus.DEFAULT_WINDOW_DAYS`, the single-scenario-file eval harness's own default
+# window (docs/11). Docs/04's own "~3 weeks" figure is production guidance for a live deployment
+# accumulating history across many uploads over time, not a number this eval harness's single
+# 14-day synthetic file can ever satisfy for *any* entity -- gating on 21 days here would make
+# scenario 6 (docs/11) permanently untestable through the real seasonal path on this project's own
+# eval data, not a stricter detector. `STL_MIN_HOURS_FOR_DAILY_SEASONAL` is `MSTL`'s own hard
+# minimum for `period=24` (`2 * 24 == 48`) plus a half-day of margin for a residual population
+# that is not degenerate at the boundary.
+STL_MIN_HOURS_FOR_DAILY_SEASONAL: Final[int] = 72
+STL_MIN_HOURS_FOR_WEEKLY_SEASONAL: Final[int] = 336
+STL_PERIOD_DAILY: Final[int] = 24
+STL_PERIOD_WEEKLY: Final[int] = 168
+# "Flag entities whose residual is a robust-z outlier (|z| > 3.5, same MAD formula as above)" --
+# docs/04 states this is literally the same threshold as volumetric burst, so this module imports
+# `BURST_Z_THRESHOLD` directly (`stl.py`) rather than defining a second constant with the same
+# magic number.
+# Mirrors `BURST_MIN_ACTIVE_BUCKETS` for the short-history fallback path -- an entity needs at
+# least this many active (nonzero-count) hourly buckets before even the fallback robust-z is
+# scored against a real distribution.
+STL_MIN_ACTIVE_HOURS_FALLBACK: Final[int] = 4
+# A real, measured bug this module had while being built, not a hypothetical one: a highly
+# regular entity (a service account with near-perfectly periodic volume, docs/11's own "regular
+# intervals... high volume" description) can have an `MSTL` residual population that is
+# numerically zero for almost every hour but not *exactly* `0.0` -- LOESS-smoothed floating point
+# arithmetic leaves noise on the order of `1e-13`. `robust_z`'s documented MAD==0 policy only
+# triggers on an *exact* zero MAD, so a population of near-zero-but-distinct floats produces a
+# tiny nonzero MAD, and any hour merely "less perfectly zero" than its neighbours (still on the
+# order of `1e-14`) scores a spurious, finite `|z| > 3.5` -- caught directly against real
+# `s06_seasonal_deviation.py` output as an org-wide false-positive flood (`svc-monitoring@corp.
+# example` and similar highly-regular principals), not invented. Residuals are rounded to this
+# many decimal places before scoring (`stl.py`) -- coarser than any genuine count-decomposition
+# signal this module cares about, comfortably finer than floating-point noise's own scale, and
+# large enough that it collapses a truly-degenerate population back to an exact MAD==0 so
+# `robust_z`'s existing, correct policy (`0.0` or `inf`, never a fabricated finite z) applies.
+STL_RESIDUAL_ROUND_DECIMALS: Final[int] = 6
+
+# ---------------------------------------------------------------------------- URL path analysis
+
+# docs/04 §L2 "URL path analysis": "high-entropy token pattern (base64-ish or hex-ish, length >=
+# 12)" -- the minimum segment length before it is even considered as a candidate random-looking
+# token; below this, short path segments (`v2`, `api`, `edit`) are too short for entropy to be a
+# meaningful signal regardless of content.
+URL_PATH_SEGMENT_MIN_LEN: Final[int] = 12
+# "base64-ish or hex-ish" (docs/04) as a charset match alone is too permissive -- a hyphenated
+# lowercase phrase like `check-in-endpoint` is entirely within the base64url charset
+# (`[A-Za-z0-9_-]`), and first-order character Shannon entropy does not reliably separate the two
+# either (verified empirically while building this module: a 17-25 character hyphenated English
+# phrase routinely measures 3.3-3.8 bits/char, *higher* than a same-length random hex string's
+# 2.9-3.5 -- natural-language text has low *conditional* entropy, given previous characters, not
+# low *marginal* character-frequency entropy, so a single-character entropy statistic does not
+# discriminate here). Two structural checks stand in instead, both cheap and directly justified by
+# real-world token conventions rather than a statistic that measurably fails on this alphabet:
+#
+# * A minimum count of *distinct* characters in the segment, ruling out a degenerate repeated- or
+#   low-cardinality string that would otherwise pass a pure hex/base64 charset check.
+# * For the base64-ish branch specifically (`url_path.py`'s `_is_high_entropy_token`): the segment
+#   must contain *both* an uppercase and a lowercase letter. Real base64 tokens are drawn
+#   uniformly from a 64-symbol alphabet, so missing either case entirely in 12+ characters is
+#   vanishingly unlikely (`(38/64)**12 ~ 0.0016`); REST path slugs are conventionally all-
+#   lowercase, so this alone excludes essentially every legitimate kebab-case segment while still
+#   catching genuine mixed-case encoded tokens. The hex-ish branch does not need this guard: hex
+#   digits contain no hyphen/underscore, so a real hyphenated English phrase never matches its
+#   charset to begin with.
+URL_PATH_TOKEN_MIN_DISTINCT_CHARS: Final[int] = 6
+# "above the 99.5th percentile of the org-wide distribution for that domain's category" -- same
+# percentile M8's own interim per-model confidence convention already uses
+# (`ml.iforest`/`ml.mahalanobis`/`ml.autoencoder`'s shared 99.5th-percentile calibration slice,
+# `app.detection.ml.detect.SIGNAL_CONFIDENCE_THRESHOLD`), reused here as the same "top half of one
+# percent is worth a human's attention" bar docs/04 gives verbatim for this detector specifically.
+URL_PATH_PERCENTILE_THRESHOLD: Final[float] = 99.5
+# `(entity, domain)` pairs need at least this many URLs before a percentile comparison means
+# anything -- mirrors every other detector's own minimum-population floor in this module
+# (`BEACONING_MIN_EVENTS`, `BURST_MIN_ACTIVE_BUCKETS`, `STL_MIN_ACTIVE_HOURS_FALLBACK`).
+URL_PATH_MIN_REQUESTS: Final[int] = 5
+# A domain needs at least this many distinct (entity, domain) pairs before its own 99.5th
+# percentile is a meaningful cutoff rather than effectively "whichever pair happens to have the
+# highest value" -- with, say, 3 pairs, the 99.5th percentile is the max by construction, which
+# would flag the single most-active-looking pair on that domain regardless of whether it is
+# actually unusual.
+URL_PATH_MIN_PAIRS_FOR_PERCENTILE: Final[int] = 20
+# `explanation.sample_paths` -- capped independently of `EVIDENCE_CAP` (evidence is event ids;
+# these are literal path strings a human reads directly in the UI), and each path is truncated to
+# `docs/06`'s 256-character field-truncation rule before it ever reaches a prompt.
+URL_PATH_SAMPLE_COUNT: Final[int] = 5
+URL_PATH_TRUNCATE_CHARS: Final[int] = 256
 
 # ---------------------------------------------------------------------------- rarity / first-seen
 

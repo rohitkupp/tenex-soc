@@ -1,4 +1,4 @@
-"""Train all three L3 models on the clean benign corpus (docs/13 M8 acceptance: "All three
+"""Train all five L3 models on the clean benign corpus (docs/13 M8/M8b acceptance: "All models
 trained and benchmarked").
 
     python -m app.detection.ml.train \\
@@ -56,9 +56,11 @@ from app.detection.ml.autoencoder import (
     save_scaler,
     tune_and_train,
 )
+from app.detection.ml.ecod import ECOD_ARTIFACT_FILENAME, ECODArtifact
 from app.detection.ml.events import load_ml_events
 from app.detection.ml.features import build_entity_window_features, to_feature_matrix
 from app.detection.ml.iforest import IFOREST_ARTIFACT_FILENAME, IsolationForestArtifact
+from app.detection.ml.lof import LOF_ARTIFACT_FILENAME, LOFArtifact
 from app.detection.ml.mahalanobis import MAHALANOBIS_ARTIFACT_FILENAME, MahalanobisArtifact
 
 log = get_logger(__name__)
@@ -202,6 +204,14 @@ def train(
     mahalanobis = MahalanobisArtifact.fit(x_train, x_calib)
     log.info("mahalanobis.fit.done", fit_seconds=round(mahalanobis.fit_seconds, 3))
 
+    log.info("ecod.fit.start")
+    ecod = ECODArtifact.fit(x_train, x_calib)
+    log.info("ecod.fit.done", fit_seconds=round(ecod.fit_seconds, 3))
+
+    log.info("lof.fit.start")
+    lof = LOFArtifact.fit(x_train, x_calib)
+    log.info("lof.fit.done", fit_seconds=round(lof.fit_seconds, 3))
+
     log.info("autoencoder.tune.start", n_trials=optuna_trials)
     autoencoder, optuna_result = tune_and_train(
         x_train, x_calib, x_tune, y_tune, n_trials=optuna_trials
@@ -218,6 +228,8 @@ def train(
     save_scaler(scaler, models_dir / SCALER_ARTIFACT_FILENAME)
     iforest.save(models_dir / IFOREST_ARTIFACT_FILENAME)
     mahalanobis.save(models_dir / MAHALANOBIS_ARTIFACT_FILENAME)
+    ecod.save(models_dir / ECOD_ARTIFACT_FILENAME)
+    lof.save(models_dir / LOF_ARTIFACT_FILENAME)
     autoencoder.save(models_dir / AUTOENCODER_ARTIFACT_FILENAME)
 
     trained_at = datetime.now(UTC).isoformat()
@@ -232,6 +244,8 @@ def train(
             "n_tuning_rows": len(y_tune),
             "iforest_fit_seconds": iforest.fit_seconds,
             "mahalanobis_fit_seconds": mahalanobis.fit_seconds,
+            "ecod_fit_seconds": ecod.fit_seconds,
+            "lof_fit_seconds": lof.fit_seconds,
             "autoencoder_fit_seconds": autoencoder.fit_seconds,
             "autoencoder_search_seconds": optuna_result.search_seconds,
             "optuna_best_value": optuna_result.best_value,
@@ -254,6 +268,8 @@ def train(
         "n_tuning_positive": int(y_tune.sum()) if len(y_tune) else 0,
         "iforest_fit_seconds": iforest.fit_seconds,
         "mahalanobis_fit_seconds": mahalanobis.fit_seconds,
+        "ecod_fit_seconds": ecod.fit_seconds,
+        "lof_fit_seconds": lof.fit_seconds,
         "autoencoder_fit_seconds": autoencoder.fit_seconds,
         "autoencoder_search_seconds": optuna_result.search_seconds,
         "optuna_best_value": optuna_result.best_value,
@@ -268,7 +284,7 @@ def train(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Train the L3 model bench (docs/04 §L3, M8)")
+    parser = argparse.ArgumentParser(description="Train the L3 model bench (docs/04 §L3, M8/M8b)")
     parser.add_argument("--corpus-seed", type=int, default=42)
     parser.add_argument("--corpus-events", type=int, default=400_000)
     # Matches the milestone brief's own example invocation verbatim; a scratch directory for a

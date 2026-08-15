@@ -1,7 +1,7 @@
-"""Unified scoring surface over all three L3 models — `ml.iforest`, `ml.mahalanobis`,
-`ml.autoencoder` (docs/04 §L3 model table), each producing a structured signal in the shape the
-task brief specifies: "Signals: detector_key `ml.<model>`, detector_layer `ml`, structured
-explanation."
+"""Unified scoring surface over all five L3 models — `ml.iforest`, `ml.mahalanobis`, `ml.ecod`,
+`ml.peer_group` (LOF), `ml.autoencoder` (docs/04 §L3 model table), each producing a structured
+signal in the shape the task brief specifies: "Signals: detector_key `ml.<model>`, detector_layer
+`ml`, structured explanation."
 
 ## Why this is not `app.detection.signal.drafts.SignalDraft`
 
@@ -43,29 +43,41 @@ from app.detection.ml.autoencoder import (
     AutoencoderArtifact,
     load_scaler,
 )
+from app.detection.ml.ecod import ECOD_ARTIFACT_FILENAME, ECODArtifact
 from app.detection.ml.features import to_feature_matrix
 from app.detection.ml.iforest import IFOREST_ARTIFACT_FILENAME, IsolationForestArtifact
+from app.detection.ml.lof import LOF_ARTIFACT_FILENAME, LOFArtifact
 from app.detection.ml.mahalanobis import MAHALANOBIS_ARTIFACT_FILENAME, MahalanobisArtifact
 
 __all__ = [
     "DETECTOR_LAYER",
     "ML_AUTOENCODER",
+    "ML_ECOD",
     "ML_IFOREST",
     "ML_MAHALANOBIS",
+    "ML_PEER_GROUP",
     "SIGNAL_CONFIDENCE_THRESHOLD",
     "MLModelBundle",
     "MLSignalDraft",
     "score_entity_windows",
 ]
 
-# `datagen.types.ML_IFOREST` / `ML_MAHALANOBIS` / `ML_AUTOENCODER` verbatim (docs/11's scenarios
-# already reference these strings in `expected_detectors`) — declared independently here for the
-# same reason `app.detection.signal.constants` declares its own `SIGNAL_*` literals rather than
-# importing `datagen`: `app/detection/ml/**` must not depend on the synthetic-data generator.
-# `tests/test_ml_detect.py` asserts these stay byte-identical to `datagen.types`'s copies.
+# `datagen.types.ML_IFOREST` / `ML_MAHALANOBIS` / `ML_AUTOENCODER` / `ML_PEER_GROUP` verbatim
+# (docs/11's scenarios already reference these strings in `expected_detectors`) — declared
+# independently here for the same reason `app.detection.signal.constants` declares its own
+# `SIGNAL_*` literals rather than importing `datagen`: `app/detection/ml/**` must not depend on
+# the synthetic-data generator. `tests/test_ml_detect.py` asserts these stay byte-identical to
+# `datagen.types`'s copies.
 ML_IFOREST = "ml.iforest"
 ML_MAHALANOBIS = "ml.mahalanobis"
 ML_AUTOENCODER = "ml.autoencoder"
+# ECOD has no pre-existing forward-referenced name in `datagen.types` to match -- `ml.ecod` is
+# this package's own natural key for `pyod.models.ecod`.
+ML_ECOD = "ml.ecod"
+# LOF ships under `ml.peer_group`, not `ml.lof` -- see `lof.py`'s module docstring for why: this
+# is the name docs/04 and the scenario 3/5 ground truth (`datagen.types.ML_PEER_GROUP`) already
+# use for "the model LOF formalizes."
+ML_PEER_GROUP = "ml.peer_group"
 DETECTOR_LAYER = "ml"
 
 # The operating point every model's binary "emit a signal or not" decision uses: this window's
@@ -103,6 +115,8 @@ class MLModelBundle:
     scaler: StandardScaler
     iforest: IsolationForestArtifact
     mahalanobis: MahalanobisArtifact
+    ecod: ECODArtifact
+    lof: LOFArtifact
     autoencoder: AutoencoderArtifact
 
     @classmethod
@@ -111,6 +125,8 @@ class MLModelBundle:
             scaler=load_scaler(models_dir / SCALER_ARTIFACT_FILENAME),
             iforest=IsolationForestArtifact.load(models_dir / IFOREST_ARTIFACT_FILENAME),
             mahalanobis=MahalanobisArtifact.load(models_dir / MAHALANOBIS_ARTIFACT_FILENAME),
+            ecod=ECODArtifact.load(models_dir / ECOD_ARTIFACT_FILENAME),
+            lof=LOFArtifact.load(models_dir / LOF_ARTIFACT_FILENAME),
             autoencoder=AutoencoderArtifact.load(models_dir / AUTOENCODER_ARTIFACT_FILENAME),
         )
 
@@ -160,7 +176,7 @@ def score_entity_windows(
     threshold: float = SIGNAL_CONFIDENCE_THRESHOLD,
 ) -> list[MLSignalDraft]:
     """Score every `(entity, hour)` row in `df` (from `build_entity_window_features`) against all
-    three models, returning one `MLSignalDraft` per (model, row) pair whose confidence clears
+    five models, returning one `MLSignalDraft` per (model, row) pair whose confidence clears
     `threshold`. `evaluate.py` instead calls each model's `raw_scores`/`confidence` directly over
     the *entire* `df` (thresholded and unthresholded) to compute AUC-PR/F1/recall — this function
     is the "what would actually get written as a signal" view, analogous to what a live pipeline
@@ -174,6 +190,8 @@ def score_entity_windows(
     for detector_key, model in (
         (ML_IFOREST, bundle.iforest),
         (ML_MAHALANOBIS, bundle.mahalanobis),
+        (ML_ECOD, bundle.ecod),
+        (ML_PEER_GROUP, bundle.lof),
         (ML_AUTOENCODER, bundle.autoencoder),
     ):
         raw = model.raw_scores(x_scaled)

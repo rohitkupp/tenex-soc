@@ -2,10 +2,10 @@
 
 `run_signal_layer` is the one function a future pipeline worker (`app/workers/**`, not this
 milestone's to build or wire up) would call once L1 has run: fetch an analysis's events once,
-run all four detectors over the same row set, persist every resulting `Signal` row in one
+run all six detectors over the same row set, persist every resulting `Signal` row in one
 transaction. Each detector already tolerates an empty or detector-irrelevant row set (an all-
-identity-source analysis with no `domain` values simply produces zero beaconing/DGA/rarity
-drafts), so there is no branching here on which sources are present.
+identity-source analysis with no `domain` values simply produces zero beaconing/DGA/rarity/url-
+path drafts), so there is no branching here on which sources are present.
 """
 
 from __future__ import annotations
@@ -18,10 +18,19 @@ from sqlalchemy.orm import Session
 from app.core.logging import get_logger
 from app.detection.signal.beaconing import detect_beaconing
 from app.detection.signal.burst import detect_burst
-from app.detection.signal.constants import SIGNAL_BEACONING, SIGNAL_BURST, SIGNAL_DGA, SIGNAL_RARITY
+from app.detection.signal.constants import (
+    SIGNAL_BEACONING,
+    SIGNAL_BURST,
+    SIGNAL_DGA,
+    SIGNAL_RARITY,
+    SIGNAL_STL_RESIDUAL,
+    SIGNAL_URL_PATH,
+)
 from app.detection.signal.dga import DGAArtifact, detect_dga, load_artifact
 from app.detection.signal.events_dao import fetch_event_rows, persist_signals
 from app.detection.signal.rarity import detect_rarity
+from app.detection.signal.stl import detect_stl_residual
+from app.detection.signal.url_path import detect_url_path
 from app.models.base import tenant_scope
 from app.models.signal import Signal
 
@@ -65,6 +74,8 @@ def run_signal_layer(
             *detect_dga(rows, artifact=artifact),
             *detect_burst(rows),
             *detect_rarity(rows),
+            *detect_stl_residual(rows),
+            *detect_url_path(rows),
         ]
 
         signals: list[Signal] = persist_signals(
@@ -72,7 +83,15 @@ def run_signal_layer(
         )
 
     counts_by_detector = dict.fromkeys(
-        (SIGNAL_BEACONING, SIGNAL_DGA, SIGNAL_BURST, SIGNAL_RARITY), 0
+        (
+            SIGNAL_BEACONING,
+            SIGNAL_DGA,
+            SIGNAL_BURST,
+            SIGNAL_RARITY,
+            SIGNAL_STL_RESIDUAL,
+            SIGNAL_URL_PATH,
+        ),
+        0,
     )
     for s in signals:
         counts_by_detector[s.detector_key] = counts_by_detector.get(s.detector_key, 0) + 1

@@ -15,8 +15,9 @@ from app.detection.ml.autoencoder import (
     _train_loop,
     tune_and_train,
 )
+from app.detection.ml.features import ENTITY_WINDOW_MODEL_FEATURES
 
-_N_FEATURES = 50
+_N_FEATURES = len(ENTITY_WINDOW_MODEL_FEATURES)
 
 
 def _benign_matrix(n: int, seed: int) -> np.ndarray:

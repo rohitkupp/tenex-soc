@@ -56,6 +56,21 @@ export default async function AnalysisDetailPage({
         </span>
       </div>
 
+      <nav className="flex items-center gap-4 border-b border-[var(--color-border)] text-sm">
+        <Link
+          href={`/analyses/${analysis.id}/incidents`}
+          className="border-b-2 border-transparent pb-2 text-[var(--color-text-mid)] transition-colors hover:border-[var(--color-text-hi)] hover:text-[var(--color-text-hi)]"
+        >
+          Incidents
+        </Link>
+        <Link
+          href={`/analyses/${analysis.id}/events`}
+          className="border-b-2 border-transparent pb-2 text-[var(--color-text-mid)] transition-colors hover:border-[var(--color-text-hi)] hover:text-[var(--color-text-hi)]"
+        >
+          Events
+        </Link>
+      </nav>
+
       <dl className="grid grid-cols-2 gap-x-6 gap-y-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-5 text-sm sm:grid-cols-4">
         <div>
           <dt className="text-xs text-[var(--color-text-lo)]">Started</dt>

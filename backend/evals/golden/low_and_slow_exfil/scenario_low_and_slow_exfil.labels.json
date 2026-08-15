@@ -1,0 +1,53 @@
+{
+  "log_file": "scenario_low_and_slow_exfil.log",
+  "seed": 7,
+  "org_fingerprint": "dc298f11182b937df292826921781db4",
+  "total_lines": 18082,
+  "window_start": "2026-02-15T00:00:00Z",
+  "window_end": "2026-03-01T00:00:00Z",
+  "scenarios": [
+    {
+      "scenario_id": "low_and_slow_exfil_001",
+      "technique": "T1567",
+      "malicious_line_numbers": [
+        1549,
+        1588,
+        1665,
+        1723,
+        1789,
+        1884,
+        2936,
+        2989,
+        3055,
+        3214,
+        3330,
+        3511,
+        4473,
+        4550,
+        4621,
+        4706,
+        4891,
+        4970,
+        5908,
+        5945,
+        6025,
+        6108,
+        6273,
+        6364,
+        6438,
+        7452,
+        7534
+      ],
+      "primary_entity": {
+        "type": "user",
+        "value": "rdanieu@corp.example"
+      },
+      "expected_detectors": [
+        "ml.autoencoder"
+      ],
+      "expected_disposition": "true_positive",
+      "must_correlate_into_one_incident": true,
+      "notes": "rdanieu pushed 171.4 KB to box.com in 27 uploads over 9.0d (campaign 2026-02-15T16:48:00+00:00..2026-02-24T16:48:00+00:00); every upload inside the victim's own working hours, own browser UA, own device — each upload's hour capped to 8066 bytes total (1.5 own-history MAD-widths above median=3905/MAD=1871); 54 benign (malicious=False) baseline events establish rdanieu as a regular box.com POST/upload user with real evening activity, so post_ratio and off_hours_ratio carry genuine pre-campaign variance; verified against the docs/11 row 4 acceptance gate (module docstring) [duration_days=9.0, host_app=None, max_attempts=50, max_upload_kb=6000.0, mean_upload_kb=900.0, n_uploads=30, start_fraction=0.05, upload_sigma=0.4]"
+    }
+  ]
+}

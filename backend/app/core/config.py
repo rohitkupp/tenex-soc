@@ -27,11 +27,18 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 DEV_JWT_SECRET = "dev-only-insecure-change-me"  # noqa: S105
 DEV_PSEUDONYM_SALT = "dev-only-insecure-salt"
 DEV_S3_SECRET = "tenexminio123"  # noqa: S105
+# M14 (app/tier2) additions. See that package's __init__.py for the shared-vs-per-tenant
+# salt tradeoff docs/06-PRIVACY-SECURITY.md requires; these are the same
+# recognisable-sentinel / fail-fast-outside-local pattern as every secret above.
+DEV_TIER2_INDICATOR_SALT = "dev-only-insecure-shared-indicator-salt"
+DEV_TIER2_READONLY_DB_PASSWORD = "dev-only-insecure-tier2-readonly-password"  # noqa: S105
 
 _SENTINELS = {
     "jwt_secret": DEV_JWT_SECRET,
     "pseudonym_salt": DEV_PSEUDONYM_SALT,
     "s3_secret_key": DEV_S3_SECRET,
+    "tier2_indicator_salt": DEV_TIER2_INDICATOR_SALT,
+    "tier2_readonly_db_password": DEV_TIER2_READONLY_DB_PASSWORD,
 }
 
 
@@ -66,6 +73,17 @@ class Settings(BaseSettings):
     agent_max_tool_calls: int = 8
     agent_timeout_seconds: int = 120
     demo_mode: bool = False
+
+    # --- Tier 2 (docs/06 "Text-to-SQL safety", app/tier2) ---
+    # Deliberately *shared* across every tenant -- see app/tier2/__init__.py for why this
+    # is the one salt in the whole system that is not per-tenant.
+    tier2_indicator_salt: SecretStr = SecretStr(DEV_TIER2_INDICATOR_SALT)
+    # Password for the dedicated, SELECT-only `tier2_readonly` Postgres role
+    # (alembic/versions/*_tier2_readonly_role_and_views.py) that the NL->SQL chatbot
+    # executes validated queries as -- never the app's own privileged DB user. Read by
+    # both the migration (to provision/rotate the role's password) and
+    # app.tier2.readonly_db (to connect as it), so the two can never drift apart.
+    tier2_readonly_db_password: SecretStr = SecretStr(DEV_TIER2_READONLY_DB_PASSWORD)
 
     # --- Ingest limits ---
     max_upload_bytes: int = 200 * 1024 * 1024

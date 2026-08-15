@@ -15,13 +15,17 @@ from app.detection.ml.autoencoder import tune_and_train
 from app.detection.ml.detect import (
     DETECTOR_LAYER,
     ML_AUTOENCODER,
+    ML_ECOD,
     ML_IFOREST,
     ML_MAHALANOBIS,
+    ML_PEER_GROUP,
     MLModelBundle,
     score_entity_windows,
 )
+from app.detection.ml.ecod import ECODArtifact
 from app.detection.ml.features import ENTITY_WINDOW_MODEL_FEATURES
 from app.detection.ml.iforest import IsolationForestArtifact
+from app.detection.ml.lof import LOFArtifact
 from app.detection.ml.mahalanobis import MahalanobisArtifact
 
 _N_FEATURES = len(ENTITY_WINDOW_MODEL_FEATURES)
@@ -35,10 +39,14 @@ def test_detector_keys_match_datagen_ground_truth_labels() -> None:
     from datagen.types import ML_AUTOENCODER as GEN_AUTOENCODER
     from datagen.types import ML_IFOREST as GEN_IFOREST
     from datagen.types import ML_MAHALANOBIS as GEN_MAHALANOBIS
+    from datagen.types import ML_PEER_GROUP as GEN_PEER_GROUP
 
     assert ML_IFOREST == GEN_IFOREST
     assert ML_MAHALANOBIS == GEN_MAHALANOBIS
     assert ML_AUTOENCODER == GEN_AUTOENCODER
+    assert ML_PEER_GROUP == GEN_PEER_GROUP
+    # ML_ECOD has no datagen ground-truth counterpart to audit against (no scenario names it in
+    # `expected_detectors` yet) -- nothing to compare here beyond the four that do.
 
 
 def test_detector_layer_is_ml_not_signal() -> None:
@@ -54,6 +62,8 @@ def _build_bundle(seed: int = 0) -> MLModelBundle:
 
     iforest = IsolationForestArtifact.fit(x_train, x_calib)
     mahalanobis = MahalanobisArtifact.fit(x_train, x_calib)
+    ecod = ECODArtifact.fit(x_train, x_calib)
+    lof = LOFArtifact.fit(x_train, x_calib)
 
     x_val = rng.normal(size=(100, _N_FEATURES))
     y_val = np.zeros(100, dtype=np.int64)
@@ -63,7 +73,12 @@ def _build_bundle(seed: int = 0) -> MLModelBundle:
     autoencoder, _ = tune_and_train(x_train, x_calib, x_val_scaled, y_val, n_trials=2)
 
     return MLModelBundle(
-        scaler=scaler, iforest=iforest, mahalanobis=mahalanobis, autoencoder=autoencoder
+        scaler=scaler,
+        iforest=iforest,
+        mahalanobis=mahalanobis,
+        ecod=ecod,
+        lof=lof,
+        autoencoder=autoencoder,
     )
 
 
@@ -94,7 +109,7 @@ def test_score_entity_windows_flags_outliers_and_spares_ordinary_rows() -> None:
     flagged_entities = {d.entity_value for d in drafts}
     assert "user1@corp.example" in flagged_entities
     detector_keys = {d.detector_key for d in drafts}
-    assert detector_keys <= {ML_IFOREST, ML_MAHALANOBIS, ML_AUTOENCODER}
+    assert detector_keys <= {ML_IFOREST, ML_MAHALANOBIS, ML_ECOD, ML_PEER_GROUP, ML_AUTOENCODER}
     for draft in drafts:
         assert draft.detector_layer == "ml"
         assert draft.evidence_line_numbers
@@ -121,7 +136,7 @@ def test_score_entity_windows_threshold_gating() -> None:
     df = _make_df([{}])  # a single, perfectly ordinary row
     # threshold=0.0 means every row is flagged by every model (percentile rank >= 0 always).
     drafts_low_threshold = score_entity_windows(bundle, df, threshold=0.0)
-    assert len(drafts_low_threshold) == 3  # one per model
+    assert len(drafts_low_threshold) == 5  # one per model
     # threshold=1.01 is unreachable (confidence is clipped to [0, 1]).
     drafts_high_threshold = score_entity_windows(bundle, df, threshold=1.01)
     assert drafts_high_threshold == []

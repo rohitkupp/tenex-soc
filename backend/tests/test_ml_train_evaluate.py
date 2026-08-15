@@ -14,7 +14,13 @@ import pytest
 import app.detection.ml.evaluate as evaluate_module
 import app.detection.ml.train as train_module
 from app.detection.ml.artifacts import load_feature_manifest
-from app.detection.ml.detect import ML_AUTOENCODER, ML_IFOREST, ML_MAHALANOBIS
+from app.detection.ml.detect import (
+    ML_AUTOENCODER,
+    ML_ECOD,
+    ML_IFOREST,
+    ML_MAHALANOBIS,
+    ML_PEER_GROUP,
+)
 
 
 def test_train_then_evaluate_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -40,6 +46,8 @@ def test_train_then_evaluate_end_to_end(tmp_path: Path, monkeypatch: pytest.Monk
     assert (models_dir / "scaler.joblib").exists()
     assert (models_dir / "iforest.joblib").exists()
     assert (models_dir / "mahalanobis.joblib").exists()
+    assert (models_dir / "ecod.joblib").exists()
+    assert (models_dir / "lof.joblib").exists()
     assert (models_dir / "autoencoder.pt").exists()
 
     manifest = load_feature_manifest(models_dir)
@@ -52,11 +60,17 @@ def test_train_then_evaluate_end_to_end(tmp_path: Path, monkeypatch: pytest.Monk
         eval_seed=5454, eval_dir=tmp_path / "eval", models_dir=models_dir
     )
 
-    assert result["winner"] in (ML_IFOREST, ML_MAHALANOBIS, ML_AUTOENCODER)
+    all_models = (ML_IFOREST, ML_MAHALANOBIS, ML_ECOD, ML_PEER_GROUP, ML_AUTOENCODER)
+    assert result["winner"] in all_models
     assert result["baseline"] == ML_IFOREST
-    for model_key in (ML_IFOREST, ML_MAHALANOBIS, ML_AUTOENCODER):
+    for model_key in all_models:
         assert model_key in result["aggregate"]
         assert 0.0 <= result["fp_rate_background"][model_key] <= 1.0
+    assert set(result["pre_registered_predictions"]) == {
+        "1_low_and_slow_ae_not_ecod",
+        "2_peer_group_lof_not_global",
+        "3_seasonal_stl_not_l3",
+    }
     # Three seeds (corpus 4242, tuning 4343, eval 5454) are pairwise distinct, as `train.py`'s
     # own module docstring requires -- checked here, not just asserted in prose.
     assert len({4242, 4343, 5454}) == 3

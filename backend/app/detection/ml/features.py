@@ -21,6 +21,33 @@ docstring extension explains why it does not instead import `app.detection.signa
 copy: `app/detection/ml/**` does not import the concurrently-developed `app/detection/signal/**`
 package).
 
+## Entity-relative features — a measured defect, corrected (docs/04 §L3)
+
+`backend/evals/results.md`'s M8 benchmark found **no L3 model detected the low-and-slow exfil
+scenario** and traced the root cause structurally, not to a tuning miss: of the ~50 features, only
+three (`n_events_z_vs_own_history`, `n_events_z_vs_cohort`, `bytes_out_z_vs_own`) were anything
+other than absolute/population-level. A model trained on 47 absolute features learns the org-wide
+manifold; a low-and-slow campaign built to look normal for its own victim sits comfortably inside
+that manifold precisely because nothing compares it to the victim's own history or peer group.
+
+docs/04 now makes the fix normative: the volume, transfer, and domain families each carry both an
+**own-history-relative** variant (`_z_vs_own_history`, scored via `robust_z` against this entity's
+own other windows — same mechanism scenario 4 is built to defeat only through the joint
+distribution) and a **cohort-relative** variant (`_z_vs_cohort`, scored against the entity's
+*department* peers in the same time bucket — `MLEvent.department`, `events.py`). Both are built
+below via `_own_history_z`/`_cohort_z`, both reuse the one canonical `robust_z`
+(`app.detection.features`) rather than re-deriving it a third time (that module's own docstring
+explains why a third definition is exactly how this kind of bug recurs).
+
+Department cohorts are only meaningful for `entity_type == "user"` — a source IP has no
+department of its own (it may be a shared office egress or NAT'd by many principals across many
+departments), so the `src_ip` dimension's cohort variant falls back to the same-window, department-
+unlabeled population `_cohort_z` used everywhere before this fix (still real information — "how
+does this IP's hour compare to every other IP's same hour" — just not a department-scoped
+comparison). This is a deliberate, stated scope decision, not an oversight: LOF (`ml.peer_group`,
+docs/04) and scenario 5 (`docs/11`) are both built around a *user* adopting another department's
+profile, which is exactly the dimension the department cohort has to be precise on.
+
 ## Estimated work hours — a production-realistic substitute for `datagen`'s `Org`
 
 `is_off_hours` needs a `WorkHoursLike` (start/end hour + UTC offset, in the entity's own local
@@ -111,6 +138,8 @@ DOMAIN_FEATURES: Final[tuple[str, ...]] = (
     "n_unique_domains",
     "n_rare_domains",
     "rare_domain_ratio",
+    "rare_domain_ratio_z_vs_own_history",  # added: docs/04's normative domain-family relative pair
+    "rare_domain_ratio_z_vs_cohort",  # added: see module docstring "Entity-relative features"
     "n_new_domains_for_user",
     "mean_domain_entropy",
     "max_domain_entropy",
@@ -124,7 +153,8 @@ TRANSFER_FEATURES: Final[tuple[str, ...]] = (
     "bytes_in_sum",
     "out_in_ratio",
     "bytes_out_max",
-    "bytes_out_z_vs_own",
+    "bytes_out_sum_z_vs_own_history",  # docs/04's own name; was `bytes_out_z_vs_own` pre-M8-fix
+    "bytes_out_sum_z_vs_cohort",  # added: see module docstring "Entity-relative features"
     "n_large_uploads",
     "bytes_in_max",  # added: largest single download -- insider mass-download signal (docs/11 #7)
     "bytes_out_cv",  # added: per-event upload-size variability (steady drip vs. bursty transfer)
@@ -332,6 +362,7 @@ def _events_frame(events: Sequence[MLEvent]) -> pd.DataFrame:
                 "domain_is_top_site",
                 "threat_present",
                 "is_direct_ip",
+                "department",
             ]
         )
     cols: dict[str, list[object]] = {
@@ -360,6 +391,7 @@ def _events_frame(events: Sequence[MLEvent]) -> pd.DataFrame:
         "domain_is_top_site": [e.domain_is_top_site for e in events],
         "threat_present": [e.threat_present for e in events],
         "is_direct_ip": [e.is_direct_ip for e in events],
+        "department": [e.department for e in events],
     }
     df = pd.DataFrame(cols)
     df["ts"] = pd.to_datetime(df["ts"], utc=True)
@@ -389,21 +421,29 @@ def _own_history_z(agg: pd.DataFrame, entity_col: str, value_col: str, out_col: 
     canonical scalar `robust_z` once per row is cheap even at tens of thousands of rows.
     """
     result = np.empty(len(agg), dtype=np.float64)
-    for _, group in agg.groupby(entity_col, sort=False):
+    for _, group in agg.groupby(entity_col, sort=False, dropna=False):
         values = group[value_col].tolist()
         for idx, x in zip(group.index, values, strict=True):
             result[agg.index.get_loc(idx)] = robust_z(values, x)
     agg[out_col] = result
 
 
-def _cohort_z(agg: pd.DataFrame, window_col: str, value_col: str, out_col: str) -> None:
-    """`robust_z` of `value_col`, scored against every entity (of the same entity_type, already
-    the only rows in `agg`) sharing the same absolute window -- "how does this entity's volume
-    this hour compare to its peers' volume the same hour," the complement of `_own_history_z`'s
-    "compared to its own typical hour."
+def _cohort_z(agg: pd.DataFrame, group_cols: list[str], value_col: str, out_col: str) -> None:
+    """`robust_z` of `value_col`, scored against every row of `agg` sharing the same
+    `group_cols` -- the complement of `_own_history_z`'s "compared to its own typical window."
+
+    `group_cols` is `["_department", "window_start"]` for `entity_type == "user"` (docs/04 §L3
+    "Peer-group cohorts": "the cohort variants ... against the entity's department") and
+    `["window_start"]` alone for `entity_type == "src_ip"` (module docstring: an IP has no
+    department of its own) -- both built by `_build_for_entity` below, this function itself is
+    agnostic to which.
+
+    `dropna=False`: a `None`/`NaN` `_department` (module docstring's stated, corpus-rare
+    ambiguous case) must still form its own cohort group rather than being silently dropped from
+    every group's iteration, which would leave that row's `result` slot uninitialized.
     """
     result = np.empty(len(agg), dtype=np.float64)
-    for _, group in agg.groupby(window_col, sort=False):
+    for _, group in agg.groupby(group_cols, sort=False, dropna=False):
         values = group[value_col].tolist()
         for idx, x in zip(group.index, values, strict=True):
             result[agg.index.get_loc(idx)] = robust_z(values, x)
@@ -556,7 +596,11 @@ def _build_for_entity(df: pd.DataFrame, entity_col: str, entity_type: str) -> pd
             row["non_top_site_ratio"] = float((~pg["domain_is_top_site"]).mean())
         else:
             for name in DOMAIN_FEATURES:
-                row[name] = 0.0
+                if name not in (
+                    "rare_domain_ratio_z_vs_own_history",
+                    "rare_domain_ratio_z_vs_cohort",
+                ):
+                    row[name] = 0.0
 
         # ---------------------------------------------------------------- Transfer
         if pg is not None:
@@ -574,9 +618,17 @@ def _build_for_entity(df: pd.DataFrame, entity_col: str, entity_type: str) -> pd
                 row["bytes_out_cv"] = 0.0
         else:
             for name in TRANSFER_FEATURES:
-                if name != "bytes_out_z_vs_own":
+                if name not in ("bytes_out_sum_z_vs_own_history", "bytes_out_sum_z_vs_cohort"):
                     row[name] = 0.0
-        # bytes_out_z_vs_own filled in a second pass below.
+        # bytes_out_sum_z_vs_own_history / _z_vs_cohort filled in a second pass below.
+
+        # `_department` is not a model feature (not in ENTITY_WINDOW_MODEL_FEATURES / not
+        # selected by `build_entity_window_features`'s `ordered_cols`) -- purely an internal
+        # column the second pass below groups cohort z-scores by. Constant per principal in
+        # practice (`datagen.org.User.department` is fixed for the user's whole history), so the
+        # first non-null value observed in this window is exactly this entity's department.
+        dept_values = g["department"].dropna()
+        row["_department"] = dept_values.iloc[0] if not dept_values.empty else None
 
         # ---------------------------------------------------------------- HTTP
         if pg is not None:
@@ -630,9 +682,19 @@ def _build_for_entity(df: pd.DataFrame, entity_col: str, entity_type: str) -> pd
         return result
 
     result = result.sort_values(["entity_value", "window_start"]).reset_index(drop=True)
+
+    # Department cohort only for `user` -- `src_ip` falls back to the same-window,
+    # department-unlabeled population (module docstring "Entity-relative features").
+    cohort_cols = ["_department", "window_start"] if entity_type == "user" else ["window_start"]
+
     _own_history_z(result, "entity_value", "n_events", "n_events_z_vs_own_history")
-    _cohort_z(result, "window_start", "n_events", "n_events_z_vs_cohort")
-    _own_history_z(result, "entity_value", "bytes_out_sum", "bytes_out_z_vs_own")
+    _cohort_z(result, cohort_cols, "n_events", "n_events_z_vs_cohort")
+    _own_history_z(result, "entity_value", "bytes_out_sum", "bytes_out_sum_z_vs_own_history")
+    _cohort_z(result, cohort_cols, "bytes_out_sum", "bytes_out_sum_z_vs_cohort")
+    _own_history_z(
+        result, "entity_value", "rare_domain_ratio", "rare_domain_ratio_z_vs_own_history"
+    )
+    _cohort_z(result, cohort_cols, "rare_domain_ratio", "rare_domain_ratio_z_vs_cohort")
     return result
 
 

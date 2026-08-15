@@ -16,19 +16,26 @@ score = regularity * min(n/50, 1) * min(duration_hours/4, 1)
 writes the "measured cv=..." note into scenario 1's ground truth, and matching that exactly is
 what lets the M7 verification report compare this detector's `cv` against the generator's own
 self-reported value as an independent cross-check, not just eyeball two numbers that happen to
-be close.
+be close. **This math is unchanged** (docs/04, REWRITTEN §L2: the published jitter-degradation
+curve depends on it) -- only the cross-check below was replaced.
 
-## The autocorrelation cross-check
+## The FFT periodicity cross-check (REWRITTEN, docs/04 §L2 "Beaconing")
 
-docs/04: "Also compute bucketed autocorrelation at the dominant lag as a cross-check." A group's
-inter-arrival timestamps are binned into fixed-width buckets (`_ACF_BUCKET_DIVISOR` buckets per
-expected interval, capped at `BEACONING_ACF_MAX_BUCKETS` total so a fast, long-running beacon
-can't blow up the `numpy.correlate(mode="full")` call below), producing a per-bucket event-count
-series; `dominant_lag` is the lag (in seconds) at which that series' own autocorrelation peaks,
-excluding lag 0. For a genuinely periodic beacon this lands close to `mean_interval` -- computed
-via an entirely different route (a frequency-domain-flavored peak search over binned counts,
-rather than CV's time-domain statistic over raw deltas), which is exactly what makes it a real
-cross-check and not the same number computed twice.
+docs/04 now specifies a frequency-domain cross-check as *primary*, replacing the earlier bucketed
+autocorrelation at a single guessed lag: "autocorrelation only tests the lags it is told to test,
+and a beacon period that does not land on a bucket boundary is invisible to it, while the FFT
+scans every candidate period in one pass." The group's event counts are binned into a uniform
+`BEACONING_FFT_BUCKET_SECONDS`-wide (1-minute, docs literal) time series, zero-filled across the
+group's full span so the sampling grid is regular (an FFT assumes uniform sampling; the
+autocorrelation approach's variable, mean-interval-scaled bucket width doesn't need to). A real
+FFT (`numpy.fft.rfft`) of that series concentrates power in one frequency bin for a truly
+periodic beacon; interleaved human browsing does not concentrate power anywhere. `_fft_periodicity`
+reports the period (in seconds) of the strongest non-DC bin and the ratio of that bin's power to
+the mean power of every other non-DC bin -- a ratio at or above `BEACONING_FFT_POWER_RATIO_K`
+(`k=6`, docs literal, "tuned on the beaconing difficulty sweep, docs/11") is what docs/04 calls a
+"dominant peak." Like the autocorrelation check it replaces, this is a cross-check reported in
+`explanation`, not a second gate on top of the CV/duration/volume score above -- the two can
+disagree, and that disagreement is itself useful information for a human triaging the signal.
 """
 
 from __future__ import annotations
@@ -44,9 +51,9 @@ from typing import Any
 import numpy as np
 
 from app.detection.signal.constants import (
-    BEACONING_ACF_BUCKET_DIVISOR,
-    BEACONING_ACF_MAX_BUCKETS,
-    BEACONING_ACF_MIN_BUCKET_SECONDS,
+    BEACONING_FFT_BUCKET_SECONDS,
+    BEACONING_FFT_MAX_BUCKETS,
+    BEACONING_FFT_POWER_RATIO_K,
     BEACONING_MIN_EVENTS,
     BEACONING_SCORE_THRESHOLD,
     ENTITY_SRC_IP,
@@ -78,48 +85,63 @@ def _dispersion(deltas: Sequence[float]) -> tuple[float, float, float]:
     return cv, mad / median, median
 
 
-def _dominant_lag(
-    timestamps: Sequence[datetime], mean_interval: float
+def _fft_periodicity(
+    timestamps: Sequence[datetime],
+    *,
+    bucket_seconds: int = BEACONING_FFT_BUCKET_SECONDS,
+    max_buckets: int = BEACONING_FFT_MAX_BUCKETS,
 ) -> tuple[float, float, int, float]:
-    """`(dominant_lag_seconds, acf_peak, n_buckets, bucket_width_s)`.
+    """`(dominant_period_s, fft_peak_power_ratio, n_buckets, bucket_width_s)` -- module docstring
+    "The FFT periodicity cross-check."
 
-    Returns `(0.0, 0.0, 0, 0.0)` when there is no meaningful series to correlate -- a zero-span
-    group, or one whose bucketed counts have no variance (e.g. exactly one event per bucket
-    throughout, which mean-centers to an all-zero series) -- rather than a NaN/inf from dividing
-    by a zero-power `acf[0]`.
+    Returns `(0.0, 0.0, 0, 0.0)` when there is no meaningful series to transform -- a zero-span
+    group, or one whose bucketed counts have no variance (a flat series has no spectrum to speak
+    of) -- rather than a division by a zero-power denominator.
     """
     span = (timestamps[-1] - timestamps[0]).total_seconds()
-    if span <= 0 or mean_interval <= 0:
+    if span <= 0:
         return 0.0, 0.0, 0, 0.0
 
-    bucket_width = max(
-        mean_interval / BEACONING_ACF_BUCKET_DIVISOR, BEACONING_ACF_MIN_BUCKET_SECONDS
-    )
-    n_buckets = min(math.floor(span / bucket_width) + 1, BEACONING_ACF_MAX_BUCKETS)
+    bucket_width = float(bucket_seconds)
+    n_buckets = min(math.floor(span / bucket_width) + 1, max_buckets)
     if n_buckets < 2:
         return 0.0, 0.0, n_buckets, bucket_width
-    bucket_width = span / n_buckets  # re-spread so `n_buckets` bins cover the span exactly
 
     t0 = timestamps[0]
     counts = np.zeros(n_buckets, dtype=np.float64)
     for ts in timestamps:
-        idx = min(int((ts - t0).total_seconds() // bucket_width), n_buckets - 1)
+        idx = int((ts - t0).total_seconds() // bucket_width)
+        if idx >= n_buckets:
+            # Only reachable when `span / bucket_width` exceeded `max_buckets` and the series
+            # was truncated to the first `max_buckets` buckets (module docstring's defensive
+            # cap) -- events past the truncated window are simply outside this transform's
+            # window, the same way a truncated ACF bucket count used to bound its own array.
+            continue
         counts[idx] += 1.0
 
-    centered = counts - counts.mean()
-    if np.allclose(centered, 0.0):
+    if np.allclose(counts, counts[0]):
         return 0.0, 0.0, n_buckets, bucket_width
 
-    corr = np.correlate(centered, centered, mode="full")
-    acf = corr[len(corr) // 2 :]
-    if acf[0] <= 0:
-        return 0.0, 0.0, n_buckets, bucket_width
-    acf_norm = acf / acf[0]
-    if len(acf_norm) <= 1:
+    power = np.abs(np.fft.rfft(counts)) ** 2
+    if len(power) <= 1:
         return 0.0, 0.0, n_buckets, bucket_width
 
-    lag_star = int(np.argmax(acf_norm[1:])) + 1
-    return float(lag_star * bucket_width), float(acf_norm[lag_star]), n_buckets, bucket_width
+    non_dc = power[1:]  # bin 0 is the DC (mean-level) component, not a periodicity
+    peak_offset = int(np.argmax(non_dc))
+    peak_idx = peak_offset + 1
+    peak_power = float(non_dc[peak_offset])
+
+    rest = np.delete(non_dc, peak_offset)
+    rest_mean = float(rest.mean()) if rest.size else 0.0
+    if rest_mean > 0:
+        ratio = peak_power / rest_mean
+    elif peak_power > 0:
+        ratio = math.inf
+    else:
+        ratio = 0.0
+
+    period_s = (n_buckets * bucket_width) / peak_idx
+    return period_s, ratio, n_buckets, bucket_width
 
 
 def detect_beaconing(rows: Sequence[EventRow]) -> list[SignalDraft]:
@@ -147,7 +169,9 @@ def detect_beaconing(rows: Sequence[EventRow]) -> list[SignalDraft]:
         if score < BEACONING_SCORE_THRESHOLD:
             continue
 
-        dominant_lag, acf_peak, n_buckets, bucket_width = _dominant_lag(timestamps, mean_interval)
+        dominant_period_s, fft_peak_power_ratio, n_buckets, bucket_width = _fft_periodicity(
+            timestamps
+        )
 
         evidence_ids, truncated = cap_evidence([(r.ts, r.id) for r in ordered])
         explanation: dict[str, Any] = {
@@ -157,14 +181,16 @@ def detect_beaconing(rows: Sequence[EventRow]) -> list[SignalDraft]:
             "mad_jitter": mad_jitter,
             "n_events": n,
             "duration_h": duration_h,
-            "dominant_lag": dominant_lag,
+            "dominant_period_s": dominant_period_s,
+            "fft_peak_power_ratio": fft_peak_power_ratio,
             # additional context for the UI / a human triaging this signal:
             "src_ip": src_ip,
             "domain": domain,
             "regularity": regularity,
-            "autocorrelation_at_dominant_lag": acf_peak,
-            "acf_bucket_width_s": bucket_width,
-            "acf_n_buckets": n_buckets,
+            "fft_has_dominant_peak": fft_peak_power_ratio >= BEACONING_FFT_POWER_RATIO_K,
+            "fft_power_ratio_threshold": BEACONING_FFT_POWER_RATIO_K,
+            "fft_bucket_width_s": bucket_width,
+            "fft_n_buckets": n_buckets,
             "score_threshold": BEACONING_SCORE_THRESHOLD,
             "evidence_truncated": truncated,
         }

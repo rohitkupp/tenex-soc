@@ -194,7 +194,19 @@ def _ml_model_pairs(bundle: Any) -> list[tuple[str, Any]]:
 
 
 def _run_l3(log_path: Path, line_to_event_id: dict[int, int]) -> tuple[list[RawSignal], Any, Any]:
-    from app.detection.ml.detect import MLModelBundle
+    """L3 signals for the demo path. Pre-filters on each model's own uncalibrated percentile
+    confidence (`SIGNAL_CONFIDENCE_THRESHOLD`, the same cheap gate `app.detection.ml.detect.
+    score_entity_windows` itself applies) *before* computing `explain_row` -- SHAP attribution is
+    the expensive part of this loop, and computing it for every one of tens of thousands of
+    entity-window rows across all five models (instead of only the ~0.5% that clear the
+    threshold) is what made an earlier version of this function take 20+ minutes on a single
+    50k-event scenario. Every other L1/L2 detector already pre-filters on its own raw score
+    before producing a draft at all (beaconing's score threshold, burst's `|z| > 3.5`, ...); this
+    restores the same discipline for L3 rather than trying to keep every row for later
+    calibration -- calibration-sample collection is `_run_l3_calibration_samples`'s job instead,
+    which needs `raw_score` only and never calls `explain_row`.
+    """
+    from app.detection.ml.detect import SIGNAL_CONFIDENCE_THRESHOLD, MLModelBundle
     from app.detection.ml.events import load_ml_events
     from app.detection.ml.features import build_entity_window_features
 
@@ -208,7 +220,9 @@ def _run_l3(log_path: Path, line_to_event_id: dict[int, int]) -> tuple[list[RawS
     signals: list[RawSignal] = []
     for detector_key, model in _ml_model_pairs(bundle):
         raw = model.raw_scores(x_scaled)
-        for i in range(len(df)):
+        conf = model.confidence(raw)
+        candidate_idx = np.flatnonzero(conf >= SIGNAL_CONFIDENCE_THRESHOLD)
+        for i in candidate_idx:
             row = df.iloc[i]
             evidence = [
                 line_to_event_id[ln] for ln in row["line_numbers"] if ln in line_to_event_id
@@ -229,6 +243,44 @@ def _run_l3(log_path: Path, line_to_event_id: dict[int, int]) -> tuple[list[RawS
                 )
             )
     return signals, df, bundle
+
+
+def _run_l3_calibration_samples(
+    log_path: Path, line_to_event_id: dict[int, int], malicious_event_ids: set[int]
+) -> list[DetectorSample]:
+    """Every L3 model's raw score on every entity-window row, labeled, for calibration fitting
+    only -- deliberately never calls `explain_row` (see `_run_l3`'s docstring for why that
+    matters at 50k-event scale). Isotonic regression needs the full raw-score distribution,
+    including plenty of ordinary/negative rows, not just the ones that would clear a percentile
+    pre-filter -- so unlike `_run_l3`, this keeps every row with at least one mapped evidence
+    event."""
+    from app.detection.ml.detect import MLModelBundle
+    from app.detection.ml.events import load_ml_events
+    from app.detection.ml.features import build_entity_window_features
+
+    events = load_ml_events({"zscaler": log_path})
+    df = build_entity_window_features(events)
+    if df.empty:
+        return []
+    bundle = MLModelBundle.load()
+    x_scaled = bundle.transform(df)
+
+    line_numbers_by_row = df["line_numbers"].tolist()
+    evidence_by_row = [
+        {line_to_event_id[ln] for ln in lns if ln in line_to_event_id}
+        for lns in line_numbers_by_row
+    ]
+    labels = [int(bool(malicious_event_ids & ev)) for ev in evidence_by_row]
+    keep = [i for i, ev in enumerate(evidence_by_row) if ev]
+
+    samples: list[DetectorSample] = []
+    for detector_key, model in _ml_model_pairs(bundle):
+        raw = model.raw_scores(x_scaled)
+        samples.extend(
+            DetectorSample(detector_key=detector_key, raw_score=float(raw[i]), label=labels[i])
+            for i in keep
+        )
+    return samples
 
 
 def _entity_event_index(events: list[GraphEvent]) -> dict[EntityKey, set[int]]:
@@ -699,19 +751,22 @@ def fit_layer_calibrators(*, fit_dir: Path, seed: int = CALIBRATION_FIT_SEED) ->
             }
             l1 = _run_l1(ingest.analysis_id, ingest.tenant_id)
             l2 = _run_l2(session, ingest.analysis_id, ingest.tenant_id)
-            l3, _, _ = _run_l3(log_path, line_to_event_id)
+            l3_samples = _run_l3_calibration_samples(
+                log_path, line_to_event_id, malicious_event_ids
+            )
             with tenant_scope(session, ingest.tenant_id):
                 graph_events = fetch_graph_events(session, ingest.analysis_id)
             _build, _node_features, l5 = _run_l5(graph_events)
         finally:
             session.close()
 
-        for rs in l1 + l2 + l3 + l5:
+        for rs in l1 + l2 + l5:
             label = int(bool(malicious_event_ids & set(rs.evidence_event_ids)))
             feature = _calibration_feature(rs.detector_key, rs.raw_score)
             samples.append(
                 DetectorSample(detector_key=rs.detector_key, raw_score=feature, label=label)
             )
+        samples.extend(l3_samples)
         log.info("fit_layer_calibrators.scenario_done", scenario=key, n_samples=len(samples))
 
     calibrators = fit_calibrators(samples)

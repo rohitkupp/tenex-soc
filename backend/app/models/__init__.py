@@ -5,7 +5,10 @@ This module adds the rest of docs/02 verbatim: detection (`signals`), graph & in
 (`entities`, `entity_edges`, `incidents`), triage & response (`triage_verdicts`,
 `response_plans`), the enforcement plane (`enforcement_state`, `enforcement_journal`),
 learning (`analyst_feedback`, `detector_stats`, `model_versions`), and ops/eval
-(`tier2_signatures`, `eval_runs`)."""
+(`tier2_signatures`, `eval_runs`). M13 (`app/learning`) adds three tables of its own that sit
+outside docs/02's literal SQL -- `suppression_candidates`, `benign_baseline_entries`, and
+`learning_synthetic_seed` -- see each model's own docstring for why they exist and why they are
+additive rather than changes to an existing table."""
 
 from __future__ import annotations
 
@@ -18,6 +21,7 @@ from app.models.base import (
     tenant_scope,
     tenant_session,
 )
+from app.models.benign_baseline_entry import BenignBaselineEntry
 from app.models.dead_letter import DeadLetter
 from app.models.detector_stats import DetectorStats
 from app.models.enforcement_journal import EnforcementJournal
@@ -30,6 +34,8 @@ from app.models.incident import Incident
 from app.models.model_version import ModelVersion
 from app.models.response_plan import ResponsePlan
 from app.models.signal import Signal
+from app.models.suppression_candidate import SuppressionCandidate
+from app.models.synthetic_seed_marker import SyntheticSeedMarker
 from app.models.tenant import Tenant
 from app.models.tier2_signature import Tier2Signature
 from app.models.triage_verdict import TriageVerdict
@@ -39,6 +45,7 @@ from app.models.user import User
 __all__ = [
     "Analysis",
     "AnalystFeedback",
+    "BenignBaselineEntry",
     "DeadLetter",
     "DetectorStats",
     "EnforcementJournal",
@@ -52,6 +59,8 @@ __all__ = [
     "ModelVersion",
     "ResponsePlan",
     "Signal",
+    "SuppressionCandidate",
+    "SyntheticSeedMarker",
     "Tenant",
     "TenantScopedMixin",
     "Tier2Signature",
