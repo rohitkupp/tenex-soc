@@ -1,0 +1,27 @@
+title: MFA factor deactivated
+id: mfa-factor-deactivated
+status: stable
+logsource:
+  product: okta
+  service: system
+detection:
+  deactivate:
+    activity_name: 'user.mfa.factor.deactivate'
+  condition: deactivate
+level: medium
+tags:
+  - attack.persistence
+  - attack.t1556.006
+entity:
+  type: user
+  by: principal
+description: >
+  docs/04: "MFA factor deactivated" (T1556.006) — removing a second factor is a standard
+  account-takeover persistence step (deactivate the factor the legitimate owner controls, enroll
+  one the attacker controls). Every `user.mfa.factor.deactivate` event is individually a
+  legitimate, self-service action (a real phone upgrade looks identical —
+  `datagen/scenarios/s05_account_takeover.py`'s `n_decoy_chains` are exactly that, labelled
+  benign), which is why docs/13 M9 pairs this rule with the L4 sequence models: this rule flags
+  every occurrence at `level: medium` on its own; the sequence model is what tells a genuine
+  factor swap apart from `deactivate -> system.api_token.create` with no re-enrollment in
+  between.

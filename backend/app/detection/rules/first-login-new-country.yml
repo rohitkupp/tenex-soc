@@ -1,0 +1,28 @@
+title: First login from new country for principal
+id: first-login-new-country
+status: stable
+logsource:
+  product: okta
+  service: system
+detection:
+  logins:
+    activity_name: 'user.session.start'
+    status: 'SUCCESS'
+  condition: logins | not_seen_before(principal, country) in logins
+level: medium
+tags:
+  - attack.initial_access
+  - attack.t1078
+entity:
+  type: user
+  by: principal
+description: >
+  docs/04: "First login from new country for principal" (T1078) — a successful sign-on from a
+  country this principal has never successfully signed in from before, in this analysis.
+  `not_seen_before(principal, country) in logins` is a named aggregation primitive
+  (`app.detection.sigma.grammar`): the anchor and the history population are the same block
+  (`logins`, self-referential), and by this evaluator's convention the *first* field
+  (`principal`) is the "who" a baseline is required for — a principal's very first-ever login is
+  therefore a missing baseline, not a novel country, and does not fire (see
+  `app.detection.sigma.compiler._run_not_seen_before`'s docstring). `country` resolves from
+  `src_endpoint.location.country` (docs/03's Okta `geographicalContext.country` mapping).

@@ -1,0 +1,26 @@
+title: Access to malware/phishing/C2 URL category
+id: malicious-url-category
+status: stable
+logsource:
+  product: zscaler
+  service: web
+detection:
+  security_category:
+    url_supercategory: 'Security'
+  condition: security_category
+level: high
+tags:
+  - attack.command_and_control
+  - attack.t1071
+entity:
+  type: domain
+  by: domain
+description: >
+  ZScaler's own category engine already labels malware/phishing/C2/spyware/suspicious
+  destinations under the "Security" supercategory (`datagen/emitters/zscaler.py`'s
+  `SECURITY_CATEGORIES` table — Malware Sites, Phishing, Botnet Callback, Spyware and Adware,
+  Suspicious Destinations all carry `urlsupercategory == "Security"`). This rule trusts that
+  categorization rather than re-deriving it: any request to a domain the proxy itself has already
+  flagged as security-relevant is worth a signal, independent of disposition (allowed or
+  blocked — a policy miss that still let the request through is the more urgent case, not a less
+  urgent one).

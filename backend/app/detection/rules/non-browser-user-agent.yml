@@ -1,0 +1,38 @@
+title: Non-browser user agent
+id: non-browser-user-agent
+status: stable
+logsource:
+  product: zscaler
+  service: web
+detection:
+  ua_literal:
+    user_agent|contains:
+      - 'curl'
+      - 'python-requests'
+      - 'python-urllib'
+      - 'Wget'
+      - 'PowerShell'
+      - 'Go-http-client'
+      - 'libwww-perl'
+  ua_enriched:
+    is_automation_tool: true
+  condition: ua_literal or ua_enriched
+level: low
+tags:
+  - attack.command_and_control
+  - attack.t1105
+entity:
+  type: src_ip
+  by: src_ip
+description: >
+  docs/04: "Non-browser user agent (curl, python-requests, powershell, wget)" — command-and-control
+  implants and staged-tool-transfer scripts overwhelmingly speak HTTP through a scripting client's
+  own default user agent, not a browser's. Two independent checks, OR'd: a literal keyword match
+  against the raw `user_agent` hot column (self-contained — fires correctly even before the
+  enrichment stage has run against this analysis) and M5's enrichment verdict
+  (`enrichment.user_agent.is_automation_tool`, `app/enrichment/user_agent_enrichment.py`), which
+  recognizes a much broader tool catalogue (Postman, Ansible, Terraform, headless browsers,
+  scanners, ...) than the four examples docs/04 names. Deliberately `level: low` on its own — a
+  legitimate service account's own automation traffic looks identical by this signal alone
+  (docs/11 scenario 10's backup job is exactly this shape) — its value is mostly as
+  corroborating evidence once fused with a source/volume/destination anomaly.

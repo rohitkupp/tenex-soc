@@ -1,0 +1,28 @@
+title: Direct-to-IP HTTP request
+id: direct-to-ip-request
+status: stable
+logsource:
+  product: zscaler
+  service: web
+detection:
+  ip_host:
+    direct_to_ip: true
+  condition: ip_host
+level: medium
+tags:
+  - attack.command_and_control
+  - attack.t1071.001
+entity:
+  type: dst_ip
+  by: domain
+description: >
+  docs/04: "Direct-to-IP HTTP request" (T1071.001) — a request whose `host` is itself a dotted-quad
+  IPv4 literal, not a hostname, means no DNS lookup happened; legitimate enterprise traffic almost
+  always resolves a name first (docs/04's own thresholds are calibrated against that fact), while
+  hardcoded C2 endpoints and manually-driven recon tools frequently do not bother to register or
+  resolve one. `direct_to_ip` is a computed field (`app.detection.sigma.fields`): a regex test on
+  the already-indexed `domain` hot column, which is what ZScaler's `host` field maps to (docs/03),
+  chosen specifically so this rule does not depend on the M5 enrichment stage having already run
+  against this analysis (`app/enrichment/domain_enrichment.py` would report an IP host as
+  `tld=""`/tier `"unknown"` just as honestly as any other un-enriched hostname, which is a weaker
+  signal to key a rule on than the syntactic fact itself).

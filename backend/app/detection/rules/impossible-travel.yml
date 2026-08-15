@@ -1,0 +1,41 @@
+title: Impossible travel
+id: impossible-travel
+status: stable
+logsource:
+  product: okta
+  service: system
+detection:
+  logins:
+    activity_name: 'user.session.start'
+    status: 'SUCCESS'
+  condition: logins | speed_kmh(lat, lon, min_km=100) by principal > 900
+level: high
+tags:
+  - attack.initial_access
+  - attack.t1078
+entity:
+  type: user
+  by: principal
+description: >
+  docs/04: "Impossible travel (haversine / Δt > 900 km/h)" (T1078) — the great-circle distance
+  between a principal's two most recent successful sign-ons, divided by the elapsed time, exceeds
+  the fastest a person can plausibly travel (900 km/h is comfortably above commercial-airline
+  cruise speed). `speed_kmh(lat, lon, min_km=100) by principal` is a named aggregation primitive
+  (`app.detection.sigma.grammar`/`compiler`): for consecutive `logins` rows sharing the same
+  `principal` (ordered by time), it computes the haversine distance between
+  `src_endpoint.location.coordinates` (`lat`/`lon`, docs/03's Okta `geographicalContext.
+  geolocation` mapping) and flags the pair when implied speed clears the threshold. `explanation.
+  match` carries `distance_km`/`elapsed_h`/`speed_kmh` for the UI, computed the same way
+  `datagen/realism.py`'s own `haversine_km` is (independently — this evaluator does not import
+  `datagen`).
+
+  **`min_km=100`, added after running against real generated traffic.**
+  `tests/test_rules_scenarios.py::test_scenario_4` surfaced the false-positive mode every
+  impossible-travel detector has to guard against: two genuine, seconds-apart logins whose
+  geolocation differs only by GPS/IP-geolocation jitter (tens of km) divide that small distance by
+  a near-zero elapsed time and produce an inflated "speed" from noise alone — on the benign
+  background of a single scenario file, several such pairs cleared 900 km/h at 7-45 km of actual
+  separation, next to the real injected attack's 11,096 km. Requiring the pair's distance to also
+  clear 100 km before its speed is even evaluated is standard practice (commercial
+  impossible-travel rules pair a speed threshold with a distance floor for exactly this reason)
+  and cleanly separates the two populations with wide margin on both sides.

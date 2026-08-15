@@ -1,0 +1,28 @@
+title: Threat name present in event
+id: threat-name-present
+status: stable
+logsource:
+  product: zscaler
+  service: web
+detection:
+  named_threat:
+    threat_name|contains: ''
+  condition: named_threat
+level: critical
+tags:
+  - attack.command_and_control
+  - attack.t1071
+entity:
+  type: domain
+  by: domain
+description: >
+  ZScaler's Advanced Threat Protection engine names a specific signature
+  (`threatname`/`threatcategory`, e.g. "Backdoor.Generic.C2" / "Botnet" —
+  `datagen/scenarios/s01_c2_beaconing.py`'s `_C2_THREAT`) when it recognizes the traffic, which is
+  a stronger, more specific claim than the coarse URL-category rule above: a category is a
+  destination-reputation guess, a named threat is a signature match against the transaction
+  itself. `threat_name|contains: ''` is a deliberately trivial "matches any non-empty string"
+  filter — every string contains the empty string — which is this evaluator's idiom for "the
+  field is present and non-null" (`ocsf.malware[0].name`, populated by
+  `app/parsers/zscaler.py` only when `threatname` is set), since there is no bare `|exists`
+  modifier in this evaluator's small modifier set (`app.detection.sigma.compiler`).

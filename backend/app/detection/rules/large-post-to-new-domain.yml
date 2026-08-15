@@ -1,0 +1,35 @@
+title: Large POST to uncategorized or newly-registered domain
+id: large-post-to-new-domain
+status: stable
+logsource:
+  product: zscaler
+  service: web
+detection:
+  large_upload:
+    http_method: 'POST'
+    bytes_out|gte: 10000000
+  uncategorized_or_nrd:
+    url_category:
+      - 'Miscellaneous or Unknown'
+      - 'Newly Registered and Revived Domains'
+  enriched_nrd:
+    is_newly_registered_domain: true
+  condition: large_upload and (uncategorized_or_nrd or enriched_nrd)
+level: high
+tags:
+  - attack.exfiltration
+  - attack.t1567
+entity:
+  type: user
+  by: principal
+description: >
+  docs/04: "Large POST (>10MB) to uncategorized or newly-registered domain" (T1567) — a 10
+  megabyte-plus upload is unremarkable to an established SaaS destination the org uses every day;
+  the same upload to a domain the proxy cannot categorize, or one that is newly registered
+  (`datagen/scenarios/s02_data_exfiltration.py`'s whole premise), has nowhere near the same
+  innocent explanation. `uncategorized_or_nrd` reads the ZScaler-native category string
+  (`url_category`, matching the emitter's own `NAMED_CATEGORIES["uncategorized"]`/
+  `["newly_registered"]` labels); `enriched_nrd` is the independent M5 enrichment verdict
+  (`enrichment.domain.newly_registered`, age < 30 days per
+  `app/enrichment/domain_enrichment.py`) — OR'd so the rule still fires on a domain the category
+  engine has not caught up with but M5's own age snapshot has.

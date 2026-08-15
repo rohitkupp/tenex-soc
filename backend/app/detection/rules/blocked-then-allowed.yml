@@ -1,0 +1,30 @@
+title: Blocked then allowed to same host within 5m
+id: blocked-then-allowed
+status: stable
+logsource:
+  product: zscaler
+  service: web
+detection:
+  blocked:
+    disposition: 'blocked'
+  allowed:
+    disposition: 'allowed'
+  timeframe: 5m
+  condition: blocked | count() by domain, src_ip >= 1 and allowed
+level: high
+tags:
+  - attack.defense_evasion
+  - attack.t1090
+entity:
+  type: src_ip
+  by: src_ip
+description: >
+  A policy block followed, within minutes, by the *same* source reaching the *same* host — grouped
+  by `(domain, src_ip)`, the pair that has to match for this to be one continuing attempt rather
+  than two unrelated transactions — is what a retry through a different technique (proxy chaining,
+  DNS-over-HTTPS, a slightly different request that slips past a signature) looks like from the
+  log alone (docs/04 "Blocked then allowed to same host within 5m", T1090). This is the
+  `count() by <fields> >= N and <anchor>` shape docs/04's own worked example uses (there for MFA
+  fatigue): `blocked | count() by domain, src_ip >= 1` asks "did a block happen for this
+  (domain, src_ip) pair in the preceding 5 minutes", anchored on every `allowed` event to that same
+  pair.
