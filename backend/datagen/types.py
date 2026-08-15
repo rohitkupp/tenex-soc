@@ -31,6 +31,7 @@ from .rng import SeededRandom
 
 __all__ = [
     "DETECTOR_KEYS",
+    "SIGNAL_STL_RESIDUAL",
     "BenignContext",
     "Disposition",
     "EntityRef",
@@ -77,6 +78,13 @@ SIGNAL_BURST = "signal.burst"
 SIGNAL_RARITY = "signal.rarity"
 SIGNAL_NEWLY_REGISTERED = "signal.newly_registered_domain"
 SIGNAL_OUT_IN_RATIO = "signal.out_in_ratio"
+# docs/04 L2 "Seasonal residuals (STL)": STL decomposition of an entity's hourly request-volume
+# series into trend/seasonal/residual, flagging a robust-z outlier on the residual. Added for
+# `datagen/scenarios/s06_seasonal_deviation.py` (docs/11 row 6) and its docs/12 pre-registered
+# prediction #3 ("STL residuals detect it; none of the five L3 feature-vector models do") — there
+# was previously no detector key for this L2 signal, only `signal.burst`'s flat 5-minute-bucket
+# robust-z, which is exactly the thing scenario 6 is built to be invisible to.
+SIGNAL_STL_RESIDUAL = "signal.stl_residual"
 
 ML_AUTOENCODER = "ml.autoencoder"
 ML_IFOREST = "ml.iforest"

@@ -1,4 +1,4 @@
-"""Scenario 10 — benign-but-weird, the false-positive control (docs/11 row 10).
+"""Scenario 8 — benign-but-weird, the false-positive control (docs/11 row 8).
 
 Every other scenario in this package answers "can the pipeline find the attack". This one
 answers the question docs/11 says matters just as much: "does the pipeline leave sanctioned,

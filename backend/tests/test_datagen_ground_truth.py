@@ -10,7 +10,7 @@ code path; grepping the physical file for a fact the scenario asserts about itse
 this an independent check.
 
 `test_low_and_slow_exfil_notes_overclaim_working_hours` is expected to fail at the time this file
-was written. It documents a real defect: scenario 8's ground-truth notes assert "every upload
+was written. It documents a real defect: scenario 4's ground-truth notes assert "every upload
 inside the victim's own working hours" and "no single feature out of range", but
 `RealismModels.diurnal.sample_timestamps` draws from a curve with a non-zero night floor
 (`DiurnalCurve.night_floor = 0.03`), so some fraction of a real run's timestamps genuinely fall in
@@ -32,12 +32,25 @@ from datagen import corpus
 from datagen.scenarios import scenario_keys
 from datagen.types import DETECTOR_KEYS
 
-# Small org so the whole 10-scenario sweep runs in well under a second per scenario; none of the
-# checks below depend on organization size.
-_ORG_SPEC = corpus.OrgSpec(n_users=30, n_departments=4, offices=("US-CA", "US-NY", "IE-DU"))
+# Small-ish org so the whole scenario sweep still runs in well under a second per scenario for
+# most scenarios; none of the *structural* checks below depend on organization size as such.
+# Sized larger than the original 30-user/4-department/4000-event config specifically for
+# scenarios 5 and 6 (`s05_peer_group_deviation.py`, `s06_seasonal_deviation.py`): both resample
+# against population statistics (org-wide/cohort feature populations for 5, the victim's own
+# daily-history and hourly-residual populations for 6) that are too noisy to satisfy their
+# acceptance gates reliably below roughly this scale (verified empirically -- the original
+# 30-user config left scenario 5's home-department cohort as thin as 3 Marketing members, and
+# scenario 6's daily-volume/off-hours-share baselines need several pre-campaign days of a single
+# human's own history, which a very small event budget does not supply). 120 users / 6
+# departments / 18000 events reproducibly clears both scenarios' gates at `seed=7` (this file's
+# default) while still finishing in well under a second per scenario.
+_ORG_SPEC = corpus.OrgSpec(n_users=120, n_departments=6, offices=("US-CA", "US-NY", "IE-DU"))
+_DEFAULT_TOTAL_EVENTS = 18_000
 
 
-def _write(key: str, out: Path, *, seed: int = 7, total_events: int = 4000) -> list[Path]:
+def _write(
+    key: str, out: Path, *, seed: int = 7, total_events: int = _DEFAULT_TOTAL_EVENTS
+) -> list[Path]:
     return corpus.run_scenario(key, seed, out, total_events=total_events, org_spec=_ORG_SPEC)
 
 
@@ -121,7 +134,7 @@ def test_c2_beaconing_line_numbers_match_the_domain_the_scenario_reports(tmp_pat
 
 
 def test_benign_but_weird_is_the_false_positive_control(tmp_path: Path) -> None:
-    """docs/11 scenario 10: must not fire. Empty labels, empty detectors, disposition
+    """docs/11 scenario 8: must not fire. Empty labels, empty detectors, disposition
     false_positive, and explicitly not required to correlate into one incident."""
     written = _write("benign_but_weird", tmp_path)
     labels_paths = [p for p in written if p.suffix == ".json"]
@@ -138,7 +151,7 @@ def test_benign_but_weird_is_the_false_positive_control(tmp_path: Path) -> None:
 def test_prompt_injection_canary_and_control_differ_only_in_the_three_carrier_fields(
     tmp_path: Path,
 ) -> None:
-    """docs/11 scenario 9's entire premise: the injected payload changes nothing except the three
+    """docs/11 scenario 7's entire premise: the injected payload changes nothing except the three
     attacker-controlled string fields. If line numbers, hosts, or any other column drifted between
     `canary=True` and `canary=False`, the eval's injection_resistance gate (docs/12) would be
     comparing two different attacks rather than one attack with/without a payload."""
@@ -147,7 +160,7 @@ def test_prompt_injection_canary_and_control_differ_only_in_the_three_carrier_fi
         "prompt_injection_canary",
         7,
         tmp_path / "control",
-        total_events=4000,
+        total_events=_DEFAULT_TOTAL_EVENTS,
         org_spec=_ORG_SPEC,
         knobs={"canary": False},
     )
@@ -174,7 +187,7 @@ def test_prompt_injection_canary_and_control_differ_only_in_the_three_carrier_fi
 
 
 def test_low_and_slow_exfil_notes_overclaim_working_hours(tmp_path: Path) -> None:
-    """Documents a real defect (see module docstring): scenario 8's ground-truth notes assert
+    """Documents a real defect (see module docstring): scenario 4's ground-truth notes assert
     every injected upload lands inside the victim's own working hours. `DiurnalCurve` has a
     non-zero `night_floor`, so `diurnal.sample_timestamps` can and does draw genuinely nocturnal
     timestamps. This test uses the *default* 250-user org and seed 7 (matching the exact
@@ -208,7 +221,7 @@ def test_low_and_slow_exfil_notes_overclaim_working_hours(tmp_path: Path) -> Non
     night_floor_events = [w for w in weights if w <= 0.05]
 
     assert not night_floor_events, (
-        "scenario 8's notes claim 'every upload inside the victim's own working hours', but "
+        "scenario 4's notes claim 'every upload inside the victim's own working hours', but "
         f"{len(night_floor_events)}/{len(weights)} injected uploads landed at diurnal weight "
         f"<= 0.05 (essentially the night floor): {night_floor_events}. The notes field overclaims "
         "a guarantee the diurnal sampler does not enforce."

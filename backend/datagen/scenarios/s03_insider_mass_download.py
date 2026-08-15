@@ -1,4 +1,4 @@
-"""Scenario 7 — insider mass download (docs/11 row 7, T1530).
+"""Scenario 3 — insider mass download (docs/11 row 3, T1530).
 
 A trusted employee empties the corporate document repository over one evening. Nothing about
 the destination is suspicious: it is the org's own sanctioned storage SaaS, a host the victim

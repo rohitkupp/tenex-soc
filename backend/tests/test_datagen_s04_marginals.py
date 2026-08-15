@@ -1,21 +1,22 @@
-"""Regression tests for scenario 8's docs/11 row 8 acceptance gate.
+"""Regression tests for scenario 4's docs/11 row 4 acceptance gate.
 
-A companion regression test for scenario 5's smaller n_events-margin fix (docs/11 row 5,
-`account_takeover_chain`) used to live here too; that scenario was Okta-only and was deleted along
-with that source — this project is narrowed to ZScaler web proxy logs only.
+A companion regression test for the pre-rewrite scenario 5 (`account_takeover_chain`, an
+Okta-only identity scenario under the numbering docs/11 used before its rewrite -- not to be
+confused with the *current* scenario 5, `peer_group_deviation`, in `s05_peer_group_deviation.py`)
+used to live here too; that scenario was Okta-only and was deleted along with that source — this project is narrowed to ZScaler web proxy logs only.
 
-Scenario 8 exists specifically to test whether `ml.autoencoder` earns its slot (docs/11): if any
+Scenario 4 exists specifically to test whether `ml.autoencoder` earns its slot (docs/11): if any
 single L3 feature's marginal robust z-score can catch the campaign, the benchmark it feeds is
-measuring nothing. `datagen/scenarios/s08_low_and_slow_exfil.py` no longer treats that property as
+measuring nothing. `datagen/scenarios/s04_low_and_slow_exfil.py` no longer treats that property as
 something to hope emerges from tuned shaping constants — `inject` checks it as a postcondition of
 generation (its own `_check_acceptance`) and resamples a fresh victim/placement until a candidate
 provably satisfies it, raising `LowAndSlowAcceptanceError` rather than emitting an invalid
 scenario if it cannot. This file is the independent second opinion on that guarantee: it re-derives
 each feature straight from the *emitted* TSV and `malicious_line_numbers` — not from anything the
 scenario computed internally, and not by calling the scenario's own gate — the same way the audit
-that originally found scenario 8 leaking on four of six marginal features did. A bug in the
+that originally found scenario 4 leaking on four of six marginal features did. A bug in the
 generator's in-memory gate (wrong bucketing, a stale feature) would not be self-confirming here,
-because this file never imports `s08_low_and_slow_exfil`'s own aggregation logic.
+because this file never imports `s04_low_and_slow_exfil`'s own aggregation logic.
 
 What *is* shared: `app.detection.features.is_off_hours` and `.robust_z`, the two low-level
 formulas both the generator's gate and this audit score against. Before that module existed,
@@ -46,13 +47,13 @@ from datagen.types import TimeWindow
 _TOTAL_EVENTS = 50_000
 _ORG_SPEC = corpus.OrgSpec()
 
-# docs/04 L2 volumetric-burst threshold, reused here because scenario 8's own design goal (module
+# docs/04 L2 volumetric-burst threshold, reused here because scenario 4's own design goal (module
 # docstring, "no single L2 signal or any single L3 feature's marginal z-score") is stated in
-# exactly these terms. This is also the exact bar `s08_low_and_slow_exfil._check_acceptance`
+# exactly these terms. This is also the exact bar `s04_low_and_slow_exfil._check_acceptance`
 # builds candidates against, so a seed passing generation should always pass this audit too.
 _Z_THRESHOLD = 3.5
 
-# The canonical docs/04 L3 feature set scenario 8's acceptance gate is built against
+# The canonical docs/04 L3 feature set scenario 4's acceptance gate is built against
 # (`app.detection.features.ENTITY_WINDOW_FEATURES`) — imported, not restated, so this audit and
 # the generator's own gate can never silently drift onto different feature lists.
 _S08_FEATURES = ENTITY_WINDOW_FEATURES
@@ -69,7 +70,7 @@ _LARGE_UPLOAD_BYTES = 1_000_000
 # gate exists to end) and spot-checked clean; kept at a representative handful rather than the
 # full widened sweep to keep this file's own runtime modest — the gate, not this seed list, is
 # what carries the correctness guarantee now.
-_S08_SEEDS = (3, 17, 33, 55, 77, 99)
+_S04_SEEDS = (3, 17, 33, 55, 77, 99)
 
 
 def _median_mad(values: list[float]) -> tuple[float, float]:
@@ -78,7 +79,7 @@ def _median_mad(values: list[float]) -> tuple[float, float]:
     return median, mad
 
 
-# ---------------------------------------------------------------------------- scenario 8 (zscaler)
+# ---------------------------------------------------------------------------- scenario 4 (zscaler)
 
 
 def _generate_s08(seed: int, tmp_path: Path) -> Path:
@@ -88,7 +89,7 @@ def _generate_s08(seed: int, tmp_path: Path) -> Path:
     return next(p for p in written if p.suffix == ".log")
 
 
-def _s08_hourly_features(
+def _s04_hourly_features(
     log_path: Path,
 ) -> tuple[str, dict[datetime, dict[str, float]], dict[datetime, dict[str, float]]]:
     """Per-`(principal, hour)` feature vectors for the scenario's victim, split into the benign
@@ -153,14 +154,14 @@ def _s08_hourly_features(
 # ---------------------------------------------------------------------------- check 1 + 2
 
 
-def test_s08_no_single_feature_fires_on_attack_hours(tmp_path: Path) -> None:
-    """docs/11 row 8's whole premise: no single L2 signal or L3 feature's marginal robust z-score
+def test_s04_no_single_feature_fires_on_attack_hours(tmp_path: Path) -> None:
+    """docs/11 row 4's whole premise: no single L2 signal or L3 feature's marginal robust z-score
     (docs/04, `|z| > 3.5`) may separate an attack hour from the victim's own benign history, for
     any of the six features an earlier repair pass left leaking on four of.
     """
-    for seed in _S08_SEEDS:
-        log_path = _generate_s08(seed, tmp_path / f"s08-{seed}")
-        victim, benign, attack = _s08_hourly_features(log_path)
+    for seed in _S04_SEEDS:
+        log_path = _generate_s08(seed, tmp_path / f"s04-{seed}")
+        victim, benign, attack = _s04_hourly_features(log_path)
         assert benign, f"seed={seed} victim={victim}: no benign hours to compare against"
         assert attack, f"seed={seed} victim={victim}: no attack hours found"
 
@@ -175,16 +176,16 @@ def test_s08_no_single_feature_fires_on_attack_hours(tmp_path: Path) -> None:
         )
 
 
-def test_s08_victim_history_has_real_variance(tmp_path: Path) -> None:
+def test_s04_victim_history_has_real_variance(tmp_path: Path) -> None:
     """Guard against the MAD == 0 artifact (module docstring, "fifth property"): the previous
     version of this scenario passed check 1 vacuously for post_ratio and off_hours_ratio because
     the victim's own benign history had zero variance on both, so a naive detector's
     divide-by-epsilon convention happened to score every attack hour as z == 0. A victim whose
     real POST/evening-activity habit has been established should show genuine spread on both.
     """
-    for seed in _S08_SEEDS:
-        log_path = _generate_s08(seed, tmp_path / f"s08-var-{seed}")
-        victim, benign, _attack = _s08_hourly_features(log_path)
+    for seed in _S04_SEEDS:
+        log_path = _generate_s08(seed, tmp_path / f"s04-var-{seed}")
+        victim, benign, _attack = _s04_hourly_features(log_path)
 
         for feature in ("post_ratio", "off_hours_ratio"):
             values = [f[feature] for f in benign.values()]
@@ -240,15 +241,15 @@ def _mahalanobis(benign_matrix: np.ndarray, query_matrix: np.ndarray) -> np.ndar
     return np.sqrt(np.einsum("ij,jk,ik->i", query_std, inv_cov, query_std))
 
 
-def test_s08_joint_distribution_still_separates(tmp_path: Path) -> None:
+def test_s04_joint_distribution_still_separates(tmp_path: Path) -> None:
     """The other half of the measurement: a scenario invisible to every marginal *and* to the
     joint distribution would be undetectable by anything, including the autoencoder this
     scenario exists to benchmark. At least 70% of attack hours must sit above the victim's own
     benign p95 Mahalanobis distance.
     """
-    for seed in _S08_SEEDS:
-        log_path = _generate_s08(seed, tmp_path / f"s08-maha-{seed}")
-        victim, benign, attack = _s08_hourly_features(log_path)
+    for seed in _S04_SEEDS:
+        log_path = _generate_s08(seed, tmp_path / f"s04-maha-{seed}")
+        victim, benign, attack = _s04_hourly_features(log_path)
 
         benign_matrix = np.array(
             [[f[feat] for feat in _S08_FEATURES] for f in benign.values()], dtype=np.float64
@@ -279,7 +280,7 @@ def test_s08_joint_distribution_still_separates(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------- sanity: window sizing
 
 
-def test_s08_window_default_matches_scenario_assumptions() -> None:
+def test_s04_window_default_matches_scenario_assumptions() -> None:
     """`TimeWindow.of_days` default span backs every duration assumption `s08`'s shaping makes
     (e.g. `mixed_capacity`'s "~2 boundary slots per calendar day"); a docs/11 change to the
     default window would silently invalidate this file's own tuning."""

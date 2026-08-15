@@ -1,4 +1,4 @@
-"""Scenario 8 — low-and-slow exfiltration (docs/11 row 8, T1567).
+"""Scenario 4 — low-and-slow exfiltration (docs/11 row 4, T1567).
 
 This is the scenario that decides whether the autoencoder ships as primary. Every other proxy
 scenario in this package earns its detection surface honestly: a rare/DGA domain, a volumetric
@@ -21,7 +21,7 @@ victim a weighted random draw might select.
 for a candidate victim, it independently re-derives that victim's own entity-window feature
 vectors (`_check_acceptance`, using the same canonical `is_off_hours`/`robust_z` from
 `app.detection.features` that the regression test audits with) and checks the scenario's own
-acceptance criteria — docs/11 row 8's three properties, verbatim — before ever committing to a
+acceptance criteria — docs/11 row 4's three properties, verbatim — before ever committing to a
 result:
 
   (a) no single-feature marginal robust z (docs/04, `0.6745*(x-median)/MAD`) among the docs/04 L3
@@ -144,14 +144,14 @@ __all__ = ["LowAndSlowAcceptanceError", "LowAndSlowExfilScenario"]
 
 
 class LowAndSlowAcceptanceError(RuntimeError):
-    """No candidate campaign satisfied docs/11 row 8's acceptance gate within `max_attempts`
+    """No candidate campaign satisfied docs/11 row 4's acceptance gate within `max_attempts`
     resample rounds for this scenario instance's seed.
 
-    Scenario 8 exists specifically to test whether `ml.autoencoder` earns its slot (docs/11): a
+    Scenario 4 exists specifically to test whether `ml.autoencoder` earns its slot (docs/11): a
     campaign detectable by a single marginal feature, or invisible to the joint distribution too,
     would make that benchmark measure nothing. A loud failure here — naming exactly which
     criterion failed, and on which attempt — is the correct outcome; silently emitting an invalid
-    scenario 8 would corrupt every eval number downstream of it instead.
+    scenario 4 would corrupt every eval number downstream of it instead.
     """
 
 
@@ -196,7 +196,7 @@ _MIN_SAFE_RATIO: Final[float] = 0.05
 # below was chosen empirically against real generated output (see the module docstring's "fifth
 # property"), not derived from a formula — median/MAD are order-statistics, not smooth functions,
 # so "how much shaping is enough" has to be checked against actual data, which
-# `tests/test_datagen_s08_marginals.py` does on every run.
+# `tests/test_datagen_s04_marginals.py` does on every run.
 #
 # Fraction of the victim's *existing* active hours that get one extra same-hour touch. Not 1.0:
 # a handful of genuinely POST-free hours is more realistic than a suspiciously uniform habit, and
@@ -247,10 +247,10 @@ _VICTIM_ACTIVITY_MAX: Final[float] = 2.2
 
 # ---------------------------------------------------------------------------- acceptance gate
 #
-# docs/11 row 8's three properties, enforced as a postcondition of `inject` rather than hoped for
+# docs/11 row 4's three properties, enforced as a postcondition of `inject` rather than hoped for
 # from the shaping constants above. `_check_acceptance` re-derives each candidate's own
 # entity-window feature vectors independently of the shaping logic that produced it (the same way
-# `tests/test_datagen_s08_marginals.py` audits the accepted result independently of both) and
+# `tests/test_datagen_s04_marginals.py` audits the accepted result independently of both) and
 # rejects, rather than tunes around, whatever it finds.
 
 # docs/04 L2's volumetric-burst threshold, reused verbatim: criterion (a)'s bar for "no single
@@ -366,7 +366,7 @@ class LowAndSlowExfilScenario(Scenario):
         self.max_upload_kb = float(max_upload_kb)
         self.start_fraction = float(start_fraction)
         self.host_app = host_app
-        # Resample-until-accept bound for the docs/11 row 8 acceptance gate (module docstring) --
+        # Resample-until-accept bound for the docs/11 row 4 acceptance gate (module docstring) --
         # a robustness knob, not a difficulty one: it does not change what the campaign looks
         # like, only how hard `inject` is willing to search for a victim/placement it can prove
         # satisfies the gate before giving up and raising `LowAndSlowAcceptanceError`.
@@ -375,7 +375,7 @@ class LowAndSlowExfilScenario(Scenario):
     # ------------------------------------------------------------------ injection
 
     def inject(self, ctx: ScenarioContext) -> GroundTruth:
-        """Resample victim/placement until a candidate satisfies the docs/11 row 8 acceptance
+        """Resample victim/placement until a candidate satisfies the docs/11 row 4 acceptance
         gate (module docstring), or raise `LowAndSlowAcceptanceError` after `max_attempts`.
 
         Every attempt is keyed off `ctx.rng.substream(f"attempt:{attempt}")`, so a given seed
@@ -406,7 +406,7 @@ class LowAndSlowExfilScenario(Scenario):
             del ctx.injected[injected_floor:]
 
         raise LowAndSlowAcceptanceError(
-            f"{ctx.scenario_id}: no candidate campaign satisfied the docs/11 row 8 acceptance "
+            f"{ctx.scenario_id}: no candidate campaign satisfied the docs/11 row 4 acceptance "
             f"gate (rng={ctx.rng!r}) within {self.max_attempts} attempts:\n"
             + "\n".join(f"  - {r}" for r in rejections)
         )
@@ -554,7 +554,7 @@ class LowAndSlowExfilScenario(Scenario):
                 f"(malicious=False) baseline events establish {victim.username} as a regular "
                 f"{host} POST/upload user with real evening activity, so post_ratio and "
                 "off_hours_ratio carry genuine pre-campaign variance; verified against the "
-                "docs/11 row 8 acceptance gate (module docstring)"
+                "docs/11 row 4 acceptance gate (module docstring)"
             ),
         )
         return ground_truth, None
@@ -564,11 +564,11 @@ class LowAndSlowExfilScenario(Scenario):
     def _check_acceptance(
         self, ctx: ScenarioContext, victim: User, injected: Sequence[EventRecord]
     ) -> str | None:
-        """docs/11 row 8's acceptance gate, run as a postcondition of this candidate's generation.
+        """docs/11 row 4's acceptance gate, run as a postcondition of this candidate's generation.
 
         Re-derives the victim's own entity-window feature vectors independently of the shaping
         logic that produced them — the same in-memory `EventRecord`s, but bucketed and scored
-        fresh, the same way `tests/test_datagen_s08_marginals.py` re-derives them from the
+        fresh, the same way `tests/test_datagen_s04_marginals.py` re-derives them from the
         written file to audit the accepted result independently a second time.
 
         Checks, in the order that gives the clearest rejection reason:
@@ -710,7 +710,7 @@ class LowAndSlowExfilScenario(Scenario):
     # ------------------------------------------------------------------ helpers
 
     def _pick_victim(self, ctx: ScenarioContext, rng: SeededRandom) -> User:
-        """A moderately active human — unlike scenario 7, no peer-group model is in play here,
+        """A moderately active human — unlike scenario 3, no peer-group model is in play here,
         but not *any* active human works either. `_VICTIM_ACTIVITY_MIN`/`_MAX` exclude both the
         lightest browsers (whose thin history leaves `_shape_victim_baseline` nothing to work
         with) and the heaviest users (whose sheer natural volume outruns what that method can

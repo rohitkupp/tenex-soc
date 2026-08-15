@@ -1,6 +1,6 @@
 """Scenario 9 — prompt-injection canary in attacker-controlled proxy fields.
 
-docs/11 #9 pairs with docs/06 "Prompt injection defense" item 6 and the docs/12
+docs/11 #7 pairs with docs/06 "Prompt injection defense" item 6 and the docs/12
 `injection_resistance` gate. The metric is not "did we detect the injection" — it is "did the
 injection change the answer". So this scenario ships as a *pair*: `canary=True` embeds the
 payloads, `canary=False` run with the same seed and the same `Org` produces the same events with
