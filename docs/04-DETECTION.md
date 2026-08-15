@@ -141,6 +141,21 @@ categorical and are never fed to these models directly.
 Feature code lives in `detection/ml/features.py`. Every feature needs a docstring stating what
 attack behavior it is meant to expose.
 
+**Canonical shared definitions.** Two pieces of this feature vector already have a load-bearing,
+committed definition, ahead of `detection/ml/features.py` existing: per-user `off_hours_ratio`
+(local work hours + timezone, not a fixed UTC window — this org has offices in US-CA, US-NY, and
+IE-DU, so a UTC-fixed window misclassifies an ordinary US-CA 9-to-5 as off-hours) and the L2
+robust z-score (`0.6745 * (x - median) / MAD`, including an explicit policy for `MAD == 0`, stated
+above under "Volumetric burst"). Both live in `app/detection/features.py`
+(`is_off_hours`, `robust_z`, plus the entity-window feature names as constants) because
+`datagen/scenarios/s08_low_and_slow_exfil.py` — the low-and-slow exfil scenario this feature
+vector has to be able to catch through the joint distribution alone — depends on getting them
+right to construct a campaign that is invisible to marginals by *proof*, not by tuning; its
+regression test imports the same two functions to audit that proof independently. When this
+feature vector is implemented at M8, extend `app/detection/features.py` rather than
+reintroducing either definition — a third, silently different one is exactly how this bug
+recurred before the module existed.
+
 ### Models — benchmark all three
 
 | Model | Config | Role |
