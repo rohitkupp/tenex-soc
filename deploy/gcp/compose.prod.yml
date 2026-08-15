@@ -33,6 +33,15 @@ x-worker-env: &worker-env
   # inside a Python traceback one layer further in.
   TIER2_INDICATOR_SALT: ${TIER2_INDICATOR_SALT:?}
   TIER2_READONLY_DB_PASSWORD: ${TIER2_READONLY_DB_PASSWORD:?}
+  # Email verification. `:-` and not `:?` — unlike the secrets above, these are genuinely
+  # optional: with them unset `Settings.email_verification_enabled` is False and signup falls
+  # back to stamping accounts verified on creation (app/api/auth.py). That fallback is what
+  # keeps `make up` working with no Supabase project, so a missing value here must degrade
+  # rather than refuse to boot. It does log a warning on every signup, which is the intended
+  # way for an operator to notice a production deploy that lost these.
+  SUPABASE_URL: ${SUPABASE_URL:-}
+  SUPABASE_SERVICE_ROLE_KEY: ${SUPABASE_SERVICE_ROLE_KEY:-}
+  FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:3000}
   ENVIRONMENT: production
   CORS_ORIGINS: ${CORS_ORIGINS:?}
   DEMO_MODE: ${DEMO_MODE:-false}
