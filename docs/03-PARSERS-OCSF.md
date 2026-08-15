@@ -115,6 +115,15 @@ Event types that matter for detection — make sure these survive normalization 
 | `requestParameters` | `api.request.data` | — |
 | `responseElements` | `api.response.data` | — |
 
+**Resolved contradiction — `errorCode` -> `status_code`.** The table above maps CloudTrail's
+`errorCode` to `status_code`, but `errorCode` is a string (`"AccessDenied"`) while
+`docs/02`'s `events.status_code` is `INTEGER`. A faithful mapping would fail the COPY on any
+errored call. Resolution: OCSF fidelity wins in the `ocsf` JSONB blob, where
+`APIActivity.status_code` stays a string; the `status_code` *hot column* is deliberately `NULL`
+for CloudTrail. Nothing is lost — the value is queryable via the JSONB path — but detectors that
+read the hot column will not see CloudTrail error codes, which is why `docs/04` scopes its
+status-code rules to proxy and identity sources.
+
 CloudTrail exists mainly to prove the parser interface generalizes. Keep it thin — do not build
 CloudTrail-specific detectors beyond what the shared rules cover.
 

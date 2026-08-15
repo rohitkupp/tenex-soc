@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from slowapi.errors import RateLimitExceeded
 
-from app.api import analyses, auth, health, uploads
+from app.api import analyses, auth, events, health, uploads
 from app.core.config import get_settings
 from app.core.csrf import CSRFMiddleware
 from app.core.errors import ApiError, api_error_handler
@@ -83,3 +83,4 @@ app.include_router(health.router, prefix="/api", tags=["ops"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
 app.include_router(uploads.router, prefix="/api", tags=["uploads"])
 app.include_router(analyses.router, prefix="/api", tags=["analyses"])
+app.include_router(events.router, prefix="/api", tags=["events"])

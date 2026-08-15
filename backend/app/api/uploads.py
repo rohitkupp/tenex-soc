@@ -22,9 +22,9 @@ from app.core.rate_limit import limiter
 from app.core.security import CurrentUser, require_user
 from app.models.analysis import Analysis
 from app.models.upload import Upload
+from app.parsers.registry import detect_source_types
 from app.schemas.uploads import UploadCreateResponse
 from app.storage.client import ensure_bucket
-from app.storage.source_sniffer import detect_source_types
 from app.storage.streaming_upload import new_storage_key, stream_upload_to_storage
 
 router = APIRouter()
