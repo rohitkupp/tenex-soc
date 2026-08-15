@@ -1,0 +1,53 @@
+# Fly config for the API. Deploy from backend/ so the Docker build context is correct:
+#   cd backend && flyctl deploy --config ../deploy/fly/api.toml
+#
+# Uploads go browser -> this service directly, never through Vercel, so the ~4.5 MB
+# serverless body limit never applies (docs/01). That is why the API is a real
+# long-lived container rather than a serverless function.
+
+app = "tenex-soc-api"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  ENVIRONMENT = "production"
+  LOG_LEVEL = "info"
+  S3_BUCKET = "tenex-soc-uploads"
+  MAX_TRIAGE_INCIDENTS = "15"
+  AGENT_MAX_TOOL_CALLS = "8"
+  AGENT_TIMEOUT_SECONDS = "120"
+  # Flipped to "false" once the pipeline is deployed at M4. Until then the deployed
+  # app serves precomputed results so the link is always explorable.
+  DEMO_MODE = "true"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  # Fly machines resume in 1-2s, well inside the 3s bar docs/01 sets. Render's free
+  # tier was rejected precisely because its ~50s cold start would have the reviewer
+  # staring at a blank page.
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 40
+    hard_limit = 80
+
+# A 200 MB upload takes a while on a slow connection; the default 60s would kill it.
+[http_service.http_options]
+  idle_timeout = 900
+
+[[http_service.checks]]
+  grace_period = "20s"
+  interval = "30s"
+  method = "GET"
+  timeout = "10s"
+  path = "/api/health"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2gb"

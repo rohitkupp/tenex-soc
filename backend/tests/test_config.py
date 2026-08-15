@@ -2,9 +2,16 @@
 
 A security product that silently runs with a forgeable JWT secret is worse than
 one that refuses to start, so this behaviour is tested rather than assumed.
+
+These tests assert Settings' *default* behaviour, so they must not read the
+developer's `.env`. Whether a contributor happens to have an ANTHROPIC_API_KEY
+configured locally is not allowed to change whether the suite passes — a test
+that is green on one machine and red on another tells you nothing.
 """
 
 from __future__ import annotations
+
+from typing import Any
 
 import pytest
 from pydantic import SecretStr, ValidationError
@@ -18,9 +25,14 @@ REAL = {
 }
 
 
+def make_settings(**overrides: Any) -> Settings:
+    """Construct Settings in isolation from any on-disk `.env`."""
+    return Settings(_env_file=None, **overrides)
+
+
 def test_local_tolerates_dev_defaults() -> None:
-    settings = Settings(environment="local")
-    assert settings.jwt_secret.get_secret_value() == DEV_JWT_SECRET
+    cfg = make_settings(environment="local")
+    assert cfg.jwt_secret.get_secret_value() == DEV_JWT_SECRET
 
 
 @pytest.mark.parametrize(
@@ -34,33 +46,44 @@ def test_local_tolerates_dev_defaults() -> None:
 def test_production_rejects_each_dev_default(field: str, sentinel: str) -> None:
     kwargs = {**REAL, field: SecretStr(sentinel)}
     with pytest.raises(ValidationError, match=field):
-        Settings(environment="production", **kwargs)
+        make_settings(environment="production", **kwargs)
 
 
 def test_production_boots_once_every_secret_is_real() -> None:
-    settings = Settings(environment="production", **REAL)
-    assert settings.environment == "production"
+    cfg = make_settings(environment="production", **REAL)
+    assert cfg.environment == "production"
 
 
 def test_secrets_never_render_in_repr() -> None:
     """SecretStr is what stops a secret reaching a log line or a traceback."""
-    settings = Settings(environment="local")
-    assert DEV_JWT_SECRET not in repr(settings)
-    assert DEV_PSEUDONYM_SALT not in str(settings.model_dump())
+    cfg = make_settings(environment="local")
+    assert DEV_JWT_SECRET not in repr(cfg)
+    assert DEV_PSEUDONYM_SALT not in str(cfg.model_dump())
 
 
 def test_llm_disabled_without_a_key() -> None:
-    assert Settings(environment="local").llm_enabled is False
-    assert Settings(environment="local", anthropic_api_key=SecretStr("sk-x")).llm_enabled is True
+    assert make_settings(environment="local").llm_enabled is False
+    assert (
+        make_settings(environment="local", anthropic_api_key=SecretStr("sk-x")).llm_enabled is True
+    )
 
 
 def test_demo_mode_disables_the_llm_even_with_a_key() -> None:
     """DEMO_MODE must never spend API budget — the deployed demo relies on this."""
-    settings = Settings(environment="local", anthropic_api_key=SecretStr("sk-x"), demo_mode=True)
-    assert settings.llm_enabled is False
+    cfg = make_settings(environment="local", anthropic_api_key=SecretStr("sk-x"), demo_mode=True)
+    assert cfg.llm_enabled is False
 
 
 def test_cors_origins_accepts_a_comma_delimited_string() -> None:
     """docker-compose can only pass one env var, so the string form has to work."""
-    settings = Settings(environment="local", cors_origins="http://a.test, http://b.test")
-    assert settings.cors_origins == ["http://a.test", "http://b.test"]
+    cfg = make_settings(environment="local", cors_origins="http://a.test, http://b.test")
+    assert cfg.cors_origins == ["http://a.test", "http://b.test"]
+
+
+def test_settings_do_not_leak_the_developers_dotenv() -> None:
+    """Regression guard for the bug this file's docstring describes.
+
+    A real key in backend/.env previously made `llm_enabled` true, turning the
+    suite red for anyone who had configured one.
+    """
+    assert make_settings(environment="local").anthropic_api_key.get_secret_value() == ""

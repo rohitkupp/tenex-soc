@@ -11,10 +11,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi.errors import RateLimitExceeded
 
-from app.api import health
+from app.api import analyses, auth, health, uploads
 from app.core.config import get_settings
+from app.core.errors import ApiError, api_error_handler
 from app.core.logging import configure_logging, get_logger
+from app.core.rate_limit import limiter, rate_limit_exceeded_handler
 
 settings = get_settings()
 configure_logging(settings.log_level)
@@ -54,4 +57,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Wiring required for app.core.rate_limit / app.core.errors to take effect — every
+# `@limiter.limit(...)` decorator in app/api needs `app.state.limiter`, and both error
+# types need a handler that renders docs/09's `{"detail", "code"}` envelope instead of
+# FastAPI's/slowapi's default shape.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+app.add_exception_handler(ApiError, api_error_handler)
+
 app.include_router(health.router, prefix="/api", tags=["ops"])
+app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
+app.include_router(uploads.router, prefix="/api", tags=["uploads"])
+app.include_router(analyses.router, prefix="/api", tags=["analyses"])

@@ -1,0 +1,37 @@
+"""Pydantic v2 schemas for docs/09-API-CONTRACT.md's Uploads & analyses section."""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+from decimal import Decimal
+
+from pydantic import BaseModel, ConfigDict
+
+
+class UploadCreateResponse(BaseModel):
+    upload_id: uuid.UUID
+    detected_sources: list[str]
+    analysis_id: uuid.UUID
+
+
+class AnalysisOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    upload_id: uuid.UUID
+    status: str
+    stage: str | None
+    progress: float
+    pending_parsers: int
+    counters: dict[str, object]
+    parse_failure_rate: float | None
+    llm_cost_usd: Decimal | None
+    error: str | None
+    started_at: datetime | None
+    finished_at: datetime | None
+
+
+class AnalysisListResponse(BaseModel):
+    items: list[AnalysisOut]
+    next_cursor: str | None
