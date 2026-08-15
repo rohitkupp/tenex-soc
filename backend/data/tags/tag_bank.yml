@@ -1,0 +1,198 @@
+# Tag bank (docs/03-PARSERS-OCSF.md "Enrichment": "all -> tag bank match").
+#
+# A small declarative rule set that attaches human-readable category tags to an event,
+# distinct from the structured ip/domain/user_agent enrichment fields: those answer "what
+# is this value" (an ASN, a TLD risk tier, a UA family); tags answer "what kind of thing is
+# this traffic," for fast eyeballing and event-explorer filtering (docs/03 M3) without
+# reading raw JSON.
+#
+# Loaded and evaluated by app/enrichment/tags.py. Each rule is independent and additive --
+# an event can carry any number of tags, including zero.
+#
+# Rule shape:
+#   tag:         short machine-stable identifier
+#   description: human-readable, shown in the UI
+#   match:       one condition object. Supported keys (all optional, ANDed together when
+#                more than one is present on the same rule):
+#                 domain_in:     exact registrable-domain match, case-insensitive
+#                 domain_regex:  regex tested against the registrable domain
+#                 tld_in:        exact TLD match (post registrable-domain extraction)
+#                 ua_contains:   case-insensitive substring match against the raw
+#                                user_agent string
+#                 is_hosting:    bool -- matches the ip enrichment's hosting-provider flag
+#
+# Domain lists below intentionally reuse the *names* of the simulated org's own SaaS catalog
+# (docs/11 `datagen/org.py: DEFAULT_SAAS_APPS`) so tagging has real, non-trivial coverage
+# against the M2 corpus, plus a curated set of real-world domains/keywords for the
+# higher-signal categories (paste sites, URL shorteners, dynamic DNS, file sharing) that
+# commonly appear in actual proxy-log threat-hunting.
+
+rules:
+  - tag: corporate_saas
+    description: Known corporate SaaS application domain used by this simulated org.
+    match:
+      domain_in:
+        - okta.com
+        - google.com
+        - slack.com
+        - salesforce.com
+        - workday.com
+        - github.com
+        - atlassian.net
+        - zoom.us
+        - box.com
+        - amazonaws.com
+        - snowflakecomputing.com
+        - datadoghq.com
+
+  - tag: file_sharing
+    description: Consumer/generic file-sharing or cloud-storage service. Legitimate uses
+      are common; also a frequent data-exfiltration egress point worth surfacing.
+    match:
+      domain_in:
+        - dropbox.com
+        - mega.nz
+        - mediafire.com
+        - wetransfer.com
+        - we.tl
+        - box.com
+        - drive.google.com
+        - sendspace.com
+        - 4shared.com
+
+  - tag: paste_site
+    description: Text/code paste service. A classic low-friction exfil and C2-staging
+      channel -- small, plaintext, and rarely blocked by category filters.
+    match:
+      domain_in:
+        - pastebin.com
+        - paste.ee
+        - ghostbin.com
+        - hastebin.com
+        - dpaste.com
+        - controlc.com
+
+  - tag: url_shortener
+    description: URL-shortening service. Commonly used to obscure a phishing or C2
+      destination behind a trusted-looking short link.
+    match:
+      domain_in:
+        - bit.ly
+        - tinyurl.com
+        - goo.gl
+        - t.co
+        - ow.ly
+        - is.gd
+        - buff.ly
+        - rebrand.ly
+
+  - tag: dynamic_dns
+    description: Free dynamic-DNS provider. Legitimate for home/small-office use, but also
+      a favorite for disposable C2 infrastructure precisely because the resolved IP can
+      change without a new domain registration.
+    match:
+      domain_in:
+        - duckdns.org
+        - no-ip.com
+        - no-ip.org
+        - ddns.net
+        - dyndns.org
+        - dyn.com
+        - freedns.afraid.org
+
+  - tag: anonymizer_or_proxy_keyword
+    description: Registrable domain contains a VPN/proxy/anonymizer keyword. A lexical
+      heuristic, not a verified indicator -- pairs with is_hosting for corroboration.
+    match:
+      domain_regex: "(vpn|proxy|anonym|tor-exit|hidemy|anonvpn)"
+
+  - tag: high_abuse_tld
+    description: Registered under a TLD with a documented, disproportionate share of
+      phishing/malware registrations (see data/enrichment/tld_risk.yml).
+    match:
+      tld_in:
+        - top
+        - xyz
+        - icu
+        - click
+        - live
+        - shop
+        - cfd
+        - sbs
+        - buzz
+        - online
+        - work
+        - loan
+        - men
+        - date
+        - review
+        - faith
+        - science
+        - party
+        - trade
+        - accountant
+        - racing
+        - cricket
+        - win
+        - bid
+        - stream
+        - download
+        - gdn
+        - surf
+        - vip
+        - rest
+        - monster
+        - quest
+        - cyou
+        - wang
+        - tk
+        - ml
+        - ga
+        - cf
+        - gq
+
+  - tag: automation_client
+    description: Non-browser HTTP client / scripting or ops tool. Legitimate on service
+      accounts (docs/11); the L1 Sigma rule "non-browser user agent" is what turns this into
+      a finding when it shows up on a human principal instead.
+    match:
+      ua_contains:
+        - curl
+        - wget
+        - python-requests
+        - go-http-client
+        - okhttp
+        - "java/"
+        - apache-httpclient
+        - axios
+        - powershell
+        - aws-cli
+        - rclone
+        - datadog agent
+        - ansible
+        - terraform
+        - libwww-perl
+        - python-urllib
+        - node-fetch
+        - scrapy
+        - postman
+        - insomnia
+        - headlesschrome
+        - phantomjs
+        - selenium
+        - puppeteer
+        - playwright
+        - sqlmap
+        - nmap
+        - nikto
+        - masscan
+        - gobuster
+        - nuclei
+
+  - tag: hosting_infrastructure
+    description: Destination resolves into a known cloud/hosting-provider network block
+      (data/enrichment/ip_ranges.csv), not a residential or fixed corporate ISP. Anyone can
+      rent compute there, which is exactly why it is also where attacker infrastructure
+      tends to live.
+    match:
+      is_hosting: true

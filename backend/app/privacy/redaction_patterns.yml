@@ -1,0 +1,72 @@
+# Secret & PII redaction patterns (docs/06-PRIVACY-SECURITY.md "Secret & PII redaction",
+# normative) -- one entry per row of that doc's table, in the same order. Loaded by
+# app/privacy/redact.py and applied to free-text fields before storage and before any
+# prompt (docs/06). Redaction is lossy and irreversible by design: unlike pseudonymization
+# there is no reverse map for these values and none is wanted.
+#
+# `name` becomes both the `<REDACTED:name>` replacement token and the counter key used to
+# report "N secrets redacted before LLM submission" (docs/06).
+#
+# Patterns run in the order listed below, each on the *output* of the previous one. That
+# ordering is deliberate, not incidental: bearer/aws_key/jwt/privkey are all narrow and
+# fire first, so by the time the much broader `pan` digit-run scan runs, an
+# already-redacted token's digits can no longer be coincidentally re-matched as a card
+# number. `pan` cannot be expressed as a plain regex substitution -- redact.py special-cases
+# it (`luhn_check: true`) to run the actual Luhn/mod-10 checksum before accepting a match,
+# which is exactly what keeps a random 16-digit run (an order ID, a phone number with a
+# country code, ...) from being redacted just because it happens to be card-number-shaped.
+
+patterns:
+  - name: token
+    description: >-
+      Query parameter named token/key/secret/password/auth/sig/access_token. Matches the
+      whole `name=value` pair (including its leading delimiter, if any) so nothing of the
+      secret's value survives in the output.
+    regex: '(?i)(?:^|[?&\s])(?:token|key|secret|password|auth|sig|access_token)=[^&\s"''<>]*'
+
+  - name: bearer
+    description: >-
+      `Authorization: Bearer <token>` header value. Requires >=15 chars of token-shaped
+      text after "Bearer " -- long enough to never match the plain English word "bearer"
+      followed by ordinary prose (e.g. "the bearer of good news"), which a length-free
+      version of this pattern would.
+    regex: '(?i)\bBearer\s+[A-Za-z0-9\-._~+/=]{15,}'
+
+  - name: aws_key
+    description: AWS access key ID. Bounded on both sides so it cannot match as a substring
+      of a longer, unrelated alphanumeric run.
+    regex: '(?<![A-Za-z0-9])AKIA[0-9A-Z]{16}(?![A-Za-z0-9])'
+
+  - name: jwt
+    description: >-
+      JSON Web Token. docs/06's own regex (`eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.`) only
+      anchors the header+payload segments plus the trailing dot; extended here with an
+      optional third segment so the *whole* token (including the signature) is consumed by
+      the redaction instead of leaving it dangling in plaintext right after the match.
+    regex: 'eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]*'
+
+  - name: privkey
+    description: >-
+      A full PEM private-key block, header through footer. Redacting only the header line
+      (the doc table's pattern name, literally) would leave the actual key material in
+      plaintext right below it, which defeats the point -- so this matches header through
+      footer, non-greedily, across newlines.
+    regex: '-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----'
+
+  - name: pan
+    description: >-
+      Credit-card-shaped digit run (13-19 digits, optionally space/dash separated) that
+      also passes the Luhn checksum. See redact.py's `_redact_pan`. The digit-then-
+      separator grouping is deliberate -- it guarantees the match always starts and ends
+      on a digit, never swallowing a trailing space/dash into the redaction (a naive
+      `(?:\d[ -]?){13,19}` would eat one trailing separator character).
+    regex: '\b\d(?:[ -]?\d){12,18}\b'
+    luhn_check: true
+
+  - name: email
+    description: >-
+      Email address embedded in a URL path segment (immediately preceded by "/").
+      Deliberately narrower than "any email address anywhere" -- a `principal` field's own
+      email is handled by pseudonymization, not this pattern; this one is for an email
+      that leaked into a path/referrer/URL by accident.
+    regex: '(?<=/)[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}'

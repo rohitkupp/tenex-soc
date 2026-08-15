@@ -1,0 +1,138 @@
+# TLD risk tiers (docs/03-PARSERS-OCSF.md "Enrichment": domain -> ... TLD risk tier ...).
+#
+# Grounded in widely published high-abuse-TLD research (Spamhaus "World's Most Abused TLDs",
+# Interisle Consulting's annual phishing-landscape reports): a small set of low-cost,
+# weakly-vetted "new gTLDs" consistently account for a hugely disproportionate share of
+# phishing/malware registrations relative to their size, because near-zero registration
+# cost and minimal vetting make them the path of least resistance for disposable attacker
+# infrastructure. That is a real, durable market structure, not a one-off list someone
+# eyeballed.
+#
+# Deliberately does NOT include country-code TLDs as "high" risk. Several ccTLDs (.ru, .cn,
+# .tk-adjacent examples, etc.) show elevated abuse rates in the same industry reports, but
+# blocklisting an entire country's namespace here would be a political judgment this table
+# is not the place to make, and it would tag enormous volumes of legitimate traffic. The
+# "high" tier below is restricted to generic/new gTLDs chosen (by attackers and by the
+# vendors who resell them cheaply in bulk) specifically *because* they are weakly vetted --
+# a property, not a nationality.
+#
+# tier is one of: high | medium | low. A TLD absent from every list below resolves to
+# "unknown" at lookup time (app/enrichment/domain_enrichment.py) -- deliberately not
+# defaulted to "low", so an unrecognized TLD doesn't silently read as vetted-safe.
+
+high:
+  # New gTLDs with the most consistently documented abuse rates.
+  - top
+  - xyz
+  - icu
+  - click
+  - live
+  - shop
+  - cfd
+  - sbs
+  - buzz
+  - online
+  - work
+  - loan
+  - men
+  - date
+  - review
+  - faith
+  - science
+  - party
+  - trade
+  - accountant
+  - racing
+  - cricket
+  - win
+  - bid
+  - stream
+  - download
+  - gdn
+  - surf
+  - vip
+  - rest
+  - monster
+  - quest
+  - cyou
+  - wang
+  # Legacy free/near-free ccTLDs long documented as spam/phishing havens due to $0
+  # registration (Freenom's now-defunct free-registration program).
+  - tk
+  - ml
+  - ga
+  - cf
+  - gq
+
+medium:
+  # Older, moderate-abuse legacy gTLDs -- meaningfully higher spam/phish rates than .com/
+  # .org historically, but nowhere near the "high" tier's concentration.
+  - biz
+  - info
+  - name
+  - ws
+  - cc
+  - tv
+  - pw
+
+low:
+  # Legacy gTLDs plus large, well-vetted or historically low-abuse namespaces.
+  - com
+  - org
+  - net
+  - edu
+  - gov
+  - mil
+  - int
+  - io
+  - co
+  - dev
+  - app
+  # Major ccTLDs, including this simulated org's own office countries (docs/11) and other
+  # large, mainstream national namespaces -- explicitly classified "low", not omitted, so
+  # ordinary international traffic doesn't fall through to "unknown".
+  - us
+  - uk
+  - ie
+  - de
+  - fr
+  - jp
+  - ca
+  - au
+  - in
+  - sg
+  - nl
+  - se
+  - no
+  - dk
+  - fi
+  - ch
+  - at
+  - be
+  - es
+  - it
+  - pt
+  - gr
+  - pl
+  - cz
+  - ru
+  - cn
+  - kr
+  - hk
+  - tw
+  - br
+  - mx
+  - ar
+  - cl
+  - nz
+  - za
+  - ae
+  - sa
+  - il
+  - tr
+  - id
+  - th
+  - vn
+  - ph
+  - my
+  - pk
