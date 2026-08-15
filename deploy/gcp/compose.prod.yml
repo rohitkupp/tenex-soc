@@ -1,0 +1,105 @@
+# Production topology for the single GCE VM.
+#
+# This is the same service graph as the root docker-compose.yml — deliberately so.
+# The deployed system and `make up` are the same system, which is what lets the
+# README claim the queue topology is real rather than a diagram.
+#
+# Differences from dev, all of them intentional:
+#   - No postgres service. Postgres is Supabase (managed, free, pgvector 0.8.2).
+#   - No source bind-mount and no --reload. The image is the artifact.
+#   - Caddy terminates TLS. SameSite=None cookies are Secure-only, so plain HTTP
+#     would silently break authentication (docs/06 decision record).
+#   - Ports are not published except through Caddy; RabbitMQ and MinIO consoles
+#     stay on the internal network rather than facing the public internet.
+
+name: tenex-soc
+
+x-worker-env: &worker-env
+  DATABASE_URL: ${DATABASE_URL:?set in .env on the VM}
+  RABBITMQ_URL: amqp://tenex:${RABBITMQ_PASSWORD:?}@rabbitmq:5672/
+  REDIS_URL: redis://redis:6379/0
+  S3_ENDPOINT: http://minio:9000
+  S3_ACCESS_KEY: ${MINIO_ROOT_USER:?}
+  S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?}
+  S3_BUCKET: tenex-uploads
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-5}
+  JWT_SECRET: ${JWT_SECRET:?}
+  PSEUDONYM_SALT: ${PSEUDONYM_SALT:?}
+  ENVIRONMENT: production
+  CORS_ORIGINS: ${CORS_ORIGINS:?}
+  DEMO_MODE: ${DEMO_MODE:-false}
+  LOG_LEVEL: info
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?e.g. 34-1-2-3.sslip.io}
+    depends_on: [api]
+
+  api:
+    build:
+      context: ../../backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment: *worker-env
+    expose: ["8000"]
+    depends_on:
+      rabbitmq: {condition: service_healthy}
+      minio: {condition: service_healthy}
+      redis: {condition: service_healthy}
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: tenex
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?}
+    volumes: [rabbitmq_data:/var/lib/rabbitmq]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?}
+    volumes: [minio_data:/data]
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes: [redis_data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # Worker process groups land here at M4, one service per queue per docs/01.
+  # They share *worker-env and differ only in their entrypoint module.
+
+volumes:
+  caddy_data:
+  caddy_config:
+  rabbitmq_data:
+  minio_data:
+  redis_data:

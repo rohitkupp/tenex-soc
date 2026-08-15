@@ -1,0 +1,38 @@
+# Caddy obtains and renews a real Let's Encrypt certificate automatically.
+#
+# SITE_ADDRESS is an sslip.io hostname derived from the VM's external IP
+# (e.g. 34-1-2-3.sslip.io). sslip.io resolves any such name to that IP, which
+# means Let's Encrypt can complete an HTTP-01 challenge against it — real HTTPS
+# on a real certificate without buying a domain.
+#
+# HTTPS is not cosmetic here: the session cookie is SameSite=None, which browsers
+# only honour when Secure is set, and Secure cookies are never sent over plain
+# HTTP. Without TLS, authentication silently fails in production.
+
+{$SITE_ADDRESS} {
+	encode zstd gzip
+
+	# 200 MB uploads stream straight through to the API. Do not buffer them —
+	# buffering here would reintroduce the exact memory problem the streaming
+	# multipart parser exists to avoid.
+	reverse_proxy api:8000 {
+		flush_interval -1
+		transport http {
+			read_timeout 900s
+			write_timeout 900s
+		}
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}
