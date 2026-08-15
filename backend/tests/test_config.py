@@ -87,3 +87,20 @@ def test_settings_do_not_leak_the_developers_dotenv() -> None:
     suite red for anyone who had configured one.
     """
     assert make_settings(environment="local").anthropic_api_key.get_secret_value() == ""
+
+
+def test_cors_origins_parses_from_a_real_env_var(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression: this is the path that crash-looped the API on first deploy.
+
+    The sibling test passes a Python list, which bypasses the env-var decode
+    entirely. pydantic-settings JSON-decodes complex-typed fields sourced from the
+    environment *before* validators run, so only a genuine env var reproduces it.
+    """
+    monkeypatch.setenv("CORS_ORIGINS", "https://a.vercel.app,https://b.vercel.app")
+    cfg = Settings(_env_file=None)
+    assert cfg.cors_origins == ["https://a.vercel.app", "https://b.vercel.app"]
+
+
+def test_cors_origins_accepts_a_single_env_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CORS_ORIGINS", "https://only.vercel.app")
+    assert Settings(_env_file=None).cors_origins == ["https://only.vercel.app"]

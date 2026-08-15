@@ -18,9 +18,10 @@ out/
 .eslintcache
 
 # Secrets & local config
+# Broad on purpose: `.env` alone does not match `.env.prod`, which is how a
+# production secret file nearly got staged.
 .env
-.env.local
-.env.*.local
+.env.*
 !.env.example
 
 # Generated data — regenerate with `make gen-data`

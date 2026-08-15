@@ -13,10 +13,10 @@ Two rules from docs/06-PRIVACY-SECURITY.md are enforced here rather than trusted
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # Placeholder values shipped in .env.example and docker-compose.yml. Recognisable on
 # purpose: their only job is to be rejected outside local development.
@@ -72,13 +72,19 @@ class Settings(BaseSettings):
     allowed_upload_suffixes: tuple[str, ...] = (".log", ".txt", ".json", ".jsonl", ".csv")
 
     # --- HTTP ---
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    # NoDecode is load-bearing, not decoration. pydantic-settings JSON-decodes any
+    # complex-typed field coming from an env var *before* field validators run, so
+    # without it CORS_ORIGINS="https://a,https://b" dies inside json.loads and the
+    # splitter below never executes. That crash-looped the API on first deploy.
+    cors_origins: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["http://localhost:3000"]
+    )
     log_level: str = "info"
 
     @field_validator("cors_origins", mode="before")
     @classmethod
     def _split_origins(cls, v: object) -> object:
-        """Accept a comma-delimited string so docker-compose can pass one env var."""
+        """Accept a comma-delimited string so one env var can carry several origins."""
         if isinstance(v, str):
             return [o.strip() for o in v.split(",") if o.strip()]
         return v
