@@ -12,6 +12,7 @@ least one development machine, not a hypothetical).
 
 from __future__ import annotations
 
+import math
 import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -21,7 +22,12 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_engine
-from app.learning.classifier import TrainingRow, TrainResult, build_training_rows
+from app.learning.classifier import (
+    TrainingRow,
+    TrainResult,
+    _incident_features,
+    build_training_rows,
+)
 from app.learning.retrain import DOCS12_TOLERANCES, evaluate_candidate, run_classifier_retrain
 from app.models.model_version import ModelVersion
 from tests.conftest import make_analysis, make_tenant, make_user
@@ -359,3 +365,137 @@ def test_run_classifier_retrain_real_lightgbm_writes_a_promoted_first_version(
     assert attempt.promoted is True  # first attempt, nothing to regress against
     assert attempt.eval_scores is not None
     assert datetime.now(UTC) >= attempt.attempted_at
+
+
+# ---------------------------------------------------------------------------- _incident_features raw_score sanitization
+
+# `app.detection.features.robust_z`'s documented MAD==0 policy (that module's own docstring) can
+# legitimately put a non-finite `raw_score` on a real `signals` row -- `signal.burst` stores a
+# signed z-score built on top of it, so both `+inf` and `-inf` are reachable, and `math.nan` is
+# included here for completeness against the same aggregation hazard. `_incident_features` is
+# imported directly (not exercised only through `build_training_rows`) so these tests pin down
+# exactly the function `app/learning/classifier.py` sanitizes in, independent of the
+# feedback/verdict plumbing `build_training_rows` also needs.
+
+
+def _incident_and_signals(
+    session: Session, *, tenant_id: uuid.UUID, analysis_id: uuid.UUID, raw_scores: list[float]
+) -> tuple[object, list[object]]:
+    """One incident whose signals carry exactly `raw_scores`, in order -- confidence is a
+    normal, finite, distinct value per signal (`0.5, 0.6, 0.7, ...`) so `max_confidence`/
+    `mean_confidence` assertions below are checking real arithmetic, not a coincidence of all
+    inputs being equal."""
+    signals = [
+        make_signal(
+            session,
+            tenant_id=tenant_id,
+            analysis_id=analysis_id,
+            raw_score=raw_score,
+            confidence=0.5 + 0.1 * i,
+        )
+        for i, raw_score in enumerate(raw_scores)
+    ]
+    incident, _verdict = make_incident_with_verdict(
+        session, tenant_id=tenant_id, analysis_id=analysis_id, signals=signals
+    )
+    return incident, signals
+
+
+def test_incident_features_raw_score_all_finite_is_unchanged(
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
+) -> None:
+    """Regression guard: ordinary finite `raw_score`s must aggregate exactly as before this
+    fix -- sanitization must be a no-op on values that were never broken."""
+    tenant = make_tenant(name="Incident Features Finite Test Tenant")
+    learning_cleanup.append(tenant.id)
+    user = make_user(tenant_id=tenant.id, email=f"incfeat-finite-{uuid.uuid4()}@test.local")
+    analysis = make_analysis(tenant_id=tenant.id, user_id=user.id)
+    incident, signals = _incident_and_signals(
+        learning_session,
+        tenant_id=tenant.id,
+        analysis_id=analysis.id,
+        raw_scores=[0.2, 0.9, 0.5],
+    )
+
+    features = _incident_features(incident, signals)
+
+    assert features["max_raw_score"] == pytest.approx(0.9)
+    assert features["mean_raw_score"] == pytest.approx((0.2 + 0.9 + 0.5) / 3)
+    assert features["max_confidence"] == pytest.approx(0.7)
+    assert features["mean_confidence"] == pytest.approx((0.5 + 0.6 + 0.7) / 3)
+
+
+def test_incident_features_raw_score_positive_infinity_is_sanitized(
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
+) -> None:
+    tenant = make_tenant(name="Incident Features +Inf Test Tenant")
+    learning_cleanup.append(tenant.id)
+    user = make_user(tenant_id=tenant.id, email=f"incfeat-posinf-{uuid.uuid4()}@test.local")
+    analysis = make_analysis(tenant_id=tenant.id, user_id=user.id)
+    incident, signals = _incident_and_signals(
+        learning_session,
+        tenant_id=tenant.id,
+        analysis_id=analysis.id,
+        raw_scores=[0.2, math.inf, 0.5],
+    )
+
+    features = _incident_features(incident, signals)
+
+    assert math.isfinite(features["max_raw_score"])
+    assert math.isfinite(features["mean_raw_score"])
+    assert features["max_raw_score"] == pytest.approx(1e6)
+    assert features["mean_raw_score"] == pytest.approx((0.2 + 1e6 + 0.5) / 3)
+    # `raw_score` corruption must not leak into the (already-calibrated, already-bounded)
+    # confidence features.
+    assert features["max_confidence"] == pytest.approx(0.7)
+    assert features["mean_confidence"] == pytest.approx((0.5 + 0.6 + 0.7) / 3)
+
+
+def test_incident_features_raw_score_negative_infinity_is_sanitized(
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
+) -> None:
+    tenant = make_tenant(name="Incident Features -Inf Test Tenant")
+    learning_cleanup.append(tenant.id)
+    user = make_user(tenant_id=tenant.id, email=f"incfeat-neginf-{uuid.uuid4()}@test.local")
+    analysis = make_analysis(tenant_id=tenant.id, user_id=user.id)
+    incident, signals = _incident_and_signals(
+        learning_session,
+        tenant_id=tenant.id,
+        analysis_id=analysis.id,
+        raw_scores=[0.2, -math.inf, 0.5],
+    )
+
+    features = _incident_features(incident, signals)
+
+    assert math.isfinite(features["max_raw_score"])
+    assert math.isfinite(features["mean_raw_score"])
+    # -1e6 is far below the other two values, so it is *not* the max -- 0.5 is.
+    assert features["max_raw_score"] == pytest.approx(0.5)
+    assert features["mean_raw_score"] == pytest.approx((0.2 + (-1e6) + 0.5) / 3)
+
+
+def test_incident_features_raw_score_nan_is_sanitized(
+    learning_session: Session,  # noqa: F811
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
+) -> None:
+    tenant = make_tenant(name="Incident Features NaN Test Tenant")
+    learning_cleanup.append(tenant.id)
+    user = make_user(tenant_id=tenant.id, email=f"incfeat-nan-{uuid.uuid4()}@test.local")
+    analysis = make_analysis(tenant_id=tenant.id, user_id=user.id)
+    incident, signals = _incident_and_signals(
+        learning_session,
+        tenant_id=tenant.id,
+        analysis_id=analysis.id,
+        raw_scores=[0.2, math.nan, 0.5],
+    )
+
+    features = _incident_features(incident, signals)
+
+    assert math.isfinite(features["max_raw_score"])
+    assert math.isfinite(features["mean_raw_score"])
+    # NaN -> 0.0, so it is neither the max nor does it poison the mean.
+    assert features["max_raw_score"] == pytest.approx(0.5)
+    assert features["mean_raw_score"] == pytest.approx((0.2 + 0.0 + 0.5) / 3)

@@ -35,6 +35,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Final
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -93,9 +94,51 @@ class TrainingRow:
     created_at: datetime
 
 
+# `signals.raw_score` carries the same two hazards here that `app/pipeline/stages/detect.py::
+# _calibration_feature` was written to guard against at its own boundary: `app.detection.
+# features.robust_z` deliberately returns `math.inf` when a benign population has zero spread
+# (that module's own docstring -- not a bug, a documented policy this file must not relitigate),
+# and `signal.burst` stores a signed z-score as `raw_score` (also intentional), which inherits
+# the same unbounded-magnitude behavior from `robust_z`. `detect.py` sanitizes *its* read of
+# `raw_score` before handing it to `IsotonicRegression.predict` (which hard-crashes on
+# non-finite input) -- but that sanitization happens only at that one call site and is never
+# written back to the `signals` table, so `raw_score` as read out of the DB by any *other*
+# consumer, this one included, is exactly as unsanitized as it always was. Measured in the live
+# DB: 120 of 5912 signals carry a non-finite `raw_score`, spread across 14 of 62 incidents.
+# `max`/`mean` are not robust to a single `inf` in the population -- one non-finite signal
+# silently poisons `max_raw_score`/`mean_raw_score` for the *entire* incident, which then
+# trains (or scores) the learning-loop classifier on a feature that is no longer a number in
+# any meaningful sense. The fix is the same policy `_calibration_feature` already uses (NaN ->
+# 0.0, +inf -> +sentinel, -inf -> -sentinel) reapplied at this different consumer, not a new
+# convention: `1e6` is reused verbatim from `detect.py` rather than re-derived, so the two
+# call sites agree on what "very large" means for a raw score, and applied *before* aggregation
+# here so the sentinel -- not an unbounded inf -- is what `max`/`mean` ever see.
+_RAW_SCORE_INF_SENTINEL: Final[float] = 1e6
+
+
+def _sanitize_raw_score(x: float) -> float:
+    """NaN -> `0.0`, `+inf` -> `+_RAW_SCORE_INF_SENTINEL`, `-inf` -> `-_RAW_SCORE_INF_SENTINEL`;
+    every finite value passes through unchanged. See the module-level comment above
+    `_RAW_SCORE_INF_SENTINEL` for why this exists and why `detect.py`'s own sanitization at the
+    calibration boundary does not already cover it."""
+    if x != x:  # NaN
+        return 0.0
+    if x == float("inf"):
+        return _RAW_SCORE_INF_SENTINEL
+    if x == float("-inf"):
+        return -_RAW_SCORE_INF_SENTINEL
+    return x
+
+
 def _incident_features(incident: Incident, signals: list[Signal]) -> dict[str, float]:
+    # `confidence` is `signals.confidence`, which docs/04's "Fusion & calibration" guarantees is
+    # always post-calibration (`IsotonicCalibrator.calibrate` / `CalibratorStore.calibrate`'s
+    # fallback both route through `clamp01`, and every pre-calibration draft writer -- L1's
+    # `_score_match`, L2's `SignalDraft.confidence` via `clamp01(confidence_raw)`, L3's
+    # percentile rank -- is itself already bounded to `[0, 1]`-ish). It never carries the
+    # unbounded-magnitude hazard `raw_score` does, so it is not sanitized here.
     confidences = [s.confidence for s in signals]
-    raw_scores = [s.raw_score for s in signals]
+    raw_scores = [_sanitize_raw_score(s.raw_score) for s in signals]
     layers = {s.detector_layer for s in signals}
     return {
         "n_signals": float(len(signals)),
