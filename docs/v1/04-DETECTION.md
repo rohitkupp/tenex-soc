@@ -587,3 +587,80 @@ record the LLM's severity opinion separately and report the disagreement rate as
 ### Calibration quality
 Emit a reliability diagram (predicted vs. observed precision, 10 bins) in the eval report and
 on the `/models` page. Brier score is the headline number.
+
+
+## L2 is now an evidence layer — `docs/v2_migration` change 2
+
+`detection/signal/` became `detection/evidence/`, and the rename is not cosmetic: the output
+contract changed.
+
+**Old contract.** A detector emitted a `signals` row carrying a calibrated score. The score was
+the product; the numbers behind it were an explanation payload attached for the UI.
+
+**New contract.** An extractor emits an `EvidencePayload` — raw measurements plus historical
+context — and that payload travels to the LLM intact. The governing sentence of the migration is
+*machines calculate facts, the LLM interprets meaning*, and the placement test is: could a
+deterministic function produce a more precise answer than asking a model? If yes, compute it
+first and pass the number in.
+
+```python
+class EvidencePayload(BaseModel):
+    evidence_id: str                  # "EVIDENCE-14" — stable within an analysis, citable
+    extractor: str
+    entity: dict
+    window: tuple[datetime, datetime]
+    measurements: dict[str, float]    # the actual numbers
+    historical: dict[str, float]      # percentiles vs. the baseline store
+    contributing_line_numbers: list[int]
+    nominates_candidate: bool
+    nomination_score: float | None
+```
+
+### Three stages, and why the boundary is where it is
+
+`raw_evidence_*` is pure and touches no database. `resolve_evidence()` performs the baseline
+lookups. `finalize_evidence()` is pure again, assigning ids and resolving nomination.
+
+Each extractor's `detect_*` (the legacy `signals` path) and `raw_evidence_*` compute from the
+*same* per-finding dataclass. That is deliberate: both contracts ship simultaneously — correlation,
+fusion and the incident path still consume `signals` — and computing them separately would let the
+two disagree numerically about the same finding.
+
+### `evidence_id` is stable because citations depend on it
+
+Ordered by fixed extractor sequence, then `(entity.type, entity.value, window_start, window_end)`.
+It depends on neither input ordering, dict iteration, nor the clock, so identical input reassigns
+identical ids. The narrative cites `[EVIDENCE-14]` and the verifier resolves that back to a
+payload; an id that shifted between runs would make every citation unverifiable.
+
+### Historical context comes from the baseline store, never the file
+
+This is the point of change 1. `historical_from_percentile()` is the single place any extractor
+writes percentile-derived data, which is what makes the next property enforceable in one location:
+
+**Cold start propagates rather than being smoothed away.** When the baseline resolver returns
+`insufficient_history`, the payload literally carries `"percentile": null,
+"baseline_status": "insufficient_history", "n_windows": n` — it does not drop the field and does
+not coerce a number. It also makes nomination impossible by construction, since `None > 99.5` is
+never true.
+
+### Extractors may nominate candidates
+
+A deliberate divergence from the migration's source material, and the reasoning is worth keeping:
+sixty requests over six hours produces an entirely unremarkable feature vector, so no
+entity-window model would ever surface it. The beacon would simply be lost.
+
+An extractor sets `nominates_candidate = true` when its historical percentile exceeds **99.5**
+*and* no existing candidate already covers its entity-window. Nominated candidates enter the same
+correlation and triage path as model-detected ones. Rarity's analogue is "never contacted org-wide
+in six months", since contact counts have no percentile.
+
+### Known gap in the shipped baseline
+
+`baseline_profiles` currently carries only `entity_type="user"` across four metrics
+(`n_events`, `bytes_out`, `bytes_in`, `n_unique_domains`). Department, org and `src_ip` scopes do
+not exist yet, nor do detector-specific baselines such as a real beaconing-regularity history.
+Extractors query well-named metrics regardless and will report `insufficient_history` against
+today's seeded data. That is correct plumbing exercising a real gap in the delivered generator —
+closing it means extending the generator, not the extractors. Every extractor's behaviour against
+a *populated* baseline is proven by tests that insert synthetic profile and contact rows.

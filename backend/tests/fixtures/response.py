@@ -20,6 +20,7 @@ import pytest
 from sqlalchemy import text
 
 from app.core.db import get_engine, get_session_factory
+from app.detection.fusion import anomaly_confidence_from_fused_score
 from app.models.base import tenant_scope
 from app.models.incident import Incident
 from app.models.signal import Signal
@@ -96,7 +97,13 @@ def make_incident(
     title: str = "Test incident",
     severity: str = "high",
     fused_score: float = 0.85,
+    anomaly_confidence: float | None = None,
 ) -> Incident:
+    """`anomaly_confidence` (docs/v2_migration change 3) defaults to the real derivation off
+    `fused_score` (`app.detection.fusion.anomaly_confidence_from_fused_score`) rather than an
+    independent literal, so a test that only cares about `fused_score` gets a consistent pair for
+    free; pass it explicitly when a test needs the two to disagree (e.g. to prove a consumer reads
+    one and not the other)."""
     session = get_session_factory()()
     try:
         with tenant_scope(session, tenant_id):
@@ -106,6 +113,11 @@ def make_incident(
                 title=title,
                 severity=severity,
                 fused_score=fused_score,
+                anomaly_confidence=(
+                    anomaly_confidence
+                    if anomaly_confidence is not None
+                    else anomaly_confidence_from_fused_score(fused_score)
+                ),
                 entity_ids=entity_ids or [],
                 signal_ids=signal_ids or [],
                 status="open",
@@ -123,7 +135,8 @@ def make_triage_verdict(
     incident_id: uuid.UUID,
     recommended_actions: list[str],
     disposition: str = "true_positive",
-    confidence: float = 0.9,
+    threat_confidence: str = "high",
+    threat_confidence_reason: str = "Synthetic verdict for response-module testing.",
     summary: str = "Synthetic verdict for response-module testing.",
 ) -> TriageVerdict:
     """`TriageVerdict` is not `TenantScopedMixin` (docs/02: isolation is transitive through
@@ -133,7 +146,8 @@ def make_triage_verdict(
         verdict = TriageVerdict(
             incident_id=incident_id,
             disposition=disposition,
-            confidence=confidence,
+            threat_confidence=threat_confidence,
+            threat_confidence_reason=threat_confidence_reason,
             mitre_techniques=[{"id": "T1071.001", "name": "Web Protocols", "rationale": "test"}],
             summary=summary,
             narrative=[{"step": 1, "claim": "synthetic", "evidence_event_ids": []}],

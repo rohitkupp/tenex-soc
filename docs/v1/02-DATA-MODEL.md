@@ -354,3 +354,51 @@ docs/04's robust-z (`0.6745 * (x - median) / MAD`) against the precomputed media
 through the standard normal CDF. It diverges from `app.detection.features.robust_z` in one
 deliberate respect: it returns a **signed** infinity when `MAD == 0`, because a percentile needs a
 direction where a deviation magnitude does not.
+
+
+## Two confidences — `docs/v2_migration` change 3
+
+A behaviour can be extremely anomalous and not remotely malicious. Collapsing those into one
+number is the mistake this change exists to prevent, so the schema now carries both separately
+and they are never mixed.
+
+```sql
+ALTER TABLE incidents        ADD COLUMN anomaly_confidence REAL;          -- 0–100
+ALTER TABLE triage_verdicts  DROP COLUMN confidence;
+ALTER TABLE triage_verdicts  ADD COLUMN threat_confidence TEXT;           -- low|moderate|high
+ALTER TABLE triage_verdicts  ADD COLUMN threat_confidence_reason TEXT;
+```
+
+Migration `81f36664938b`.
+
+| | Source | Means | Range |
+|---|---|---|---|
+| `anomaly_confidence` | ML + evidence layer, isotonic-calibrated | how unusual vs. history | 0–100 |
+| `threat_confidence` | hypothesis evaluation | how well evidence supports *this specific* interpretation | low / moderate / high |
+
+### The LLM may not modify `anomaly_confidence`, and that is enforced in code
+
+It is passed into the prompt with an explicit instruction to reproduce it unchanged, and
+`app/agent/verifier.py::verify_anomaly_confidence` compares the returned value against
+`AgentContext.anomaly_confidence` deterministically. A mismatch raises and the whole verdict falls
+to `needs_review` with the reason recorded — a **hard rejection**, not the soft per-claim flag
+citation failures get, because a model that silently rewrote a calibrated statistical score has
+produced output whose provenance can no longer be trusted at all.
+
+The comparison tolerance is `1e-6`, sized purely to absorb Postgres `REAL` round-trip noise. It is
+not there to be lenient.
+
+`anomaly_confidence` has exactly one derivation point,
+`app/detection/fusion.py::anomaly_confidence_from_fused_score()`, called by every path that
+persists an incident, so the score and the confidence cannot drift apart. Nothing in the agent
+path writes it — `triage_verdicts` does not even have the column.
+
+### Backfill
+
+`incidents.anomaly_confidence` ← `fused_score * 100`, exact rather than approximate since it is the
+same number rescaled. `triage_verdicts.threat_confidence` ← bucketed from the old float
+(≥0.75 high, ≥0.4 moderate, else low), with `threat_confidence_reason` stating plainly that it is a
+migration artifact rather than a genuine hypothesis-evaluation judgement — a reader should not
+mistake a mechanical bucketing for reasoning. `downgrade()` reverses both from bucket midpoints;
+lossy by construction in both directions, but it always round-trips to a valid, fully populated
+schema rather than leaving NULLs.

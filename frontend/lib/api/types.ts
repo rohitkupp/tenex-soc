@@ -225,6 +225,9 @@ export interface IncidentListItem {
   title: string;
   severity: Severity;
   fused_score: number;
+  /** docs/v2_migration change 3: `fused_score` rescaled to 0-100 — "how unusual vs. history",
+   * never a probability of malice. Distinct from the verdict's own `threat_confidence`. */
+  anomaly_confidence: number;
   disposition: Disposition | null;
   citation_valid: boolean | null;
   mitre_techniques: string[];
@@ -466,12 +469,18 @@ export interface ToolTraceEntry {
   result: unknown;
 }
 
-/** docs/02 `triage_verdicts` table. */
+/** docs/02 `triage_verdicts` table, as amended by docs/v2_migration change 3 ("two confidences,
+ * never mixed"): the old single `confidence: number` is gone, replaced by the LLM's own
+ * low/moderate/high hypothesis-evaluation judgement (plus a mandatory reason). This is never the
+ * same thing as `IncidentDetail.anomaly_confidence` / `IncidentListItem.anomaly_confidence` —
+ * that one lives on the incident, is calibrated (not the LLM's opinion), and must never be
+ * phrased as a probability of malice. */
 export interface TriageVerdictOut {
   id: string;
   incident_id: string;
   disposition: Disposition;
-  confidence: number;
+  threat_confidence: "low" | "moderate" | "high";
+  threat_confidence_reason: string;
   llm_severity_opinion: Severity | null;
   mitre_techniques: MitreTechniqueRef[];
   summary: string;
@@ -500,6 +509,8 @@ export interface IncidentDetail {
   title: string;
   severity: Severity;
   fused_score: number;
+  /** docs/v2_migration change 3 — see `IncidentListItem.anomaly_confidence`'s comment above. */
+  anomaly_confidence: number;
   status: string;
   entity_ids: number[];
   signal_ids: number[];

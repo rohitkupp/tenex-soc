@@ -184,12 +184,13 @@ def build_signature(
         incident_type=_technique_incident_type(unique_techniques),
         mitre_techniques=unique_techniques,
         source_types=list(dict.fromkeys(source_types)),
-        # The calibrated fusion score, not the LLM's self-reported `verdict.confidence` --
-        # CLAUDE.md rule 5 ("The LLM does not set priority... contributes disposition,
-        # narrative, and technique mapping only") applies here one hop downstream: a
-        # cross-tenant "how confident is this signal" number should come from the same
-        # calibrated detector fusion every other ranking in this system uses, not from
-        # the model's own opinion of itself.
+        # The calibrated fusion score, not the LLM's own hypothesis-evaluation judgment
+        # (`verdict.threat_confidence` -- docs/v2_migration change 3, and low/moderate/high
+        # besides, not even a float this column could hold) -- CLAUDE.md rule 5 ("The LLM does
+        # not set priority... contributes disposition, narrative, and technique mapping only")
+        # applies here one hop downstream: a cross-tenant "how confident is this signal" number
+        # should come from the same calibrated detector fusion every other ranking in this
+        # system uses, not from the model's own opinion of itself.
         confidence=incident.fused_score,
         indicator_hashes=unique_indicator_hashes,
         # When the incident's activity actually happened, not when triage got around to

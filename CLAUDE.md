@@ -151,7 +151,10 @@ Read the relevant doc before implementing. Do not infer a design that a doc alre
   oracle rather than the identity provider, and why email MFA was rejected on the merits.
 - Do not "improve" a detector's math without updating `docs/v1/04-DETECTION.md` and re-running `make eval`.
 - Do not write hardcoded rule logic in Python — rules are Sigma YAML.
-- Do not fabricate ATT&CK technique IDs. They come from the corpus in `backend/data/mitre/`.
+- Do not fabricate ATT&CK technique IDs. They come from `backend/data/kb/mitre/` — an allowlist
+  of 13 **proxy-observable** techniques, not all of ATT&CK (migration change 4). A web proxy
+  cannot observe registry writes or process injection, and retrieving those invites hypotheses
+  the telemetry can never support. Loading anything outside the allowlist is rejected.
 - Do not mock what should be real. Everything runs for real; `DEMO_MODE` was removed (migration
   change 12), so every upload makes live API calls. Tests still replay recorded fixtures and CI
   must never need a key.

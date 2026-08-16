@@ -20,6 +20,7 @@ from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.core.db import get_engine, get_session_factory
+from app.detection.fusion import anomaly_confidence_from_fused_score
 from app.models.analyst_feedback import AnalystFeedback
 from app.models.base import tenant_scope
 from app.models.incident import Incident
@@ -161,13 +162,20 @@ def make_incident_with_verdict(
     disposition: str = "true_positive",
     fused_score: float = 0.7,
     severity: str = "high",
+    threat_confidence: str = "high",
     mitre_techniques: list[str] | None = None,
     embedding: list[float] | None = None,
     created_at: datetime | None = None,
 ) -> tuple[Incident, TriageVerdict]:
     """One incident carrying `signals` (already-created `Signal` rows, same `analysis_id`), plus
     the one `TriageVerdict` `analyst_feedback.verdict_id` needs to reference (docs/02:
-    `analyst_feedback` cannot exist without a verdict)."""
+    `analyst_feedback` cannot exist without a verdict).
+
+    `threat_confidence` (docs/v2_migration change 3) is the verdict's own low/moderate/high
+    hypothesis-evaluation judgment -- independent of `incident.anomaly_confidence`, which this
+    helper always derives from `fused_score` (`app.detection.fusion.
+    anomaly_confidence_from_fused_score`), the same way every real incident-persisting code path
+    does."""
     with tenant_scope(session, tenant_id):
         incident = Incident(
             analysis_id=analysis_id,
@@ -175,6 +183,7 @@ def make_incident_with_verdict(
             title="Test incident",
             severity=severity,
             fused_score=fused_score,
+            anomaly_confidence=anomaly_confidence_from_fused_score(fused_score),
             entity_ids=[],
             signal_ids=[s.id for s in signals],
             embedding=embedding,
@@ -186,7 +195,8 @@ def make_incident_with_verdict(
         verdict = TriageVerdict(
             incident_id=incident.id,
             disposition=disposition,
-            confidence=fused_score,
+            threat_confidence=threat_confidence,
+            threat_confidence_reason="Test verdict threat-confidence reason.",
             mitre_techniques=mitre_techniques or [],
             summary="Test verdict.",
             narrative=[{"step": 1, "claim": "test", "evidence_event_ids": []}],

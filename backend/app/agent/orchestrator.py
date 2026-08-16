@@ -74,7 +74,11 @@ from app.agent.schemas import (
     build_submit_rebuttal_tool,
 )
 from app.agent.tools import TOOL_DEFINITIONS, ToolError, dispatch_tool
-from app.agent.verifier import verify_citations
+from app.agent.verifier import (
+    AnomalyConfidenceIntegrityError,
+    verify_anomaly_confidence,
+    verify_citations,
+)
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.graph.timeline import build_timeline
@@ -268,6 +272,7 @@ def _build_incident_context_block(ctx: AgentContext) -> str:
         incident_title=title,
         severity=severity,
         fused_score=fused_score,
+        anomaly_confidence=ctx.anomaly_confidence,
         signals=signals_payload,
         timeline=timeline_payload,
         entity_scope=entity_scope_payload,
@@ -634,9 +639,28 @@ def _run_flow(
     )
 
     try:
-        return TriageVerdictOut.model_validate(verdict_raw)
+        verdict = TriageVerdictOut.model_validate(verdict_raw)
     except ValidationError as exc:
         raise SchemaValidationError(f"reporter emit_verdict invalid: {exc}") from exc
+
+    # docs/v2_migration change 3: hard rejection, not a warning -- see app.agent.verifier's own
+    # docstring for why this gets different treatment from citation verification below. Checked
+    # here (inside _run_flow, before the caller sees a "successful" verdict) so the exception
+    # flows through triage_incident's existing AgentTimeoutError/AgentRefusalError/
+    # SchemaValidationError/ToolError handling and produces a needs_review fallback with the
+    # failure reason recorded, exactly like every other way this flow can fail to produce a
+    # trustworthy verdict.
+    confidence_check = verify_anomaly_confidence(ctx, verdict)
+    if not confidence_check.ok:
+        log.warning(
+            "agent.anomaly_confidence_integrity_failed",
+            incident_id=str(ctx.incident_id),
+            expected=confidence_check.expected,
+            actual=confidence_check.actual,
+        )
+        raise AnomalyConfidenceIntegrityError(confidence_check.reason)
+
+    return verdict
 
 
 # ---------------------------------------------------------------------------- public entry points
@@ -658,10 +682,19 @@ def _needs_review_fallback(
     usage: _UsageAccumulator,
     elapsed_ms: int,
     model: str,
+    anomaly_confidence: float,
 ) -> TriageVerdictOut:
     return TriageVerdictOut(
         disposition="needs_review",
-        confidence=0.0,
+        threat_confidence="low",
+        threat_confidence_reason=(
+            f"Triage did not complete, so there is no hypothesis-evaluation judgment to report: "
+            f"{reason}"
+        ),
+        # Still the incident's own, untouched value (app.agent.context.AgentContext.
+        # anomaly_confidence) -- a failed run never had a chance to change it, and this field is
+        # never persisted onto triage_verdicts regardless (TriageVerdictOut's own docstring).
+        anomaly_confidence=anomaly_confidence,
         llm_severity_opinion=None,
         mitre_techniques=(),
         summary=f"Triage did not complete: {reason}",
@@ -713,7 +746,8 @@ def _persist(session: Session, incident_id: uuid.UUID, verdict: TriageVerdictOut
     row = TriageVerdict(
         incident_id=incident_id,
         disposition=verdict.disposition,
-        confidence=verdict.confidence,
+        threat_confidence=verdict.threat_confidence,
+        threat_confidence_reason=verdict.threat_confidence_reason,
         llm_severity_opinion=verdict.llm_severity_opinion,
         mitre_techniques=[t.model_dump(mode="json") for t in verdict.mitre_techniques],
         summary=verdict.summary,
@@ -744,7 +778,8 @@ def _persist_inherited(
     row = TriageVerdict(
         incident_id=incident_id,
         disposition=parent.disposition,
-        confidence=parent.confidence,
+        threat_confidence=parent.threat_confidence,
+        threat_confidence_reason=parent.threat_confidence_reason,
         llm_severity_opinion=parent.llm_severity_opinion,
         mitre_techniques=parent.mitre_techniques,
         summary=parent.summary,
@@ -844,7 +879,13 @@ def triage_incident(
             usage=usage,
             trace=trace,
         )
-    except (AgentTimeoutError, AgentRefusalError, SchemaValidationError, ToolError) as exc:
+    except (
+        AgentTimeoutError,
+        AgentRefusalError,
+        SchemaValidationError,
+        ToolError,
+        AnomalyConfidenceIntegrityError,
+    ) as exc:
         elapsed_ms = int((time.monotonic() - start) * 1000)
         log.warning(
             "agent.triage_failed",
@@ -858,6 +899,7 @@ def triage_incident(
             usage=usage,
             elapsed_ms=elapsed_ms,
             model=settings.anthropic_model,
+            anomaly_confidence=ctx.anomaly_confidence,
         )
         row = _persist(session, incident_id, verdict_out)
         _accumulate_analysis_cost(session, tenant_id, incident_id, verdict_out.cost_usd)

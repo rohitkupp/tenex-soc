@@ -1,0 +1,35 @@
+technique: T1505.003
+name: Web Shell
+tactics: [Persistence]
+description: >
+  Adversaries backdoor web servers with web shells to establish persistent access. A web shell
+  is a script placed on an openly accessible web server that gives an adversary a gateway into
+  the network, typically providing a set of remote-executable functions or a command-line
+  interface on the host running the server. Some web shells have a matching client-side program
+  used to interact with the server-side script.
+observable_with_zscaler_proxy: "PARTIAL"
+required_fields: [src_ip, domain, ts, http_method, url_path, status_code]
+useful_additional_evidence: [web_server_access_logs, file_integrity_monitoring, endpoint_process_telemetry]
+zscaler_observables:
+  - outbound requests from an internal web/application server (not a user endpoint) egressing through this proxy to unfamiliar external infrastructure
+  - POST requests with command-shaped or high-entropy query parameters against an internal application path, when that server's own traffic is itself proxied
+  - a server principal showing new beaconing-shaped or exfiltration-shaped outbound traffic with no corresponding legitimate deployment event
+supporting_detectors: [url_entropy, rarity, burst]
+evidence_required:
+  - the entity is a server/service account, not a normal interactive user, generating unexplained outbound traffic
+  - high-entropy or command-shaped parameters in the URL path/query
+  - a new, rare, or first-seen external destination for that server
+evidence_that_weakens:
+  - the entity is a normal interactive user account, not a server -- web shell activity is server-side and this pattern is far more likely something else for a user principal
+  - the traffic matches a known deployment, health-check, or monitoring integration
+  - the URL pattern is a documented internal API, not attacker-shaped
+attack_detection_guidance: >
+  This is the weakest-observability technique in this corpus: web shell installation and
+  interaction happen on the compromised web server, visible mainly in that server's own access
+  logs and file system -- neither of which this egress proxy captures. What is visible, and only
+  when the compromised server's own outbound traffic is routed through this same proxy tenant,
+  is the consequence: unexplained outbound C2- or exfiltration-shaped traffic from a server
+  principal. Do not assign this technique from ordinary user-workstation traffic; require the
+  entity to plausibly be a server, and treat this as low-confidence without corroborating
+  server-side evidence this data source cannot supply.
+source: MITRE ATT&CK

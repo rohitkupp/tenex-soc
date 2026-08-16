@@ -1,0 +1,34 @@
+technique: T1567.002
+name: Exfiltration to Cloud Storage
+tactics: [Exfiltration]
+description: >
+  Adversaries exfiltrate data to a cloud storage service rather than over their primary
+  command-and-control channel. Cloud storage services allow storage, edit, and retrieval of
+  data from a remote server over the internet (examples: Dropbox, Google Drive, S3-compatible
+  object storage). Exfiltrating to these services provides significant cover if hosts within the
+  network already communicate with the provider for legitimate reasons.
+observable_with_zscaler_proxy: "YES"
+required_fields: [principal, domain, ts, bytes_out, http_method, urlcategory]
+useful_additional_evidence: [cloud_provider_audit_logs, dlp_content_inspection, file_info, bucket_ownership_records]
+zscaler_observables:
+  - large PUT/POST traffic to a cloud-storage API hostname (object storage, blob storage, backup service)
+  - destination bucket/tenant identifier outside the org's known-good list, where the URL path exposes one
+  - sustained upload volume from a single principal departing from their historical baseline
+  - domain matches well-known cloud-storage provider naming patterns (storage, blob, s3, drive, bucket)
+supporting_detectors: [rarity, burst, stl]
+evidence_required:
+  - sustained or single large upload (bytes_out) to a cloud-storage-shaped destination
+  - destination is rare or first-seen for this user or the org
+  - upload volume well above the entity's baseline percentile
+evidence_that_weakens:
+  - the org's own sanctioned cloud-storage tenant, confirmed by a matching account/bucket identifier
+  - expected SaaS synchronisation (a backup agent or document-sync client with a matching, known user_agent)
+  - historically common for this user (high contact_count, not first-seen)
+  - small, steady volume consistent with routine file sync rather than a bulk transfer
+attack_detection_guidance: >
+  Prefer this technique over the broader T1567 when the destination is recognisably a
+  cloud-storage or object-storage endpoint rather than a generic web service. Corroborate volume
+  (burst evidence, bytes_out well above baseline) with destination rarity; a single large upload
+  to a brand-new cloud-storage host the org has never contacted is the strongest pattern this
+  data source can show for this technique.
+source: MITRE ATT&CK

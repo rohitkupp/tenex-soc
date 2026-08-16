@@ -8,6 +8,7 @@ import uuid
 import pytest
 from sqlalchemy.orm import Session
 
+from app.detection.fusion import anomaly_confidence_from_fused_score
 from app.learning.feedback import (
     FeedbackInput,
     IncidentNotFoundError,
@@ -60,6 +61,7 @@ def test_record_feedback_raises_for_incident_without_a_verdict(
             title="No verdict yet",
             severity="low",
             fused_score=0.1,
+            anomaly_confidence=anomaly_confidence_from_fused_score(0.1),
             entity_ids=[],
             signal_ids=[],
         )

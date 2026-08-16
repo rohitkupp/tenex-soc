@@ -1,11 +1,13 @@
-"""`triage_verdicts` — docs/02-DATA-MODEL.md "Triage & response", matched exactly:
+"""`triage_verdicts` — docs/02-DATA-MODEL.md "Triage & response", as amended by
+docs/v2_migration/MIGRATION-01-evidence-first.md change 3 ("two confidences, never mixed"):
 
 ```sql
 CREATE TABLE triage_verdicts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   incident_id UUID NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
   disposition TEXT NOT NULL,
-  confidence REAL NOT NULL,
+  threat_confidence TEXT NOT NULL,
+  threat_confidence_reason TEXT NOT NULL,
   llm_severity_opinion TEXT,
   mitre_techniques JSONB NOT NULL,
   summary TEXT NOT NULL,
@@ -23,6 +25,16 @@ CREATE TABLE triage_verdicts (
 );
 ```
 
+**`confidence REAL` (docs/02's original single column) is gone.** It collapsed two genuinely
+different numbers into one: how *unusual* an entity's behaviour is (now `incidents.
+anomaly_confidence`, calibrated, 0-100, never touched by the LLM) and how well the evidence
+supports *this specific* security interpretation (`threat_confidence` here — the LLM's own
+low/moderate/high judgement, paired with a mandatory `threat_confidence_reason` so that judgement
+is never a bare, unexplained enum value). `app.agent.schemas.TriageVerdictOut` mirrors this split
+exactly; `app.agent.verifier.verify_anomaly_confidence` is the hard, deterministic check that
+nothing in the agent path ever smuggles a changed `anomaly_confidence` back through this table
+(it isn't even a column here — there is nothing for the LLM's output to overwrite).
+
 Not tenant-scoped — no `tenant_id` column in docs/02's SQL. Isolation is transitive through
 `incident_id`, which cascades from `incidents` (a tenant-scoped table).
 
@@ -39,7 +51,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import REAL, Boolean, ForeignKey, Integer, Numeric, Text, func, text
+from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import DateTime, Uuid
@@ -57,7 +69,12 @@ class TriageVerdict(Base):
         Uuid(as_uuid=True), ForeignKey("incidents.id", ondelete="CASCADE"), nullable=False
     )
     disposition: Mapped[str] = mapped_column(Text, nullable=False)
-    confidence: Mapped[float] = mapped_column(REAL, nullable=False)
+    # docs/v2_migration change 3: replaces the old single `confidence REAL` -- see this module's
+    # own docstring. `threat_confidence` is one of low/moderate/high (app.agent.schemas.
+    # TriageVerdictOut), never a raw float; `threat_confidence_reason` is mandatory so the level
+    # is never a bare, unexplained enum value.
+    threat_confidence: Mapped[str] = mapped_column(Text, nullable=False)
+    threat_confidence_reason: Mapped[str] = mapped_column(Text, nullable=False)
     llm_severity_opinion: Mapped[str | None] = mapped_column(Text, nullable=True)
     mitre_techniques: Mapped[Any] = mapped_column(JSONB, nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)

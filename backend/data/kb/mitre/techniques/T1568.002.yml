@@ -1,0 +1,35 @@
+technique: T1568.002
+name: Domain Generation Algorithms
+tactics: [Command and Control]
+description: >
+  Adversaries use domain generation algorithms (DGAs) to dynamically identify a destination
+  domain for command-and-control traffic, rather than relying on a static list of IPs or
+  domains. A DGA algorithmically produces a large number of candidate domain names -- as
+  apparently random "gibberish" strings or as concatenated dictionary words -- and the malware
+  attempts to resolve them; the operator only needs to register a small subset ahead of time.
+  This makes the channel far more resistant to blocklisting and takedown than a fixed C2 domain.
+observable_with_zscaler_proxy: "PARTIAL"
+required_fields: [domain, principal, ts]
+useful_additional_evidence: [dns_query_logs, dns_nxdomain_rate, passive_dns, domain_registration_whois]
+zscaler_observables:
+  - high-entropy, dictionary-atypical domain labels being requested (Host header) by one source in short succession
+  - a source contacting many distinct newly-seen domains over a short window, most never repeated
+  - low-volume, small-request traffic per generated domain, consistent with a resolver probe rather than a page load
+supporting_detectors: [dga, rarity]
+evidence_required:
+  - DGA classifier probability above the decision threshold on the requested domain's label
+  - high Shannon entropy, high digit_ratio, or low bigram log-likelihood on the domain label
+  - the domain is rare or first-seen for the org (baseline_domain_rarity high)
+evidence_that_weakens:
+  - the domain is a legitimate, high-entropy-by-design identifier (CDN edge hostname, cloud resource GUID) with an established contact history
+  - classifier probability only marginally above threshold with no supporting rarity signal
+  - a single low-confidence hit with no pattern of many similarly-shaped domains from the same source
+attack_detection_guidance: >
+  This proxy sees the HTTP-layer request to whatever domain a client already resolved, not the
+  DNS resolution itself -- so the classic DGA tell of a burst of NXDOMAIN responses across many
+  candidate domains is not directly visible here (see useful_additional_evidence). What is
+  visible is the lexical half (entropy, n-gram unlikelihood, digit ratio) and the contact-volume
+  half (many distinct newly-seen domains from one source in a short window). Treat a single
+  high-entropy domain hit as weak; a source generating many such hits in a short window is the
+  stronger pattern this data source can actually show.
+source: MITRE ATT&CK

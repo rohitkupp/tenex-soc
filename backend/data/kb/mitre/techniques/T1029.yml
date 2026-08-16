@@ -1,0 +1,33 @@
+technique: T1029
+name: Scheduled Transfer
+tactics: [Exfiltration]
+description: >
+  Adversaries schedule data exfiltration to occur at specific times or intervals, often to blend
+  with normal traffic patterns or to minimize the chance of detection during active monitoring
+  hours. When scheduled exfiltration is used, another exfiltration technique (Exfiltration Over
+  C2 Channel, Exfiltration Over Web Service) typically applies as well to actually move the data.
+observable_with_zscaler_proxy: "YES"
+required_fields: [principal, domain, bytes_out, ts]
+useful_additional_evidence: [file_info, dlp_findings, endpoint_telemetry]
+zscaler_observables:
+  - recurring outbound transfer at a fixed time of day or day of week
+  - a new periodic component appearing in an entity's transfer-volume time series that was absent from its own seasonal baseline
+  - transfer cadence that continues outside business hours
+supporting_detectors: [beaconing, stl, rarity, burst]
+evidence_required:
+  - STL seasonal-residual evidence flagging a new periodic component in transfer volume, or beaconing-shaped regularity in timing
+  - outbound byte volume (bytes_out) materially above the entity's baseline for that time slot
+  - destination rarity, when the recurring transfer goes to a destination outside the entity's normal contact list
+evidence_that_weakens:
+  - known software updater or scheduled maintenance job with a documented, stable schedule
+  - expected SaaS synchronisation (backup, calendar sync, mail sync) with a matching client user_agent
+  - historically common for this user -- the same transfer pattern has recurred for months with no incident
+  - destination is on the org's sanctioned list and the schedule aligns with a published maintenance window
+attack_detection_guidance: >
+  The signature is regularity that is new, not regularity itself -- most of an org's real
+  scheduled jobs are already part of the seasonal baseline. Prioritise STL residual evidence
+  showing a periodic component that only recently appeared, or beaconing evidence on a
+  transfer-shaped (high bytes_out) pair rather than a small heartbeat. A recurring transfer to a
+  rare or first-seen destination is far stronger evidence than the same cadence to a well-known
+  one.
+source: MITRE ATT&CK

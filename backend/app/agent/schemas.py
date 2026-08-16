@@ -35,6 +35,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.agent.mitre import all_technique_ids, technique_exists
 
 __all__ = [
+    "ANOMALY_CONFIDENCE_MAX",
+    "ANOMALY_CONFIDENCE_MIN",
     "AgentRole",
     "Disposition",
     "InvestigationFindings",
@@ -42,6 +44,7 @@ __all__ = [
     "NarrativeStep",
     "Rebuttal",
     "SchemaValidationError",
+    "ThreatConfidence",
     "ToolTraceEntry",
     "TriageVerdictOut",
     "build_emit_verdict_tool",
@@ -52,6 +55,11 @@ __all__ = [
 Disposition = Literal["true_positive", "false_positive", "benign", "needs_review"]
 Severity = Literal["critical", "high", "medium", "low"]
 AgentRole = Literal["investigator", "devils_advocate", "reporter"]
+# docs/v2_migration change 3 ("two confidences, never mixed"): the LLM's own hypothesis-evaluation
+# judgement of how well the evidence supports *this specific* security interpretation -- never a
+# raw float, and never to be confused with `anomaly_confidence` (calibrated, 0-100, upstream-
+# computed, see this module's `TriageVerdictOut` docstring below).
+ThreatConfidence = Literal["low", "moderate", "high"]
 
 _DISPOSITIONS: Final[tuple[str, ...]] = (
     "true_positive",
@@ -60,6 +68,13 @@ _DISPOSITIONS: Final[tuple[str, ...]] = (
     "needs_review",
 )
 _SEVERITIES: Final[tuple[str, ...]] = ("critical", "high", "medium", "low")
+_THREAT_CONFIDENCE_LEVELS: Final[tuple[str, ...]] = ("low", "moderate", "high")
+
+# docs/v2_migration change 3: `anomaly_confidence` is 0-100 (see `app.detection.fusion.
+# anomaly_confidence_from_fused_score`), never the 0-1 scale `fused_score`/the old `confidence`
+# field used.
+ANOMALY_CONFIDENCE_MIN: Final[float] = 0.0
+ANOMALY_CONFIDENCE_MAX: Final[float] = 100.0
 
 
 class SchemaValidationError(Exception):
@@ -170,12 +185,38 @@ class TriageVerdictOut(BaseModel):
     `app.models.triage_verdict.TriageVerdict` needs for persistence (`tool_trace`,
     `citation_valid`, `invalid_citations`, `model`, token/cost/latency). Citation-verification
     fields default empty and are filled in by `app.agent.verifier` *after* this model validates —
-    they are not part of what the LLM emits."""
+    they are not part of what the LLM emits.
+
+    ## Two confidences, never mixed (docs/v2_migration change 3)
+
+    `confidence` (a single 0-1 float) is gone, split into two fields the LLM's job is never to
+    conflate:
+
+    - `threat_confidence` / `threat_confidence_reason` — the LLM's own hypothesis-evaluation
+      judgement: how well *this specific* security interpretation is supported by the evidence.
+      Deliberately coarse (low/moderate/high) rather than a float the model would otherwise
+      invent with false precision, and always paired with a reason.
+    - `anomaly_confidence` — **not the LLM's opinion at all.** This is `incidents.
+      anomaly_confidence` (the calibrated, 0-100 "how unusual is this vs. history" number,
+      `app.detection.fusion.anomaly_confidence_from_fused_score`), passed into the prompt and
+      required back on this model with an explicit instruction to reproduce it unchanged
+      (`app.agent.prompts.REPORTER_SYSTEM_PROMPT`). It exists on this schema only so
+      `app.agent.verifier.verify_anomaly_confidence` has something to check the echoed value
+      against — it is never written back to `incidents.anomaly_confidence` (no code path does;
+      `app.agent.orchestrator._persist`/`_persist_inherited` never touch that column) and never
+      persisted onto `triage_verdicts` (no such column exists there either, by design — see
+      `app.models.triage_verdict`'s own docstring).
+    """
 
     model_config = ConfigDict(extra="forbid")
 
     disposition: Disposition
-    confidence: float = Field(ge=0.0, le=1.0)
+    threat_confidence: ThreatConfidence
+    threat_confidence_reason: str
+    # Passed in verbatim via the prompt and required back unchanged -- `app.agent.verifier.
+    # verify_anomaly_confidence` is the hard, deterministic check that it was not modified. This
+    # field is transport only: it is never persisted (see class docstring above).
+    anomaly_confidence: float = Field(ge=ANOMALY_CONFIDENCE_MIN, le=ANOMALY_CONFIDENCE_MAX)
     llm_severity_opinion: Severity | None = None
     mitre_techniques: tuple[MitreTechniqueRef, ...] = Field(default_factory=tuple)
     summary: str
@@ -197,7 +238,7 @@ class TriageVerdictOut(BaseModel):
     needs_review_reason: str | None = None
     created_at: datetime | None = None
 
-    @field_validator("summary", "contradicting_evidence")
+    @field_validator("summary", "contradicting_evidence", "threat_confidence_reason")
     @classmethod
     def _not_blank(cls, v: str) -> str:
         if not v or not v.strip():
@@ -315,8 +356,16 @@ def build_submit_rebuttal_tool() -> dict[str, Any]:
 def build_emit_verdict_tool() -> dict[str, Any]:
     """The Reporter's forced terminal tool — docs/07: "Emitted via tool-use so it is
     schema-validated, not parsed from prose." `strict: true` closes every enum (disposition,
-    severity opinion, technique id) at the API layer. `recommended_actions` is free text
-    (investigation guidance for a human analyst, docs/v2_migration change 20) — no enum."""
+    severity opinion, technique id, threat_confidence) at the API layer. `recommended_actions` is
+    free text (investigation guidance for a human analyst, docs/v2_migration change 20) — no enum.
+
+    `anomaly_confidence` is `required` like every other field here (strict mode's rule — see
+    `TriageVerdictOut`'s own docstring), but it is not something the model computes: the incident
+    context block (`app.agent.prompts.build_incident_context`) hands it the exact number and
+    `REPORTER_SYSTEM_PROMPT` instructs it to echo that value back unchanged.
+    `app.agent.verifier.verify_anomaly_confidence` is the actual enforcement — this schema only
+    makes the field mandatory so the model cannot omit it and have the check silently pass on a
+    default."""
     return {
         "name": "emit_verdict",
         "description": (
@@ -328,7 +377,9 @@ def build_emit_verdict_tool() -> dict[str, Any]:
             "type": "object",
             "properties": {
                 "disposition": {"type": "string", "enum": list(_DISPOSITIONS)},
-                "confidence": {"type": "number"},
+                "threat_confidence": {"type": "string", "enum": list(_THREAT_CONFIDENCE_LEVELS)},
+                "threat_confidence_reason": {"type": "string"},
+                "anomaly_confidence": {"type": "number"},
                 "llm_severity_opinion": {
                     "anyOf": [{"type": "string", "enum": list(_SEVERITIES)}, {"type": "null"}]
                 },
@@ -340,7 +391,9 @@ def build_emit_verdict_tool() -> dict[str, Any]:
             },
             "required": [
                 "disposition",
-                "confidence",
+                "threat_confidence",
+                "threat_confidence_reason",
+                "anomaly_confidence",
                 "llm_severity_opinion",
                 "mitre_techniques",
                 "summary",

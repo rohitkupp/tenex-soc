@@ -12,6 +12,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+from app.detection.fusion import anomaly_confidence_from_fused_score
 from app.models.base import tenant_scope
 from app.models.incident import Incident
 from tests.conftest import authenticate, make_analysis, make_tenant, make_user
@@ -63,6 +64,7 @@ def test_feedback_endpoint_409_for_untriaged_incident(
             title="No verdict",
             severity="low",
             fused_score=0.1,
+            anomaly_confidence=anomaly_confidence_from_fused_score(0.1),
             entity_ids=[],
             signal_ids=[],
         )

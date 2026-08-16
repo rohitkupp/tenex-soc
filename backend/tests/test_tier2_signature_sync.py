@@ -119,12 +119,19 @@ def test_build_signature_uses_shared_salt_for_indicator_hashes(ctx: dict) -> Non
 
 
 def test_build_signature_confidence_is_fused_score_not_llm_confidence(ctx: dict) -> None:
-    """CLAUDE.md rule 5: the LLM does not set priority. `verdict.confidence=0.9` (the
-    fixture's default) must never leak into `tier2_signatures.confidence` in place of the
-    calibrated `incident.fused_score`."""
+    """CLAUDE.md rule 5: the LLM does not set priority. `tier2_signatures.confidence` must come
+    from the calibrated `incident.fused_score`, never from the LLM's own opinion of the incident
+    -- and since docs/v2_migration change 3, the LLM doesn't even have a float opinion to leak
+    anymore: `verdict.threat_confidence` is a low/moderate/high enum, not a number, so it could
+    not populate this column even by accident. The fixture's `threat_confidence="high"` default
+    is deliberately the opposite "temperature" of the incident's own low `fused_score=0.42`, so a
+    regression that somehow derived `signature.confidence` from disposition/threat_confidence
+    instead of `fused_score` would be caught by the value, not just the type."""
     tenant, analysis = ctx["tenant"], ctx["analysis"]
     incident = make_incident(tenant_id=tenant.id, analysis_id=analysis.id, fused_score=0.42)
-    verdict = make_triage_verdict(incident_id=incident.id, recommended_actions=[], confidence=0.9)
+    verdict = make_triage_verdict(
+        incident_id=incident.id, recommended_actions=[], threat_confidence="high"
+    )
 
     signature = build_signature(
         incident=incident,
@@ -135,7 +142,8 @@ def test_build_signature_confidence_is_fused_score_not_llm_confidence(ctx: dict)
         settings=_REAL_SALT_SETTINGS,
     )
     assert signature.confidence == pytest.approx(0.42)
-    assert signature.confidence != pytest.approx(verdict.confidence)
+    assert isinstance(signature.confidence, float)
+    assert verdict.threat_confidence == "high"
 
 
 @pytest.mark.parametrize(

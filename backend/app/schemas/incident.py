@@ -84,6 +84,11 @@ class IncidentListItem(BaseModel):
     title: str
     severity: str
     fused_score: float
+    # docs/v2_migration change 3: fused_score rescaled to 0-100 (`app.detection.fusion.
+    # anomaly_confidence_from_fused_score`) — "how unusual vs. history", never a probability of
+    # malice. Distinct from `disposition`/the verdict's own `threat_confidence`, which come from
+    # the LLM's hypothesis evaluation, not calibration.
+    anomaly_confidence: float
     disposition: str | None
     citation_valid: bool | None
     mitre_techniques: list[str]
@@ -118,6 +123,8 @@ class IncidentDetail(BaseModel):
     title: str
     severity: str
     fused_score: float
+    # docs/v2_migration change 3 — see `IncidentListItem.anomaly_confidence`'s comment above.
+    anomaly_confidence: float
     status: str
     entity_ids: list[int]
     signal_ids: list[int]

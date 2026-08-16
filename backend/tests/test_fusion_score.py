@@ -8,6 +8,7 @@ import pytest
 
 from app.detection.fusion import (
     FusionInput,
+    anomaly_confidence_from_fused_score,
     apply_graph_bonus,
     fuse_signals,
     score_incident,
@@ -82,6 +83,39 @@ def test_severity_thresholds() -> None:
     assert severity_for_score(0.64) == "medium"
     assert severity_for_score(0.39) == "low"
     assert severity_for_score(0.0) == "low"
+
+
+def test_anomaly_confidence_from_fused_score_rescales_0_1_to_0_100() -> None:
+    """docs/v2_migration change 3: `anomaly_confidence` is the same `fused_score`, on a 0-100
+    scale -- not a probability of malice, not independently computed."""
+    assert anomaly_confidence_from_fused_score(0.0) == pytest.approx(0.0)
+    assert anomaly_confidence_from_fused_score(1.0) == pytest.approx(100.0)
+    assert anomaly_confidence_from_fused_score(0.963) == pytest.approx(96.3)
+
+
+def test_anomaly_confidence_from_fused_score_clamps_out_of_range_input() -> None:
+    assert anomaly_confidence_from_fused_score(-0.5) == pytest.approx(0.0)
+    assert anomaly_confidence_from_fused_score(1.5) == pytest.approx(100.0)
+
+
+def test_anomaly_confidence_from_fused_score_rounds_to_one_decimal() -> None:
+    assert anomaly_confidence_from_fused_score(0.123456) == pytest.approx(12.3)
+
+
+def test_score_incident_anomaly_confidence_derives_from_its_own_fused_score() -> None:
+    """The single derivation point this module's docstring promises: `IncidentScore.
+    anomaly_confidence` must always equal `anomaly_confidence_from_fused_score` applied to that
+    same `IncidentScore.fused_score` -- never computed independently, so the two can never
+    silently drift apart."""
+    signals = [
+        FusionInput(detector_key="signal.beaconing", detector_layer="signal", confidence=0.9),
+        FusionInput(detector_key="ml.mahalanobis", detector_layer="ml", confidence=0.6),
+    ]
+    result = score_incident(signals, community_signal_density=0.7)
+    assert result.anomaly_confidence == pytest.approx(
+        anomaly_confidence_from_fused_score(result.fused_score)
+    )
+    assert 0.0 <= result.anomaly_confidence <= 100.0
 
 
 def test_score_incident_end_to_end() -> None:

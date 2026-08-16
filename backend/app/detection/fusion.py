@@ -28,6 +28,7 @@ __all__ = [
     "FusionInput",
     "IncidentScore",
     "Severity",
+    "anomaly_confidence_from_fused_score",
     "apply_graph_bonus",
     "fuse_signals",
     "score_incident",
@@ -111,6 +112,32 @@ def apply_graph_bonus(
     return min(base_score * bonus, MAX_FUSED_SCORE)
 
 
+def anomaly_confidence_from_fused_score(fused_score: float) -> float:
+    """docs/v2_migration change 3 ("two confidences, never mixed"): `incidents.anomaly_confidence`
+    — the calibrated "how unusual is this vs. history" number an analyst reads directly, on a
+    0-100 scale, derived from `fused_score` (already isotonic-calibrated end to end through
+    `fuse_signals`/`apply_graph_bonus` above), not recomputed from raw detector scores a second
+    time. This is the *only* place that conversion happens — every caller that persists an
+    `Incident` row derives `anomaly_confidence` by calling this function on the same `fused_score`
+    it is about to store, so the two columns can never silently drift apart.
+
+    Never conflate this with `threat_confidence` (`app.agent.schemas.TriageVerdictOut`) — that is
+    the LLM's own low/moderate/high judgement of how well the evidence supports *one specific*
+    security interpretation, sourced entirely differently (hypothesis evaluation, not calibration)
+    and expressed on a different scale. A behaviour can score 96 here and still turn out to be a
+    scheduled backup job — this number measures rarity, not malice (CLAUDE.md rule 5: the LLM,
+    not this function, is the only thing that speaks to intent, and even it never sets priority).
+
+    Clamped to `[0, 1]` before scaling (`fused_score` is already bounded to `[0, MAX_FUSED_SCORE]`
+    by `apply_graph_bonus`, but this function does not assume every caller went through that exact
+    path) and rounded to one decimal place: enough precision to be a useful "X/100" reading,
+    coarse enough that `app.agent.verifier.verify_anomaly_confidence` comparing the LLM's echoed
+    value back against this one isn't chasing float noise introduced by Postgres' `REAL` (4-byte
+    float) column round-tripping the value.
+    """
+    return round(min(max(fused_score, 0.0), 1.0) * 100, 1)
+
+
 def severity_for_score(fused_score: float) -> Severity:
     """docs/04 §Fusion "Severity" — fixed thresholds on the post-graph-bonus `fused_score`.
     Deterministic and total: every score in `[0, 1]` (and anything outside it, clamped) maps to
@@ -141,13 +168,17 @@ class IncidentScore:
     severity: Severity
     n_distinct_detector_layers: int
     community_signal_density: float
+    # docs/v2_migration change 3: `incidents.anomaly_confidence`, 0-100, derived from `fused_score`
+    # by `anomaly_confidence_from_fused_score` — see that function's docstring for why this is the
+    # single derivation point rather than something each caller recomputes.
+    anomaly_confidence: float
 
 
 def score_incident(signals: list[FusionInput], *, community_signal_density: float) -> IncidentScore:
     """The full pipeline for one incident: fuse -> graph bonus -> severity, in that order (see
     module docstring). Convenience wrapper over the three functions above for callers (incident
     formation) that have a signal list and a community density in hand and want the final,
-    ready-to-persist `(fused_score, severity)` pair in one call.
+    ready-to-persist `(fused_score, severity, anomaly_confidence)` triple in one call.
     """
     base = fuse_signals([s.confidence for s in signals], [s.fusion_weight for s in signals])
     n_layers = len({s.detector_layer for s in signals})
@@ -162,4 +193,5 @@ def score_incident(signals: list[FusionInput], *, community_signal_density: floa
         severity=severity_for_score(fused),
         n_distinct_detector_layers=n_layers,
         community_signal_density=community_signal_density,
+        anomaly_confidence=anomaly_confidence_from_fused_score(fused),
     )

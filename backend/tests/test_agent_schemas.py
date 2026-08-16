@@ -28,7 +28,9 @@ from app.agent.schemas import (
 def _valid_verdict_kwargs() -> dict:
     return {
         "disposition": "true_positive",
-        "confidence": 0.8,
+        "threat_confidence": "high",
+        "threat_confidence_reason": "Beaconing pattern strongly matches known C2 cadence.",
+        "anomaly_confidence": 87.3,
         "llm_severity_opinion": "high",
         "mitre_techniques": [
             {"id": "T1071.001", "name": "Web Protocols", "rationale": "beaconing pattern"}
@@ -123,9 +125,49 @@ def test_triage_verdict_out_rejects_invalid_disposition_enum() -> None:
         TriageVerdictOut(**kwargs)
 
 
-def test_triage_verdict_out_rejects_confidence_out_of_range() -> None:
+def test_triage_verdict_out_rejects_anomaly_confidence_out_of_range() -> None:
+    """docs/v2_migration change 3: `anomaly_confidence` is 0-100, not 0-1 -- the old
+    `confidence` field's range."""
     kwargs = _valid_verdict_kwargs()
-    kwargs["confidence"] = 1.5
+    kwargs["anomaly_confidence"] = 150.0
+    with pytest.raises(ValidationError):
+        TriageVerdictOut(**kwargs)
+
+    kwargs = _valid_verdict_kwargs()
+    kwargs["anomaly_confidence"] = -1.0
+    with pytest.raises(ValidationError):
+        TriageVerdictOut(**kwargs)
+
+
+def test_triage_verdict_out_rejects_invalid_threat_confidence_enum() -> None:
+    kwargs = _valid_verdict_kwargs()
+    kwargs["threat_confidence"] = "extremely_confident"  # not one of low/moderate/high
+    with pytest.raises(ValidationError):
+        TriageVerdictOut(**kwargs)
+
+
+def test_triage_verdict_out_rejects_blank_threat_confidence_reason() -> None:
+    kwargs = _valid_verdict_kwargs()
+    kwargs["threat_confidence_reason"] = "   "
+    with pytest.raises(ValidationError, match="must not be blank"):
+        TriageVerdictOut(**kwargs)
+
+
+def test_triage_verdict_out_accepts_every_threat_confidence_level() -> None:
+    for level in ("low", "moderate", "high"):
+        kwargs = _valid_verdict_kwargs()
+        kwargs["threat_confidence"] = level
+        verdict = TriageVerdictOut(**kwargs)
+        assert verdict.threat_confidence == level
+
+
+def test_triage_verdict_out_no_longer_has_a_single_confidence_field() -> None:
+    """The old, blended `confidence: float` field must not survive as an accepted alias --
+    docs/v2_migration change 3's whole point is that the two meanings are never merged back
+    into one number, so a payload still shaped like the old contract must be rejected outright
+    (`extra="forbid"`), not silently coerced."""
+    kwargs = _valid_verdict_kwargs()
+    kwargs["confidence"] = 0.8
     with pytest.raises(ValidationError):
         TriageVerdictOut(**kwargs)
 
@@ -179,6 +221,19 @@ def test_emit_verdict_tool_recommended_actions_is_free_text_no_enum() -> None:
     tool = build_emit_verdict_tool()
     action_schema = tool["input_schema"]["properties"]["recommended_actions"]["items"]
     assert action_schema == {"type": "string"}
+
+
+def test_emit_verdict_tool_has_threat_confidence_enum_and_anomaly_confidence_number() -> None:
+    """docs/v2_migration change 3: the old single `confidence` field is gone from the tool
+    schema entirely, replaced by a closed low/moderate/high enum plus a required numeric
+    `anomaly_confidence` the model must echo back unchanged."""
+    tool = build_emit_verdict_tool()
+    props = tool["input_schema"]["properties"]
+    assert "confidence" not in props
+    assert props["threat_confidence"] == {"type": "string", "enum": ["low", "moderate", "high"]}
+    assert props["threat_confidence_reason"]["type"] == "string"
+    assert props["anomaly_confidence"]["type"] == "number"
+    assert "anomaly_confidence" in tool["input_schema"]["required"]
 
 
 def test_emit_verdict_tool_is_strict_and_fully_closed() -> None:

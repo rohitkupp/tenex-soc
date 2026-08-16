@@ -1,0 +1,29 @@
+technique: T1204
+name: User Execution
+tactics: [Execution]
+description: >
+  An adversary relies on a user taking an action -- opening a file, clicking a link, running a
+  macro -- to trigger execution. Users may be socially engineered into executing malicious code,
+  typically as follow-on behavior from a phishing message, though it can occur at other stages
+  of an intrusion (e.g. a file dropped in a shared location the user is expected to open).
+observable_with_zscaler_proxy: "YES"
+required_fields: [principal, src_ip, domain, ts, url_path, bytes_in]
+useful_additional_evidence: [endpoint_process_telemetry, email_gateway_logs, browser_download_event_log]
+zscaler_observables:
+  - a file download immediately followed by new outbound connections from the same host, consistent with the downloaded content executing
+  - a click-through to a link-shortener or newly-registered domain shortly before a download or credential-entry-shaped POST
+  - a download whose content-type/extension is executable or script-shaped, fetched right after a referer chain from an external message or landing page
+supporting_detectors: [rarity, url_entropy]
+evidence_required:
+  - a download event (bytes_in, file-shaped URL path) from a rare or newly-registered domain
+  - new outbound traffic beginning from the same host within a short window after the download completes
+evidence_that_weakens:
+  - the download is a routine, previously-seen software or content source for this user
+  - no new outbound activity follows the download within a reasonable window
+  - the file type is a common document/media format with no plausible execution path
+attack_detection_guidance: >
+  The evidence this source can supply is entirely behavioural adjacency: download, then new
+  activity. Treat a download alone as weak; require the temporal link to subsequent, otherwise
+  unexplained outbound traffic (which may itself be a beaconing- or rarity-flagged destination)
+  before assigning this technique any real confidence.
+source: MITRE ATT&CK

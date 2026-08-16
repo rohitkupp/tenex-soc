@@ -1,0 +1,37 @@
+technique: T1071.001
+name: Web Protocols
+tactics: [Command and Control]
+description: >
+  Adversaries communicate using application-layer protocols associated with web traffic (HTTP,
+  HTTPS) to avoid detection and network filtering by blending command-and-control traffic with
+  legitimate browsing. Commands to the implant, and often the results of those commands, are
+  embedded within otherwise ordinary-looking request/response traffic between client and server.
+  Web traffic is rarely blocked outbound, so it is an easy channel to hide in.
+observable_with_zscaler_proxy: "YES"
+required_fields: [principal, src_ip, domain, ts, bytes_out, bytes_in, http_method, user_agent]
+useful_additional_evidence: [endpoint_process_telemetry, tls_ja3_fingerprint, dns_query_logs, edr_alerts]
+zscaler_observables:
+  - low coefficient-of-variation inter-arrival intervals to a single host (beaconing)
+  - small, near-constant request/response byte sizes across repeated hits to the same domain
+  - non-browser user_agent making the requests
+  - requests missing headers a real page load would carry (no Referer/Accept chain)
+  - direct-to-IP HTTP requests bypassing normal DNS-named hosts
+supporting_detectors: [beaconing, stl, rarity]
+evidence_required:
+  - recurring request interval to the same destination with low interval_cv
+  - a dominant FFT period in request timing (spectral_strength above threshold)
+  - destination is rare or first-seen for this user/host, or the activity falls outside the user's normal working hours
+evidence_that_weakens:
+  - known SaaS or monitoring-agent polling client with a matching, recognized user_agent
+  - scheduled software update checker with a documented interval
+  - long-established, high-baseline contact for this src_ip/domain pair rather than a first-seen destination
+  - a browser-based push/notification long-poll or websocket keepalive already known to the org
+attack_detection_guidance: >
+  Beaconing interval analysis (median_interval_s, interval_cv, dominant_period_s,
+  spectral_strength from the beaconing extractor) is the primary signal. Corroborate with STL
+  seasonal-residual evidence if the same source/destination pair shows a new periodic component
+  that was absent from its own baseline, and with rarity evidence if the destination is new or
+  rarely contacted. A single beaconing hit to a common, sanctioned destination is weak evidence
+  on its own -- require destination rarity or the absence of a benign explanation before treating
+  this as more than an unexplained anomaly.
+source: MITRE ATT&CK

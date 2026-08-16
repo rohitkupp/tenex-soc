@@ -88,6 +88,15 @@ class AgentContext:
     # (entity_type, raw_value) pairs this incident's own entities/signals belong to -- docs/07
     # citation check #2 ("the event's entities intersect the incident's entity_ids").
     entity_scope: frozenset[tuple[str, str]]
+    # docs/v2_migration change 3: the incident's own `anomaly_confidence` (0-100, calibrated,
+    # `app.detection.fusion.anomaly_confidence_from_fused_score`), read once here so every
+    # consumer of this context (the prompt builder, the verifier) works off the same value the
+    # incident row actually carries. Rounded defensively to the same one-decimal precision
+    # `anomaly_confidence_from_fused_score` already produces, in case Postgres' `REAL` (4-byte
+    # float) column round-trip introduced representation noise -- see
+    # `app.agent.verifier.verify_anomaly_confidence`'s tolerance for why exact equality still
+    # works after this rounding.
+    anomaly_confidence: float
     _pseudonym_to_raw: dict[str, str] = field(default_factory=dict)
 
     def pseudonymize_value(self, value: str, entity_type: str) -> str:
@@ -250,6 +259,7 @@ def build_agent_context(
         window_start=window_start,
         window_end=window_end,
         entity_scope=scope,
+        anomaly_confidence=round(incident.anomaly_confidence, 1),
     )
     # Seed the reverse cache with every entity already known to be in scope, so a tool call
     # referencing one of the incident's own entities resolves even before query_events has

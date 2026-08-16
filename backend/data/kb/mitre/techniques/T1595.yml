@@ -1,0 +1,30 @@
+technique: T1595
+name: Active Scanning
+tactics: [Reconnaissance]
+description: >
+  Adversaries execute active reconnaissance scans to gather information used for targeting.
+  Active scans are those where the adversary directly probes victim infrastructure via network
+  traffic (port scans, vulnerability scans), as opposed to passive OSINT that never touches the
+  target network. Information gathered can inform later resource development and initial-access
+  attempts.
+observable_with_zscaler_proxy: "PARTIAL"
+required_fields: [src_ip, dst_ip, ts, status_code]
+useful_additional_evidence: [ids_ips_alerts, netflow_records, external_threat_intel_feed]
+zscaler_observables:
+  - from the victim side, this technique is normally an inbound signal and does not appear in egress proxy logs at all
+  - "the exception this source can show: a compromised internal host itself performing outbound active scanning against third parties -- connection attempts across many distinct destination ports/hosts in a short window"
+  - a burst of failed or refused connections to many distinct external IPs from one internal source
+supporting_detectors: [burst, rarity]
+evidence_required:
+  - one source generating connection attempts to an unusually high number of distinct destinations in a short window
+  - a high proportion of failed/error responses among those attempts
+evidence_that_weakens:
+  - the source is a known vulnerability-scanning or asset-discovery tool run by the org's own security team
+  - the destinations are a small, stable set (e.g. routine health checks against known partners), not a broad fan-out
+attack_detection_guidance: >
+  Standard active scanning targets this org and is therefore inbound -- outside what an egress
+  web proxy observes. The only proxy-visible instance of this technique is a compromised internal
+  host turned outbound scanner. Require a genuine fan-out (many distinct destinations, one
+  source, short window) before citing this technique; a handful of failed requests to a few
+  hosts is ordinary network noise, not scanning.
+source: MITRE ATT&CK

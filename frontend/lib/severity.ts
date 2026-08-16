@@ -46,3 +46,21 @@ export function dispositionLabel(disposition: string | null | undefined): string
   if (!disposition) return "Untriaged";
   return DISPOSITION_LABEL[disposition] ?? disposition;
 }
+
+const THREAT_CONFIDENCE_LABEL: Record<string, string> = {
+  low: "low confidence",
+  moderate: "moderate confidence",
+  high: "high confidence",
+};
+
+/**
+ * docs/v2_migration change 3: the LLM's own hypothesis-evaluation judgement
+ * (`TriageVerdictOut.threat_confidence`) — always rendered as a qualifier on the disposition
+ * ("Possible C2 — moderate confidence"), never as a standalone number, and never in the same
+ * breath as `anomaly_confidence` without both being labelled (docs/v2_migration's UI contract:
+ * "must never phrase anomaly_confidence as a probability of malice").
+ */
+export function threatConfidenceLabel(threatConfidence: string | null | undefined): string {
+  if (!threatConfidence) return "not yet assessed";
+  return THREAT_CONFIDENCE_LABEL[threatConfidence] ?? threatConfidence;
+}

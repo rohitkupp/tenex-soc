@@ -1,0 +1,33 @@
+technique: T1105
+name: Ingress Tool Transfer
+tactics: [Command and Control]
+description: >
+  Adversaries transfer tools or other files from an external system into a compromised
+  environment, typically to stage additional malware or utilities after initial access. Files
+  may be copied from an external adversary-controlled system through the C2 channel or via
+  alternate protocols and utilities (curl, wget, PowerShell download cadlets, package managers,
+  and similar). Adversaries have also abused legitimate web services and file-application
+  features to deliver files to a victim.
+observable_with_zscaler_proxy: "YES"
+required_fields: [principal, src_ip, domain, ts, bytes_in, http_method, url_path]
+useful_additional_evidence: [file_hash, endpoint_process_telemetry, av_edr_verdict]
+zscaler_observables:
+  - large or unusually-shaped download (bytes_in) from a rare or newly-registered domain
+  - executable/script/archive content-type or file-extension in the URL path fetched by a non-browser client
+  - a download immediately followed by new outbound connections from the same host consistent with the payload executing
+supporting_detectors: [rarity, burst, url_entropy]
+evidence_required:
+  - download volume (bytes_in) or a file-shaped URL path indicating a binary/script/archive fetch
+  - destination rarity or a newly-registered-domain flag
+  - for stronger confidence, a beaconing or new-outbound-traffic pattern starting shortly after the download completes
+evidence_that_weakens:
+  - destination is a known, sanctioned software distribution or package-registry domain
+  - the download is a routine, previously-seen pattern for this user/host (not first-seen, not rare)
+  - content-type is consistent with a legitimate document or media file rather than an executable/archive
+attack_detection_guidance: >
+  A download by itself is extremely common and weak evidence; the destination-rarity and
+  file-shape (executable/archive extension, non-browser user_agent) combination is what narrows
+  it. The strongest form of this pattern is a download from a rare domain followed within
+  minutes by new C2-shaped outbound traffic from the same source -- treat that temporal
+  adjacency as the corroborating fact, not the download alone.
+source: MITRE ATT&CK

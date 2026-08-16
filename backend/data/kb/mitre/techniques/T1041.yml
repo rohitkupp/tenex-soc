@@ -1,0 +1,29 @@
+technique: T1041
+name: Exfiltration Over C2 Channel
+tactics: [Exfiltration, Command and Control]
+description: >
+  Adversaries steal data by exfiltrating it over an existing command-and-control channel. Stolen
+  data is encoded into the same protocol and connection pattern already used for C2, rather than
+  opening a second, separate exfiltration channel that would need its own cover.
+observable_with_zscaler_proxy: "YES"
+required_fields: [principal, src_ip, domain, ts, bytes_out]
+useful_additional_evidence: [endpoint_process_telemetry, network_flow_records, edr_alerts]
+zscaler_observables:
+  - a source/destination pair already showing beaconing-shaped periodicity that now also shows an increase in outbound byte volume on the same connections
+  - no new destination appears -- the volume increase rides the existing channel rather than opening a fresh one
+  - burst evidence (bytes_per_min) elevated specifically on a pair also flagged by the beaconing extractor
+supporting_detectors: [beaconing, burst, stl]
+evidence_required:
+  - prior or concurrent beaconing evidence for the same src_ip/domain pair
+  - a volume increase (burst or STL residual) on that same pair, not a new destination
+evidence_that_weakens:
+  - no beaconing or periodicity evidence exists for this destination at all -- without it this is plain T1567/T1567.002, not "over the C2 channel"
+  - the volume increase coincides with a known bulk operation (backup window, scheduled export) for this destination
+  - destination is a high-baseline, routinely-contacted service where volume varies naturally
+attack_detection_guidance: >
+  This technique is only inferable by correlating two evidence extractors: beaconing evidence
+  establishing that the channel is periodic/C2-shaped, and burst or STL evidence showing a
+  volume increase on that same entity-window. Neither extractor alone proves "exfiltration over
+  C2" -- do not assign this technique from burst evidence in isolation; require beaconing
+  evidence already present for the same pair before citing it.
+source: MITRE ATT&CK

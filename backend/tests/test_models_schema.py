@@ -27,6 +27,7 @@ from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.core.db import get_engine, get_session_factory
+from app.detection.fusion import anomaly_confidence_from_fused_score
 from app.models.analyst_feedback import AnalystFeedback
 from app.models.base import MissingTenantScopeError, tenant_scope
 from app.models.detector_stats import DetectorStats
@@ -234,6 +235,7 @@ def test_incidents_embedding_vector_and_id_arrays_round_trip(
                 title="Suspected credential stuffing",
                 severity="high",
                 fused_score=0.88,
+                anomaly_confidence=anomaly_confidence_from_fused_score(0.88),
                 entity_ids=[10, 20, 30],
                 signal_ids=[100, 200],
                 embedding=VEC,
@@ -271,6 +273,7 @@ def test_incidents_recurrence_of_self_reference_round_trip(
                 title="Original incident",
                 severity="medium",
                 fused_score=0.5,
+                anomaly_confidence=anomaly_confidence_from_fused_score(0.5),
                 entity_ids=[],
                 signal_ids=[],
             )
@@ -285,6 +288,7 @@ def test_incidents_recurrence_of_self_reference_round_trip(
                 title="Recurrence of the original",
                 severity="medium",
                 fused_score=0.6,
+                anomaly_confidence=anomaly_confidence_from_fused_score(0.6),
                 entity_ids=[],
                 signal_ids=[],
                 recurrence_of=parent.id,
@@ -386,6 +390,7 @@ def test_triage_verdicts_round_trip(
                 title="Data exfil via DNS tunneling",
                 severity="critical",
                 fused_score=0.95,
+                anomaly_confidence=anomaly_confidence_from_fused_score(0.95),
                 entity_ids=[1],
                 signal_ids=[1],
             )
@@ -397,7 +402,8 @@ def test_triage_verdicts_round_trip(
         verdict = TriageVerdict(
             incident_id=incident_id,
             disposition="malicious",
-            confidence=0.9,
+            threat_confidence="high",
+            threat_confidence_reason="DNS tunneling pattern strongly matches T1071.004.",
             llm_severity_opinion="critical",
             mitre_techniques={"techniques": ["T1071.004"]},
             summary="DNS tunneling detected from host X.",
@@ -442,6 +448,7 @@ def test_analyst_feedback_round_trip(tenant_cleanup: list[uuid.UUID]) -> None:
                 title="False positive candidate",
                 severity="low",
                 fused_score=0.2,
+                anomaly_confidence=anomaly_confidence_from_fused_score(0.2),
                 entity_ids=[],
                 signal_ids=[],
             )
@@ -452,7 +459,8 @@ def test_analyst_feedback_round_trip(tenant_cleanup: list[uuid.UUID]) -> None:
         verdict = TriageVerdict(
             incident_id=incident.id,
             disposition="benign",
-            confidence=0.3,
+            threat_confidence="low",
+            threat_confidence_reason="Timing matches scheduled maintenance windows.",
             mitre_techniques={},
             summary="Looks like scheduled maintenance.",
             narrative=[],
@@ -758,6 +766,7 @@ def test_bare_session_raises_instead_of_leaking_incidents(
                     title="x",
                     severity="low",
                     fused_score=0.1,
+                    anomaly_confidence=anomaly_confidence_from_fused_score(0.1),
                     entity_ids=[],
                     signal_ids=[],
                 )
@@ -797,6 +806,7 @@ def test_tenant_scoped_session_sees_only_its_own_incidents(
                         title="x",
                         severity="low",
                         fused_score=0.1,
+                        anomaly_confidence=anomaly_confidence_from_fused_score(0.1),
                         entity_ids=[],
                         signal_ids=[],
                     )
@@ -838,6 +848,7 @@ def test_cannot_fetch_another_tenants_incident_even_by_primary_key(
                 title="x",
                 severity="low",
                 fused_score=0.1,
+                anomaly_confidence=anomaly_confidence_from_fused_score(0.1),
                 entity_ids=[],
                 signal_ids=[],
             )

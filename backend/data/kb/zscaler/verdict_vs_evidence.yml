@@ -1,0 +1,70 @@
+# The explicit statement MIGRATION-01-evidence-first.md change 4 requires: "Keep Zscaler's own
+# verdicts as a distinct evidence source... Never merge the two. Make that distinction explicit
+# in how the KB is structured and retrieved."
+#
+# This file is that statement, and the structural half lives in code: `app/agent/retrieval.py`
+# defines `ZscalerVerdictEvidence` as a type wholly separate from
+# `app.detection.evidence.payload.EvidencePayload` -- there is no shared base class and no field
+# on one that silently carries the other's data. A citation namespace mirrors the split:
+# [ZSCALER-VERDICT-n] for this file's evidence_source, [EVIDENCE-n]/[BASELINE-n] for our own
+# extractors' output (docs/v2_migration change 7's citation table).
+
+evidence_source: meta
+
+two_evidence_sources:
+  zscaler_verdict:
+    what_it_is: >
+      A judgment ZScaler's own engines already made about a transaction before it ever reached
+      this pipeline: content category, malware signature match, DLP content match, or composite
+      risk score. See field_semantics.yml, threat_verdicts.yml, url_categories.yml,
+      action_and_risk.yml.
+    fields: [action, urlcategory, urlsupercategory, appname, appclass, threatname, threatcategory, riskscore, reason, dlpengine, dlpdictionaries]
+    represented_by: ZscalerVerdictEvidence (app/agent/retrieval.py)
+    citation_form: "[ZSCALER-VERDICT-n]"
+    trust_basis: >
+      ZScaler's own threat-intelligence and content-inspection engines, operating on
+      information (full request content for DLP, a maintained threat-intel feed for
+      threatcategory) this pipeline does not itself have access to. Strong evidence precisely
+      because it is independent of our own detection math.
+  model_detected:
+    what_it_is: >
+      Output of this system's own deterministic evidence extractors
+      (app/detection/evidence/{beaconing,dga,burst,rarity,stl,url_path}.py) -- raw measurements
+      plus historical baseline context, computed entirely from transport-layer facts (timing,
+      volume, destination identity) with no visibility into request content or vendor
+      threat-intel.
+    fields: [measurements, historical -- see app/detection/evidence/payload.py EvidencePayload]
+    represented_by: EvidencePayload (app/detection/evidence/payload.py)
+    citation_form: "[EVIDENCE-n]"
+    trust_basis: >
+      Deterministic, reproducible computation against this tenant's own 6-month baseline. Strong
+      evidence precisely because it is behavioural and tenant-specific, which no external vendor
+      feed can be.
+
+why_never_merge: >
+  The two sources fail independently and corroborate independently. A beaconing pattern with no
+  ZScaler threat-intel hit is still meaningful (ZScaler's feed simply may not know about a novel
+  C2 domain yet); a ZScaler malware-signature hit with no beaconing pattern is still meaningful
+  (a single blocked malware download does not need to repeat on a schedule to matter). Collapsing
+  them into one "combined confidence" would hide which kind of evidence is actually present,
+  and would let a narrative claim stronger support than either source provides alone.
+  MIGRATION-01 change 3 draws the same kind of hard line between anomaly_confidence and
+  threat_confidence for the same reason -- this is that principle applied to evidence sourcing.
+
+how_a_narrative_should_use_both: >
+  When both are present for the same entity-window, state them as two independent, agreeing
+  lines of evidence: "ZScaler's own signature match [ZSCALER-VERDICT-3] independently
+  corroborates the beaconing pattern [EVIDENCE-14]." When only one is present, do not imply the
+  other exists. The judge rubric (change 6, rubric item 1: "is every factual claim supported by
+  supplied evidence?") treats an implied-but-uncited second source as an unsupported claim like
+  any other.
+
+retrieval_implication: >
+  app/agent/retrieval.py builds two separate query paths into the MITRE technique corpus --
+  `build_query_from_evidence` for EvidencePayload objects and `build_query_from_zscaler_verdict`
+  for ZscalerVerdictEvidence objects -- so that a caller can retrieve technique candidates from
+  either source, or both, while keeping each candidate's `RetrievalCandidate.evidence_sources`
+  trace showing which kind of evidence actually nominated it. A technique retrieved only because
+  of a ZScaler verdict and a technique retrieved only because of our own beaconing evidence are
+  not the same strength of candidate, and the trace is what lets a later stage (the Analyst
+  prompt, out of this module's scope) say so.

@@ -2,7 +2,7 @@ import Link from "next/link";
 import type { IncidentDetail } from "@/lib/api/types";
 import { SeverityBar } from "@/components/severity/SeverityBar";
 import { Badge } from "@/components/ui/Badge";
-import { dispositionLabel } from "@/lib/severity";
+import { dispositionLabel, threatConfidenceLabel } from "@/lib/severity";
 import { formatDate, formatScore } from "@/lib/format";
 
 // 1. Header — docs/10: "title, severity, fused score, disposition, techniques, recurrence link."
@@ -20,6 +20,25 @@ export function CaseHeader({ incident, analysisId }: { incident: IncidentDetail;
             </span>
             <Badge variant="outline">{dispositionLabel(incident.verdict?.disposition ?? null)}</Badge>
             {incident.status !== "open" && <Badge variant="outline">{incident.status}</Badge>}
+          </div>
+          {/* docs/v2_migration change 3's UI contract: both confidences rendered, labelled, and
+              never phrased as a probability of malice. anomaly_confidence is "how unusual", not
+              "how likely to be an attack" — that judgement is threat_confidence, the LLM's own,
+              paired with its disposition above. */}
+          <div className="flex flex-col gap-0.5 text-xs text-[var(--color-text-mid)]">
+            <span>
+              Anomaly confidence:{" "}
+              <span className="font-mono text-[var(--color-text-hi)]">
+                {Math.round(incident.anomaly_confidence)}/100
+              </span>
+            </span>
+            <span>
+              Threat assessment:{" "}
+              <span className="text-[var(--color-text-hi)]">
+                {dispositionLabel(incident.verdict?.disposition ?? null)} —{" "}
+                {threatConfidenceLabel(incident.verdict?.threat_confidence ?? null)}
+              </span>
+            </span>
           </div>
         </div>
         <span className="text-xs text-[var(--color-text-lo)]">Opened {formatDate(incident.created_at)}</span>

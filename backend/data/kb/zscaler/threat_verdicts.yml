@@ -1,0 +1,94 @@
+# ZScaler's own threat/security verdicts -- MIGRATION-01 change 4: "Keep Zscaler's own verdicts
+# as a distinct evidence source. A Zscaler threat-field hit is *Zscaler said so*, not *our model
+# detected it*. Never merge the two."
+#
+# Every entry in this file describes a value ZScaler's own engines assign -- content
+# classification, malware signature matching, DLP inspection, or a composite risk score. None of
+# it is computed by this system's detection layer (app/detection/evidence/*). The retrieval layer
+# (app/agent/retrieval.py `ZscalerVerdictEvidence`) keeps these facts in a structurally separate
+# type from `EvidencePayload` (our own extractors' output) for exactly this reason -- see
+# verdict_vs_evidence.yml for the explicit statement of the rule and how a prompt should attribute
+# each kind of evidence to its source.
+
+evidence_source: zscaler_verdict
+
+security_url_categories:
+  # urlsupercategory == "Security" is the field that groups every ZScaler-native threat
+  # category. app/detection/rules (L1 Sigma) already keys its "Access to malware/phishing/C2 URL
+  # category" rule on this field -- these are the five categories that supercategory contains
+  # in this system's corpus (datagen/emitters/zscaler.py SECURITY_CATEGORIES).
+  - category: Malware Sites
+    appclass: Malware
+    typical_risk_score: 95
+    meaning: ZScaler's own content classification identified the destination as hosting or distributing malware.
+  - category: Phishing
+    appclass: Phishing
+    typical_risk_score: 95
+    meaning: ZScaler classified the destination as a credential-harvesting or phishing landing page.
+  - category: Botnet Callback
+    appclass: Botnet
+    typical_risk_score: 98
+    meaning: >
+      ZScaler's threat intelligence identified the destination as known command-and-control
+      infrastructure. This is the strongest possible vendor signal for T1071.001/T1090-shaped
+      activity -- a hit here does not need our own beaconing evidence to be credible, though
+      beaconing evidence corroborates it.
+  - category: Spyware and Adware
+    appclass: Adware
+    typical_risk_score: 80
+    meaning: Destination is known to serve spyware or adware payloads.
+  - category: Suspicious Destinations
+    appclass: Suspicious
+    typical_risk_score: 70
+    meaning: >
+      ZScaler's lower-confidence bucket -- infrastructure with some suspicious indicator that
+      does not meet the bar for a named malware/phishing/botnet classification. Treat as weaker
+      than the four categories above; still a vendor judgment, not neutral traffic.
+
+threat_name_and_category:
+  # `threatname` (malware[].name) / `threatcategory` (malware[].classification_ids) are a
+  # paired verdict: threatcategory is the coarse bucket, threatname is ZScaler's specific
+  # signature match. Both are populated together or not at all.
+  examples:
+    - threatcategory: Botnet
+      threatname: Backdoor.Generic.C2
+      meaning: >
+        ZScaler's own signature engine matched this transaction against a known C2 backdoor
+        signature. Cite this as [ZSCALER-VERDICT], never folded into a beaconing EvidencePayload
+        even when the same transaction also has strong beaconing measurements -- the two are
+        independent lines of evidence that happen to agree, and a narrative should say so
+        explicitly ("ZScaler's own signature match corroborates the beaconing pattern") rather
+        than silently merging them into one claim.
+  guidance: >
+    A non-null threatcategory/threatname pair on any event in an incident's window is strong,
+    independent corroboration -- but "independent" is the operative word. The judge rubric
+    (change 6) checks whether a narrative conflates a vendor verdict with a model finding; keep
+    them cited separately ([ZSCALER-VERDICT] vs [EVIDENCE-n]) so that check can actually run.
+
+dlp:
+  fields: [dlpengine, dlpdictionaries]
+  meaning: >
+    A populated `dlpengine` means ZScaler's own content-inspection engine matched the outbound
+    request against a configured DLP policy -- this is ZScaler asserting the *content* of the
+    request matched a sensitive-data pattern, which no extractor in app/detection/evidence/ can
+    do (they see traffic shape and volume, never payload content). Treat a DLP hit as the
+    strongest available evidence for the exfiltration family (T1567, T1567.002, T1567.004,
+    T1029, T1041) precisely because it is content-based rather than behavioural.
+  example:
+    dlpengine: Corporate Confidential
+    dlpdictionaries: "Source Code,PII,Financial Records"
+
+not_a_zscaler_verdict:
+  # The converse statement, equally important: these are OUR extractors' output, never ZScaler's
+  # own judgment, even though they describe the same underlying transactions.
+  examples:
+    - beaconing interval regularity, FFT periodicity
+    - DGA classifier probability on a domain label
+    - burst/volumetric z-score
+    - STL seasonal residual
+    - baseline contact-count rarity (user/department/org)
+    - url_entropy / path randomness scoring
+  guidance: >
+    None of the above ever appears in a ZScaler NSS field -- they are computed by this system
+    after ingest. A citation for one of these must reference an [EVIDENCE-n] id from an
+    EvidencePayload, never a [ZSCALER-VERDICT] tag.

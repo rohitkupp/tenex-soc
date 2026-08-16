@@ -17,12 +17,25 @@ lets the flag do the work.
 `hallucination_rate = invalid_citations / total_citations` (docs/12) is a simple ratio over this
 module's own output — `HallucinationStats` below computes it directly so eval/reporting code
 doesn't have to re-derive it.
+
+## Confidence integrity (docs/v2_migration change 3, arriving early as change 7's own check)
+
+`verify_anomaly_confidence` below is a **different kind of check from citation verification
+above** — deliberately so. Citation failures are surfaced, not suppressed: a bad citation gets
+flagged in `invalid_citations` and the claim still renders, with a warning marker. A changed
+`anomaly_confidence` gets no such leniency: `anomaly_confidence` is not something the LLM has any
+basis to recompute (it never sees raw detector scores, only the one already-calibrated number),
+so any difference from the value it was given is not "weak evidence" the way a shaky citation can
+be — it is either a copy that happened to be exact, or the model overrode a number CLAUDE.md rule
+5 says it never gets to touch. `app.agent.orchestrator` treats a failure here as a hard rejection
+of the whole verdict (the run falls back to `needs_review` with the failure reason recorded in
+`needs_review_reason`), not a flag rendered alongside an otherwise-trusted verdict.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Final
 
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -33,12 +46,25 @@ from app.models.base import tenant_scope
 from app.models.event import Event
 
 __all__ = [
+    "ANOMALY_CONFIDENCE_TOLERANCE",
+    "AnomalyConfidenceCheck",
+    "AnomalyConfidenceIntegrityError",
     "CitationCheck",
     "HallucinationStats",
     "hallucination_stats",
     "parse_verdict_payload",
+    "verify_anomaly_confidence",
     "verify_citations",
 ]
+
+# Both `ctx.anomaly_confidence` and `verdict.anomaly_confidence` are already rounded to one
+# decimal place before comparison here (`AgentContext.anomaly_confidence`,
+# `app.detection.fusion.anomaly_confidence_from_fused_score`) -- this tolerance only needs to
+# absorb IEEE-754 binary representation noise from that rounding and from Postgres' `REAL`
+# (4-byte float) column round-tripping the value, not from any legitimate "close enough" reading
+# of the model's output. A real change (the model rounding, adjusting, or recomputing the number)
+# will always differ by orders of magnitude more than this.
+ANOMALY_CONFIDENCE_TOLERANCE: Final[float] = 1e-6
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,6 +107,59 @@ def hallucination_stats(checks: list[CitationCheck]) -> HallucinationStats:
     return HallucinationStats(
         total_citations=len(checks), invalid_citations=sum(1 for c in checks if not c.valid)
     )
+
+
+class AnomalyConfidenceIntegrityError(Exception):
+    """Raised by `app.agent.orchestrator._run_flow` when `verify_anomaly_confidence` fails —
+    caught alongside `AgentTimeoutError`/`AgentRefusalError`/`SchemaValidationError`/`ToolError`
+    in `app.agent.orchestrator.triage_incident`, which converts it into a `needs_review` verdict
+    with the reason recorded in `needs_review_reason`. A hard rejection of the *whole* verdict,
+    not a per-claim flag — see this module's own docstring for why confidence integrity gets
+    different treatment from citation verification."""
+
+
+@dataclass(frozen=True, slots=True)
+class AnomalyConfidenceCheck:
+    expected: float
+    actual: float
+    ok: bool
+    reason: str | None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "expected": self.expected,
+            "actual": self.actual,
+            "ok": self.ok,
+            "reason": self.reason,
+        }
+
+
+def verify_anomaly_confidence(
+    ctx: AgentContext, verdict: TriageVerdictOut
+) -> AnomalyConfidenceCheck:
+    """docs/v2_migration change 3: **the LLM may not modify `anomaly_confidence`.** `ctx.
+    anomaly_confidence` is the value actually persisted on `incidents.anomaly_confidence` (read
+    once in `app.agent.context.build_agent_context`); `verdict.anomaly_confidence` is whatever the
+    Reporter's `emit_verdict` call echoed back after being instructed, in the prompt, to reproduce
+    it unchanged (`app.agent.prompts.REPORTER_SYSTEM_PROMPT`). Anything outside
+    `ANOMALY_CONFIDENCE_TOLERANCE` is a failure, with a reason that names both values — this is a
+    deterministic code check, not a prompt hope, and the reason string is what makes the rejection
+    inspectable rather than a silent `False`."""
+    expected = ctx.anomaly_confidence
+    actual = verdict.anomaly_confidence
+    ok = abs(expected - actual) <= ANOMALY_CONFIDENCE_TOLERANCE
+    reason = (
+        None
+        if ok
+        else (
+            f"anomaly_confidence integrity check failed: incident {ctx.incident_id} carries "
+            f"{expected!r}, the model's emit_verdict returned {actual!r} instead. "
+            "anomaly_confidence is upstream-computed (app.detection.fusion."
+            "anomaly_confidence_from_fused_score) and the LLM has no basis to change it — "
+            "CLAUDE.md rule 5, docs/v2_migration change 3."
+        )
+    )
+    return AnomalyConfidenceCheck(expected=expected, actual=actual, ok=ok, reason=reason)
 
 
 def verify_citations(

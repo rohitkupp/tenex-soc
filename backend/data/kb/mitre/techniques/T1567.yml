@@ -1,0 +1,36 @@
+technique: T1567
+name: Exfiltration Over Web Service
+tactics: [Exfiltration]
+description: >
+  Adversaries use an existing, legitimate external web service to exfiltrate data rather than
+  their primary command-and-control channel. Popular web services provide significant cover
+  because hosts within the network are already likely communicating with them, and firewall
+  rules typically already permit the traffic. These services also commonly use TLS, adding a
+  further layer of protection from content inspection.
+observable_with_zscaler_proxy: "YES"
+required_fields: [principal, domain, ts, bytes_out, http_method, urlcategory]
+useful_additional_evidence: [dlp_content_inspection, cloud_provider_audit_logs, file_info]
+zscaler_observables:
+  - large POST/PUT upload to a consumer cloud-storage, paste-site, or file-sharing domain
+  - upload (bytes_out) volume departing from this user's own baseline for that destination
+  - dlpengine/dlpdictionaries trigger on the outbound request
+  - destination has no sanctioned business account associated with this user or org
+supporting_detectors: [rarity, burst, stl]
+evidence_required:
+  - outbound transfer volume materially above this user's or the org's baseline
+  - destination is an unsanctioned or rarely-used external web service for this user
+  - a DLP or sensitive-content indicator on the request, where available
+evidence_that_weakens:
+  - sanctioned corporate account for that SaaS/storage service (the org's own approved tenant)
+  - historically routine use of this destination by this user (high contact_count, not first-seen)
+  - upload volume small and consistent with normal file-sharing behaviour
+  - destination is a known software-distribution or CDN endpoint, not a general-purpose web service
+attack_detection_guidance: >
+  The volume-plus-destination-rarity combination is the core signal: a large, baseline-deviating
+  upload to a web service the user or org rarely contacts. A DLP hit on the same request
+  strengthens the case considerably. Treat a large upload to a *sanctioned* instance of a popular
+  service (the org's own approved storage tenant) as much weaker evidence than the same volume
+  to an unaffiliated instance of the same service -- prefer the narrower T1567.002 or T1567.004
+  when the destination shape is specifically cloud-storage or webhook rather than a generic web
+  service.
+source: MITRE ATT&CK

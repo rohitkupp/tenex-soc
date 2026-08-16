@@ -14,6 +14,7 @@ from collections.abc import Iterator
 import pytest
 
 from app.core.db import get_session_factory
+from app.detection.fusion import anomaly_confidence_from_fused_score
 from app.graph.recurrence import (
     EMBEDDING_DIMS,
     RECURRENCE_SIMILARITY_THRESHOLD,
@@ -140,6 +141,7 @@ def _make_incident(
                 title=title,
                 severity="low",
                 fused_score=0.5,
+                anomaly_confidence=anomaly_confidence_from_fused_score(0.5),
                 entity_ids=[],
                 signal_ids=[],
                 embedding=embedding,

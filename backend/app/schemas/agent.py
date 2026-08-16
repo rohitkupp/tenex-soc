@@ -23,7 +23,13 @@ class TriageVerdictResponse(BaseModel):
     id: uuid.UUID
     incident_id: uuid.UUID
     disposition: str
-    confidence: float
+    # docs/v2_migration change 3 ("two confidences, never mixed"): replaces the old single
+    # `confidence: float`. This is the LLM's own hypothesis-evaluation judgment
+    # (low/moderate/high, always paired with a reason) — never the calibrated
+    # `IncidentDetail.anomaly_confidence` / `IncidentListItem.anomaly_confidence`, which lives on
+    # the incident, not the verdict, and which the LLM never writes.
+    threat_confidence: str
+    threat_confidence_reason: str
     llm_severity_opinion: str | None
     mitre_techniques: list[dict[str, Any]]
     summary: str

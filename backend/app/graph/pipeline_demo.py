@@ -405,6 +405,11 @@ class PersistedIncident:
     title: str
     severity: str
     fused_score: float
+    # docs/v2_migration change 3: fused_score rescaled to 0-100
+    # (app.detection.fusion.anomaly_confidence_from_fused_score) -- the same value persisted to
+    # incidents.anomaly_confidence below, surfaced here too so this verification tool's own
+    # output demonstrates the derivation, not just the schema.
+    anomaly_confidence: float
     base_score: float
     n_distinct_detector_layers: int
     community_signal_density: float
@@ -608,6 +613,7 @@ def run_scenario(
                 title=title,
                 severity=incident_score.severity,
                 fused_score=incident_score.fused_score,
+                anomaly_confidence=incident_score.anomaly_confidence,
                 entity_ids=entity_ids,
                 signal_ids=[s.signal_id for s in candidate.signals],
                 recurrence_of=link.recurrence_of if link else None,
@@ -623,6 +629,7 @@ def run_scenario(
                     title=title,
                     severity=incident_score.severity,
                     fused_score=incident_score.fused_score,
+                    anomaly_confidence=incident_score.anomaly_confidence,
                     base_score=incident_score.base_score,
                     n_distinct_detector_layers=incident_score.n_distinct_detector_layers,
                     community_signal_density=incident_score.community_signal_density,
@@ -861,7 +868,8 @@ def _print_run(result: RunResult) -> None:
     for inc in result.incidents:
         print(  # noqa: T201
             f"  incident={inc.incident_id} title={inc.title!r} severity={inc.severity} "
-            f"fused={inc.fused_score:.3f} base={inc.base_score:.3f} "
+            f"fused={inc.fused_score:.3f} anomaly_confidence={inc.anomaly_confidence:.1f}/100 "
+            f"base={inc.base_score:.3f} "
             f"n_layers={inc.n_distinct_detector_layers} density={inc.community_signal_density:.2f} "
             f"n_signals={inc.n_signals} n_entities={len(inc.entity_keys)} "
             f"recurrence_of={inc.recurrence_of} similarity={inc.recurrence_similarity} "

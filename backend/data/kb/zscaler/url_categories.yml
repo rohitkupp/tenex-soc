@@ -1,0 +1,136 @@
+# Non-security ZScaler URL category / supercategory / appclass vocabulary --
+# MIGRATION-01 change 4's Zscaler-semantics corpus. Matches the category set this system's own
+# synthetic corpus draws from (datagen/emitters/zscaler.py `CATEGORIES` / `NAMED_CATEGORIES`),
+# so a category value the agent sees in a real or synthetic log always resolves to an entry
+# here. See threat_verdicts.yml for the five Security-supercategory categories, which are
+# ZScaler's threat verdicts and kept in that separate file deliberately.
+
+evidence_source: zscaler_verdict
+
+categories:
+  - category: Professional Services
+    supercategory: Business and Economy
+    appclass: General Browsing
+    baseline_risk: 0
+  - category: Corporate Marketing
+    supercategory: Business and Economy
+    appclass: General Browsing
+    baseline_risk: 0
+  - category: Web Search
+    supercategory: Internet Services
+    appclass: Web Search
+    baseline_risk: 0
+  - category: Internet Services
+    supercategory: Internet Services
+    appclass: General Browsing
+    baseline_risk: 0
+  - category: Web Hosting
+    supercategory: Internet Services
+    appclass: Web Hosting
+    baseline_risk: 5
+    note: >
+      Generic hosting infrastructure -- legitimate the overwhelming majority of the time, but
+      also where freshly-registered attacker infrastructure often lands before it earns a more
+      specific (or Security) category. Combine with domain age / rarity, never flag on category
+      alone.
+  - category: Content Delivery Networks
+    supercategory: Internet Services
+    appclass: CDN
+    baseline_risk: 0
+    note: CDN edge IPs serve many unrelated customers; a Host/SNI mismatch here is the domain-fronting tell (T1090 family), not the category itself.
+  - category: Online Advertising
+    supercategory: Internet Services
+    appclass: Advertising
+    baseline_risk: 10
+  - category: News and Media
+    supercategory: News and Media
+    appclass: General Browsing
+    baseline_risk: 0
+  - category: Social Networking
+    supercategory: Social and Entertainment
+    appclass: Social Networking
+    baseline_risk: 15
+    policy_blockable: true
+  - category: Streaming Media
+    supercategory: Social and Entertainment
+    appclass: Streaming Media
+    baseline_risk: 10
+    policy_blockable: true
+  - category: Shopping and Auctions
+    supercategory: Shopping and Auctions
+    appclass: Shopping
+    baseline_risk: 5
+    policy_blockable: true
+  - category: Education
+    supercategory: Education
+    appclass: General Browsing
+    baseline_risk: 0
+  - category: Health
+    supercategory: Health
+    appclass: General Browsing
+    baseline_risk: 0
+  - category: Government
+    supercategory: Government and Politics
+    appclass: General Browsing
+    baseline_risk: 0
+  - category: Finance
+    supercategory: Finance and Investment
+    appclass: General Browsing
+    baseline_risk: 0
+  - category: Travel
+    supercategory: Travel
+    appclass: General Browsing
+    baseline_risk: 0
+  - category: Sports
+    supercategory: Sports
+    appclass: General Browsing
+    baseline_risk: 5
+    policy_blockable: true
+  - category: Reference
+    supercategory: Reference
+    appclass: General Browsing
+    baseline_risk: 0
+  - category: File Host
+    supercategory: Internet Services
+    appclass: File Share
+    baseline_risk: 25
+    note: >
+      Consumer file-sharing/cloud-storage destinations. High baseline risk relative to other
+      non-Security categories because this is exactly the category shape T1567/T1567.002 use --
+      a large upload here is worth far more scrutiny than the same upload to a "Web Hosting"
+      category domain.
+  - category: Professional Networking
+    supercategory: Business and Economy
+    appclass: Social Networking
+    baseline_risk: 5
+
+named_categories:
+  # Categories a scenario author or the agent will encounter by name rather than by generic
+  # entry; kept distinct because each has a specific interpretive rule.
+  - category: Newly Registered and Revived Domains
+    supercategory: Miscellaneous
+    appclass: General Browsing
+    baseline_risk: 45
+    meaning: >
+      ZScaler's own domain-age-based flag -- the destination's registration is recent or was
+      recently revived. This is a vendor judgment about domain age, not our own baseline
+      rarity/first-contact computation (which measures *this org's* contact history, not the
+      domain's registration date). The two are complementary: a domain can be old but
+      first-contact-for-this-org (our rarity signal), or newly-registered but already contacted
+      by this org many times today (this category). Cite them separately.
+  - category: Miscellaneous or Unknown
+    supercategory: Miscellaneous
+    appclass: General Browsing
+    baseline_risk: 20
+    meaning: >
+      ZScaler's default/uncategorized bucket -- the destination did not match any more specific
+      category. This is the field default for a clean, otherwise-unremarkable transaction; do
+      not over-read a low-baseline-risk "uncategorized" hit as suspicious on its own.
+
+interpretation_guidance: >
+  `urlcategory`/`urlsupercategory`/`appclass` are ZScaler's own content classification -- read
+  them, but do not let them substitute for our own extractors' judgment. A destination correctly
+  categorized "File Host" with sanctioned, routine usage is not evidence of anything; the same
+  category paired with our own rarity and burst evidence (first-seen for this user, volume far
+  above baseline) is what makes T1567.002 a supportable hypothesis. Category is context for
+  interpreting a destination, not a substitute for behavioural evidence.

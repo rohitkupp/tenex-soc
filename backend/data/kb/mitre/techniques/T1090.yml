@@ -1,0 +1,33 @@
+technique: T1090
+name: Proxy
+tactics: [Command and Control]
+description: >
+  Adversaries use a connection proxy to direct network traffic between systems, or as an
+  intermediary for command-and-control communications, to avoid direct connections to their own
+  infrastructure. Proxying reduces the number of simultaneous outbound connections, provides
+  resiliency against connection loss, and can ride over trusted communication paths (including
+  CDN routing schemes) to avoid suspicion. Adversaries may chain multiple proxies together to
+  further disguise the true source of traffic.
+observable_with_zscaler_proxy: "PARTIAL"
+required_fields: [src_ip, dst_ip, domain, ts, action, urlcategory]
+useful_additional_evidence: [asn_reputation_feed, tor_exit_node_list, netflow_east_west]
+zscaler_observables:
+  - egress traffic to a destination in a known anonymizer/VPN/proxy-avoidance URL category
+  - a request Blocked by policy immediately followed by an Allowed request to the same host within a short window (a policy-evasion retry pattern)
+  - a single internal host relaying disproportionate traffic volume to many distinct external destinations relative to its peers
+supporting_detectors: [rarity, beaconing, stl]
+evidence_required:
+  - destination category is anonymizer/proxy-avoidance, or the domain is on a known open-proxy/VPN-exit list
+  - a blocked-then-allowed pair to the same host within a short window
+  - unusually high distinct-destination fan-out from one source relative to its own baseline
+evidence_that_weakens:
+  - the destination is a sanctioned corporate VPN or remote-access gateway
+  - the user's department has a documented business reason to use anonymization tooling (e.g. security research)
+  - the blocked-then-allowed pattern matches a known policy-exception rollout, not a retry
+attack_detection_guidance: >
+  This data source cannot see chained proxy topology -- which internal or external node relayed
+  to which -- only the coarse, victim-side pattern: contact with anonymizer-category
+  infrastructure, or a blocked request retried and then allowed. Do not claim multi-hop or
+  internal-proxy sub-technique detail from proxy logs alone; that requires east-west network
+  telemetry this source does not carry.
+source: MITRE ATT&CK

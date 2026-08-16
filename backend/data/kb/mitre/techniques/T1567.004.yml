@@ -1,0 +1,35 @@
+technique: T1567.004
+name: Exfiltration Over Webhook
+tactics: [Exfiltration]
+description: >
+  Adversaries exfiltrate data to a webhook endpoint rather than over their primary
+  command-and-control channel. Webhooks let a server push data over HTTP/S to a client without
+  the client polling for it; many public and commercial services (Discord, Slack, webhook.site,
+  and others) support creating webhook endpoints consumable by other services. An adversary may
+  link an attacker-owned environment to a victim SaaS service for repeated automated
+  exfiltration, or post staged data directly to a webhook URL to exfiltrate it manually. Access
+  is typically over HTTPS, and traffic can blend in when the webhook endpoint points to a
+  commonly used SaaS or collaboration service.
+observable_with_zscaler_proxy: "YES"
+required_fields: [principal, domain, ts, bytes_out, http_method, url_path]
+useful_additional_evidence: [webhook_endpoint_registration_log, saas_admin_audit_log, file_info]
+zscaler_observables:
+  - POST requests to a webhook-hosting domain (chat platform, automation service, or generic webhook relay) carrying a high-entropy path token identifying the specific endpoint
+  - repeated or scheduled posts to the same webhook URL with growing or irregular payload size
+  - destination category is a collaboration/chat SaaS tool the user does not normally interact with via API
+supporting_detectors: [rarity, burst, url_entropy]
+evidence_required:
+  - POST traffic to a webhook-shaped URL path (high-entropy or UUID-like token, no page load preceding it)
+  - destination rarity for this user or department
+  - upload volume or cadence inconsistent with a one-off manual integration test
+evidence_that_weakens:
+  - a documented, IT-sanctioned automation or CI/CD webhook with a known, stable endpoint
+  - the same webhook URL contacted consistently over a long baseline (not first-seen)
+  - payload size small and constant, consistent with a status/notification ping rather than a data transfer
+attack_detection_guidance: >
+  The distinguishing shape is a POST directly to a webhook endpoint -- no preceding navigation,
+  a high-entropy token in the path identifying the specific hook -- rather than to a general API
+  root. Combine url_entropy evidence on the path with rarity on the destination; a first-seen
+  webhook host receiving POSTs with growing payload size over time is the strongest version of
+  this pattern the proxy can show.
+source: MITRE ATT&CK

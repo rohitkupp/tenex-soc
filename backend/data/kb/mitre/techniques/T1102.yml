@@ -1,0 +1,34 @@
+technique: T1102
+name: Web Service
+tactics: [Command and Control]
+description: >
+  Adversaries use an existing, legitimate external web service (popular cloud platforms, social
+  media, code-hosting sites) as a relay for command-and-control traffic. Hosts within a network
+  are typically already communicating with these services, so the added traffic gives an
+  adversary significant cover and rides through firewall rules already permitting the service.
+  These providers also commonly use TLS, giving the channel an additional layer of protection
+  from content inspection.
+observable_with_zscaler_proxy: "YES"
+required_fields: [principal, src_ip, domain, ts, bytes_out, bytes_in, http_method, user_agent, urlcategory]
+useful_additional_evidence: [oauth_token_scope, saas_api_audit_log, endpoint_process_telemetry]
+zscaler_observables:
+  - API-shaped requests (POST/PUT, JSON content) to a consumer web service domain from a non-browser user_agent
+  - high-frequency, low-volume request cadence to a pastebin, chat-webhook, or code-hosting domain with no matching business use
+  - repeated contact with a legitimate third-party service outside the requesting user's normal role or department
+supporting_detectors: [beaconing, rarity, burst]
+evidence_required:
+  - sustained or periodic contact with a popular external web service atypical for this user
+  - request cadence or shape (machine-regular timing, API-style paths) inconsistent with interactive browsing
+  - destination rarity for this user or department
+evidence_that_weakens:
+  - sanctioned integration (a documented Slack/Teams webhook or on-call bot known to IT)
+  - developer or engineering role with a legitimate, documented reason to call that service's API
+  - a single isolated access rather than a sustained or recurring pattern
+  - the domain is a widely-used SaaS tool already on the org's approved list
+attack_detection_guidance: >
+  Look for beaconing-shaped regularity or destination rarity on a domain that is itself a
+  legitimate, popular web service (cloud storage, pastebin, chat webhook, code host) rather than
+  obviously malicious infrastructure -- that combination is what makes this technique hide in
+  plain sight. The giveaway is a request pattern that does not match how a human uses that
+  service, not the service's identity.
+source: MITRE ATT&CK

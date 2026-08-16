@@ -1,0 +1,49 @@
+# MIGRATION-01-evidence-first.md, change 4: "Filter ATT&CK to proxy-observable techniques".
+#
+# A web proxy cannot observe registry modification, LSASS dumping, or process injection, and
+# retrieving those techniques invites hypotheses the telemetry can never support -- which is
+# precisely how RAG creates false attribution. This file is the hard gate: `app/agent/mitre.py`
+# loads exactly these thirteen technique ids and nothing else.
+#
+# Loading rules (enforced at import time by app/agent/mitre.py, not by convention):
+#   1. Every id listed here MUST have a matching `data/kb/mitre/techniques/{id}.yml` document.
+#   2. Every `.yml` document under `data/kb/mitre/techniques/` MUST have its `technique` field
+#      equal to an id listed here. A technique document that exists on disk but is not in this
+#      allowlist is a corpus-integrity error, not a silently-ignored extra file -- the point of
+#      an allowlist is that "not listed" and "not loadable" are the same thing.
+#   3. This list must contain exactly thirteen entries, no more, no fewer -- the exact starting
+#      set the migration specifies. Widening it is a deliberate, reviewed decision (docs), not a
+#      side effect of adding a YAML file.
+#
+# `name` here is redundant with the `name` field inside each technique document -- kept anyway
+# so this file is readable as a standalone manifest of "what this system can talk about" without
+# opening thirteen other files, and so a mismatch between the two (a doc renamed without updating
+# this file, or vice versa) is a loud, testable error rather than a silent drift.
+
+techniques:
+  - id: T1071.001
+    name: Web Protocols
+  - id: T1102
+    name: Web Service
+  - id: T1567
+    name: Exfiltration Over Web Service
+  - id: T1567.002
+    name: Exfiltration to Cloud Storage
+  - id: T1567.004
+    name: Exfiltration Over Webhook
+  - id: T1041
+    name: Exfiltration Over C2 Channel
+  - id: T1029
+    name: Scheduled Transfer
+  - id: T1568.002
+    name: Domain Generation Algorithms
+  - id: T1105
+    name: Ingress Tool Transfer
+  - id: T1090
+    name: Proxy
+  - id: T1505.003
+    name: Web Shell
+  - id: T1595
+    name: Active Scanning
+  - id: T1204
+    name: User Execution

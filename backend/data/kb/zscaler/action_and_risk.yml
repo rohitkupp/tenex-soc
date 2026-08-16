@@ -1,0 +1,48 @@
+# Action / disposition / risk-score semantics -- MIGRATION-01 change 4's Zscaler-semantics
+# corpus. Matches app/parsers/zscaler.py `_normalize_action` and docs/04's L1 rule inventory.
+
+evidence_source: zscaler_verdict
+
+action_values:
+  - raw: Allowed
+    normalized: allowed
+    meaning: ZScaler's policy engine permitted the transaction to proceed.
+  - raw: Blocked
+    normalized: blocked
+    meaning: >
+      ZScaler's policy engine denied the transaction (category policy, threat match, DLP match,
+      or an explicit block rule). `reason` (field_semantics.yml) carries which policy fired,
+      when present.
+  - raw: (anything else, including unrecognized or malformed values)
+    normalized: other
+    meaning: >
+      Parser fallback (app/parsers/zscaler.py `_normalize_action`) -- do not assume this means
+      "allowed"; it means the raw value did not match either known ZScaler disposition string.
+
+interpretation_guidance: >
+  A single Blocked event is routine and usually uninteresting -- users mistype URLs and hit
+  policy categories constantly. The pattern worth flagging is a Blocked request to a host
+  immediately followed by an Allowed request to the *same* host within a short window (a
+  policy-evasion retry, T1090's zscaler_observables) or a high rate of Blocked events
+  concentrated on one source in a short window (the burst extractor's shape, potentially
+  scanning- or brute-force-adjacent). Disposition alone, without that pattern, is not evidence.
+
+risk_score:
+  field: riskscore
+  range: [0, 100]
+  source: ZScaler's own composite risk model -- destination reputation, category, and internal
+    behavioural signals combined by ZScaler, not by this system.
+  interpretation_guidance: >
+    Treat `riskscore` as a second, independent vendor opinion, not as a replacement for or input
+    to this system's own `anomaly_confidence` (isotonic-calibrated against our own detectors) or
+    `threat_confidence` (the LLM's hypothesis-evaluation output). The two must never be
+    conflated or averaged together -- a narrative should be able to say "ZScaler's own risk score
+    was 92 on this request, independent of our own anomaly detection, which separately flagged
+    the same entity-window via beaconing evidence" without implying the two numbers are the same
+    kind of measurement.
+  known_rule: >
+    docs/04's L1 Sigma rule inventory already keys one rule directly on this field: "ZScaler risk
+    score >= 80 on an otherwise-allowed request" maps to T1071 -- an *allowed* request (ZScaler's
+    policy did not block it) that ZScaler's own risk model still scored highly is a meaningful
+    combination precisely because the two ZScaler-native signals (disposition, risk score)
+    disagree with each other.

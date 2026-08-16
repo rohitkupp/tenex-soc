@@ -46,6 +46,7 @@ from sqlalchemy.orm import Session
 
 from app.core.db import get_session_factory
 from app.core.logging import configure_logging, get_logger
+from app.detection.fusion import anomaly_confidence_from_fused_score
 from app.learning.calibration import refit_calibrators
 from app.learning.feedback import FeedbackInput, record_feedback
 from app.learning.retrain import run_classifier_retrain
@@ -76,6 +77,22 @@ _SEVERITY_THRESHOLDS = (  # docs/04 "Severity" -- reused exactly, so seeded seve
 
 def _severity_for(score: float) -> str:
     for threshold, label in _SEVERITY_THRESHOLDS:
+        if score >= threshold:
+            return label
+    return "low"
+
+
+# docs/v2_migration change 3 ("two confidences, never mixed") + the "two confidences" migration's
+# own backfill -- same three buckets, reused here rather than invented, so a seeded verdict's
+# threat_confidence lands in the same bucket a real migration-era backfilled row would have.
+_THREAT_CONFIDENCE_THRESHOLDS = (
+    (0.75, "high"),
+    (0.40, "moderate"),
+)
+
+
+def _threat_confidence_for(score: float) -> str:
+    for threshold, label in _THREAT_CONFIDENCE_THRESHOLDS:
         if score >= threshold:
             return label
     return "low"
@@ -272,6 +289,7 @@ def _make_incident_and_verdict(
         title=f"{detector_summary} on entity {signals[0].entity_value}",
         severity=_severity_for(fused_score),
         fused_score=fused_score,
+        anomaly_confidence=anomaly_confidence_from_fused_score(fused_score),
         entity_ids=[],
         signal_ids=[s.id for s in signals],
         status="closed",
@@ -295,7 +313,11 @@ def _make_incident_and_verdict(
     verdict = TriageVerdict(
         incident_id=incident.id,
         disposition=verdict_disposition,
-        confidence=fused_score,
+        threat_confidence=_threat_confidence_for(fused_score),
+        threat_confidence_reason=(
+            f"Synthetic seed judgement: evidence strength from {detector_summary} corresponds "
+            f"to a fused score of {fused_score:.2f}."
+        ),
         llm_severity_opinion=incident.severity,
         mitre_techniques=([primary_technique] if (label == 1 and primary_technique) else []),
         summary=f"Synthetic seed verdict for {detector_summary}.",

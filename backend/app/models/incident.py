@@ -8,6 +8,7 @@ CREATE TABLE incidents (
   title TEXT NOT NULL,
   severity TEXT NOT NULL,
   fused_score REAL NOT NULL,
+  anomaly_confidence REAL NOT NULL,
   entity_ids BIGINT[] NOT NULL,
   signal_ids BIGINT[] NOT NULL,
   status TEXT NOT NULL DEFAULT 'open',
@@ -18,6 +19,17 @@ CREATE TABLE incidents (
 );
 CREATE INDEX ON incidents USING hnsw (embedding vector_cosine_ops);
 ```
+
+`anomaly_confidence` — docs/v2_migration change 3 ("two confidences, never mixed") — is the
+same `fused_score` on a 0-100 scale (`app.detection.fusion.anomaly_confidence_from_fused_score`),
+added by migration `<see backend/alembic/versions for the "two confidences" revision>` alongside
+that migration's `triage_verdicts.confidence` -> `threat_confidence`/`threat_confidence_reason`
+split. Existing rows were backfilled from their own `fused_score` at migration time (a defensible,
+lossless-for-this-direction choice: it *is* the same number, just rescaled — see that migration's
+own docstring for the reasoning). **The LLM may never write this column** — `app.agent.verifier.
+verify_anomaly_confidence` is a hard, deterministic rejection if a triage verdict's echoed
+`anomaly_confidence` differs from the value already persisted here; nothing in `app.agent` ever
+issues an `UPDATE` against this column.
 
 `tenant_id` overrides `TenantScopedMixin`'s column exactly like `app.models.event.Event` and
 `app.models.signal.Signal` — no FK, no bare index, matching docs/02's literal SQL for this
@@ -59,6 +71,9 @@ class Incident(Base, TenantScopedMixin):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     severity: Mapped[str] = mapped_column(Text, nullable=False)
     fused_score: Mapped[float] = mapped_column(REAL, nullable=False)
+    # docs/v2_migration change 3: the same fused_score, rescaled to 0-100 -- see this module's own
+    # docstring and app.detection.fusion.anomaly_confidence_from_fused_score.
+    anomaly_confidence: Mapped[float] = mapped_column(REAL, nullable=False)
     entity_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), nullable=False)
     signal_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger), nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="open")
