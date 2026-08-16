@@ -15,6 +15,7 @@ from app.agent.context import build_agent_context
 from app.agent.tools import (
     QUERY_EVENTS_HARD_CAP,
     ToolError,
+    dispatch_tool,
     get_entity_baseline,
     get_entity_timeline,
     get_related_signals,
@@ -100,6 +101,22 @@ def test_query_events_pseudonymizes_principal_and_ips(incident_setup) -> None:
         assert row["src_ip"].startswith("ip_")
         # domain is NEVER pseudonymized (docs/06 do-NOT list)
         assert row["domain"] == "evil-newly-registered.example"
+
+
+def test_query_events_exposes_log_citation_id(incident_setup) -> None:
+    """docs/v2_migration change 7's `[LOG-n]` citation form is keyed on the file's own line
+    number (`Event.raw_line_no`), not the DB primary key."""
+    tenant, _analysis, events, _signal, incident = incident_setup
+    session = get_session_factory()()
+    try:
+        ctx = build_agent_context(session, tenant.id, incident.id)
+        results = query_events(ctx, {"principal": "alice@corp.example"}, limit=50)
+    finally:
+        session.close()
+
+    by_id = {r["id"]: r for r in results}
+    for event in events:
+        assert by_id[event.id]["log_id"] == f"LOG-{event.raw_line_no}"
 
 
 def test_query_events_truncates_free_text_fields_to_256_chars(incident_setup) -> None:
@@ -230,10 +247,31 @@ def test_get_entity_baseline_shape(incident_setup) -> None:
         "baseline_p95",
         "z_score",
         "n_baseline_windows",
+        "baseline_id",
     }
     # No prior history in this test's window -> no baseline windows -> null z_score, not NaN/inf
     assert result["n_baseline_windows"] == 0
     assert result["z_score"] is None
+    # docs/v2_migration change 7's BASELINE-n citation namespace -- minted here, not invented by
+    # the model.
+    assert result["baseline_id"] == "BASELINE-1"
+
+
+def test_get_entity_baseline_mints_sequential_citation_ids(incident_setup) -> None:
+    tenant, _analysis, _events, _signal, incident = incident_setup
+    session = get_session_factory()()
+    try:
+        ctx = build_agent_context(session, tenant.id, incident.id)
+        pseudonym = ctx.pseudonymize_value("alice@corp.example", "user")
+        first = get_entity_baseline(ctx, "user", pseudonym, "event_count")
+        second = get_entity_baseline(ctx, "user", pseudonym, "bytes_out")
+    finally:
+        session.close()
+
+    assert first["baseline_id"] == "BASELINE-1"
+    assert second["baseline_id"] == "BASELINE-2"
+    assert ctx.baseline_citations["BASELINE-1"] == first
+    assert ctx.baseline_citations["BASELINE-2"] == second
 
 
 def test_get_entity_baseline_rejects_unknown_metric(incident_setup) -> None:
@@ -289,3 +327,42 @@ def test_get_related_signals_domain_entity_not_pseudonymized(
     assert len(results) == 1
     assert results[0]["id"] == domain_signal.id
     assert results[0]["entity_value"] == "evil-newly-registered.example"
+
+
+def test_get_related_signals_exposes_log_ids_not_bare_event_ids(incident_setup) -> None:
+    tenant, _analysis, events, _signal, incident = incident_setup
+    session = get_session_factory()()
+    try:
+        ctx = build_agent_context(session, tenant.id, incident.id)
+        pseudonym = ctx.pseudonymize_value("alice@corp.example", "user")
+        results = get_related_signals(ctx, "user", pseudonym)
+    finally:
+        session.close()
+
+    assert len(results) == 1
+    assert "evidence_event_ids" not in results[0]
+    assert set(results[0]["log_ids"]) == {f"LOG-{e.raw_line_no}" for e in events}
+
+
+# ---------------------------------------------------------------------------- search_mitre
+
+
+def test_search_mitre_records_retrieved_techniques_on_context(incident_setup) -> None:
+    """docs/v2_migration change 7 check 3 (retrieval match): a technique the Analyst pulls via
+    this tool mid-investigation counts as "actually retrieved" for this run."""
+    tenant, _analysis, _events, _signal, incident = incident_setup
+    session = get_session_factory()()
+    try:
+        ctx = build_agent_context(session, tenant.id, incident.id)
+        assert ctx.retrieved_technique_ids == frozenset()
+        results = dispatch_tool(
+            ctx,
+            "search_mitre",
+            {"query": "beaconing periodic callback command and control", "top_k": 3},
+        )
+    finally:
+        session.close()
+
+    assert results  # the corpus has real beaconing-relevant techniques
+    retrieved_ids = {r["id"] for r in results}
+    assert ctx.retrieved_technique_ids == retrieved_ids

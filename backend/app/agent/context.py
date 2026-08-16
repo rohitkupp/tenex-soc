@@ -26,20 +26,69 @@ raw value. `AgentContext.resolve_entity_value` is the one place that reverse loo
 in-memory, single-run cache (never persisted, never the tenant's real reverse-map table) seeded
 at construction with every entity already known to be in the incident's scope, and extended
 every time `pseudonymize_value` mints a new pseudonym during the run.
+
+## Change 7's other two citation namespaces: `BASELINE-n` and the retrieval trace
+
+`EVIDENCE-n`/`LOG-n` citations resolve against data that already has a stable, deterministic id
+(`EvidencePayload.evidence_id`, `Event.raw_line_no`) before the run even starts. `BASELINE-n` does
+not — `get_entity_baseline` (`tools.py`) computes an ad hoc comparison on demand, mid-run, so
+*this run* is the only place an id for it can be minted. `AgentContext.cite_baseline` is that
+mint: called once per `get_entity_baseline` call, it assigns the next `BASELINE-{n}` id, remembers
+the full result dict so `app.agent.verifier` can check numbers cited against it later, and hands
+the id back so the tool result the model sees already carries its own citation id (the model never
+has to invent one).
+
+Similarly, change 7 check 3 ("retrieval match... a technique the model recalled from training and
+never retrieved is a hallucination") needs to know the full set of technique ids this run actually
+retrieved — both the automatic evidence-driven retrieval (`app.agent.retrieval.
+retrieve_candidates`, run once before the Analyst's first turn) and anything the Analyst pulled
+mid-investigation via the `search_mitre` tool. `record_retrieved_techniques` accumulates both into
+one set for the verifier to check cited technique ids against.
+
+## Where `EvidencePayload`s come from at triage time (change 2's own gap)
+
+`app.detection.evidence.run.run_evidence_layer` is the pipeline-worker entrypoint that would
+normally produce and persist an analysis's `EvidencePayload`s, but change 2's own module docstring
+is explicit that payloads "are not persisted to a table" — and nothing in this checkout's actual
+pipeline path (`app.workers.detector` is still a skeleton; `app.graph.pipeline_demo`, the only
+thing that runs detection end to end today, predates the evidence-extractor package and never
+calls it) produces or stores them anywhere a later triage run could read back. `compute_evidence_
+payloads` below closes that gap the only way available without persisting anything or touching
+`app.detection.evidence` itself: it re-runs the same pure/DB-read-only steps `run_evidence_layer`
+composes (`fetch_event_rows` -> every extractor's `raw_evidence_*` -> `resolve_evidence` ->
+`finalize_evidence`), deliberately *not* calling `run_evidence_layer` itself, because that
+function's own job also includes `persist_signals` — calling it a second time per triage run would
+insert duplicate `signals` rows. Every function this module calls is side-effect-free (baseline
+lookups are reads), so re-running this per triage call is safe, if not free — see this function's
+own docstring for the cost tradeoff and the injection escape hatch `build_agent_context` exposes.
 """
 
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from ipaddress import IPv4Address, IPv6Address
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.logging import get_logger
+from app.detection.evidence.beaconing import raw_evidence_beaconing
+from app.detection.evidence.burst import raw_evidence_burst
+from app.detection.evidence.dga import load_artifact as load_dga_artifact
+from app.detection.evidence.dga import raw_evidence_dga
+from app.detection.evidence.events_dao import fetch_event_rows
+from app.detection.evidence.payload import EvidencePayload, RawEvidence, finalize_evidence
+from app.detection.evidence.rarity import raw_evidence_rarity
+from app.detection.evidence.resolve_evidence import resolve_evidence
+from app.detection.evidence.stl import raw_evidence_stl
+from app.detection.evidence.url_path import raw_evidence_url_entropy
 from app.models.base import tenant_scope
 from app.models.entity import Entity
+from app.models.event import Event
 from app.models.incident import Incident
 from app.models.signal import Signal
 from app.models.tenant import Tenant
@@ -50,7 +99,11 @@ __all__ = [
     "AgentContext",
     "AgentContextError",
     "build_agent_context",
+    "compute_evidence_payloads",
+    "log_citation_id",
 ]
+
+log = get_logger(__name__)
 
 # entity_type (docs/02 `signals.entity_type` / `entities.type`) -> pseudonymize() kind.
 # "domain" is deliberately absent: docs/06's do-NOT list ("Do not pseudonymize: domains").
@@ -97,7 +150,51 @@ class AgentContext:
     # `app.agent.verifier.verify_anomaly_confidence`'s tolerance for why exact equality still
     # works after this rounding.
     anomaly_confidence: float
+    # docs/v2_migration change 2: this incident's own `EvidencePayload`s, already filtered to its
+    # entity scope + time window (`_filter_evidence_for_incident`) — see `compute_evidence_
+    # payloads` and this module's own docstring for where these come from.
+    evidence_payloads: tuple[EvidencePayload, ...] = ()
     _pseudonym_to_raw: dict[str, str] = field(default_factory=dict)
+    # change 7's `BASELINE-n` citation namespace — see this module's own docstring.
+    _baseline_citations: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # change 7 check 3 (retrieval match) — every technique id this run has actually retrieved,
+    # either by the automatic evidence-driven step or via the `search_mitre` tool mid-run.
+    _retrieved_technique_ids: set[str] = field(default_factory=set)
+
+    def cite_baseline(self, result: dict[str, Any]) -> str:
+        """Mint the next `BASELINE-{n}` id for one `get_entity_baseline` result, remember it for
+        `app.agent.verifier`, and return the id so the tool result itself can carry it."""
+        baseline_id = f"BASELINE-{len(self._baseline_citations) + 1}"
+        self._baseline_citations[baseline_id] = result
+        return baseline_id
+
+    @property
+    def baseline_citations(self) -> dict[str, dict[str, Any]]:
+        return dict(self._baseline_citations)
+
+    def record_retrieved_techniques(self, technique_ids: Sequence[str]) -> None:
+        self._retrieved_technique_ids.update(technique_ids)
+
+    @property
+    def retrieved_technique_ids(self) -> frozenset[str]:
+        return frozenset(self._retrieved_technique_ids)
+
+    def log_ids_for_event_ids(self, event_ids: set[int]) -> dict[int, str]:
+        """`Event.id -> LOG-{raw_line_no}` for a small, explicit set of event ids -- translates
+        `Signal.evidence_event_ids` (DB primary keys, existing schema) into the citation
+        identifiers change 7 actually wants cited. A targeted `IN (...)` query, never a
+        full-analysis scan (CLAUDE.md rule 1). Shared by `tools.get_related_signals` and
+        `orchestrator._build_incident_context_block` so the two places that render a `Signal`'s
+        evidence for the model always agree on the id."""
+        if not event_ids:
+            return {}
+        with tenant_scope(self.session, self.tenant_id):
+            rows = self.session.execute(
+                select(Event.id, Event.raw_line_no)
+                .where(Event.analysis_id == self.analysis_id)
+                .where(Event.id.in_(event_ids))
+            ).all()
+        return {event_id: log_citation_id(raw_line_no) for event_id, raw_line_no in rows}
 
     def pseudonymize_value(self, value: str, entity_type: str) -> str:
         """Pseudonymize one entity value per docs/06's do/do-NOT list, and remember the mapping
@@ -189,8 +286,6 @@ def _incident_window(session: Session, incident: Incident) -> tuple[datetime, da
     if not all_event_ids:
         return incident.created_at, incident.created_at
 
-    from app.models.event import Event  # local import: avoids a module-level cycle risk with
-
     rows = session.execute(select(Event.ts).where(Event.id.in_(all_event_ids))).scalars().all()
     if not rows:
         return incident.created_at, incident.created_at
@@ -221,10 +316,93 @@ def _entity_scope(session: Session, incident: Incident) -> frozenset[tuple[str, 
     return frozenset(scope)
 
 
+def log_citation_id(raw_line_no: int) -> str:
+    """`LOG-{n}` for a raw file line number — change 7's `[LOG-1291]` citation form, keyed on
+    `Event.raw_line_no` (the *file's* line number), not `Event.id` (the DB primary key). This
+    matches `EvidencePayload.contributing_line_numbers` exactly (change 2's own module docstring:
+    "the file's line numbers, not events.id"), so a citation minted from an evidence payload and
+    one minted from a tool-retrieved event are the same identifier space."""
+    return f"LOG-{raw_line_no}"
+
+
+def compute_evidence_payloads(
+    session: Session, *, analysis_id: uuid.UUID, tenant_id: uuid.UUID
+) -> list[EvidencePayload]:
+    """Re-derive this analysis's full `EvidencePayload` list on demand — see this module's own
+    docstring ("Where EvidencePayloads come from at triage time") for why this recomputes rather
+    than reading a persisted copy. Every step is pure or DB-read-only; nothing here inserts a row.
+
+    ## Cost
+
+    This re-runs every evidence extractor over every one of the analysis's events. For a single
+    `triage_incident` call that is the going cost of not having a persisted evidence store yet.
+    `triage_top_incidents_for_analysis` computes this **once** per analysis and passes the same
+    list into every incident's `build_agent_context` call (its own `evidence_payloads` override)
+    rather than paying this cost once per triaged incident — see that function.
+    """
+    with tenant_scope(session, tenant_id):
+        rows = fetch_event_rows(session, analysis_id)
+
+        try:
+            artifact = load_dga_artifact()
+        except FileNotFoundError:
+            # Degrade, never fail a triage run over a missing DGA model artifact (parallel to
+            # `orchestrator._prior_analyst_decisions_block`'s own degrade-on-failure policy) — DGA
+            # evidence is one of six extractors, not a triage precondition.
+            log.warning("agent.dga_artifact_missing", analysis_id=str(analysis_id))
+            artifact = None
+
+        raw_evidence: list[RawEvidence] = [
+            *raw_evidence_beaconing(rows),
+            *(raw_evidence_dga(rows, artifact=artifact) if artifact is not None else []),
+            *raw_evidence_burst(rows),
+            *raw_evidence_rarity(rows),
+            *raw_evidence_stl(rows),
+            *raw_evidence_url_entropy(rows),
+        ]
+        drafts = resolve_evidence(session, tenant_id, raw_evidence)
+    return finalize_evidence(drafts)
+
+
+def _filter_evidence_for_incident(
+    payloads: Sequence[EvidencePayload],
+    *,
+    entity_scope: frozenset[tuple[str, str]],
+    window_start: datetime,
+    window_end: datetime,
+) -> tuple[EvidencePayload, ...]:
+    """An `EvidencePayload` belongs to this incident when its own entity is one of the incident's
+    entities (same pairing `_entity_scope` already builds) and its window overlaps the incident's
+    own window, padded by `CITATION_TEMPORAL_SLACK` on each side — the same slack the citation
+    "scope" check uses, so an evidence payload that would pass a citation's scope check is never
+    excluded from the context that citation is drawn from."""
+    lo = window_start - CITATION_TEMPORAL_SLACK
+    hi = window_end + CITATION_TEMPORAL_SLACK
+    out = []
+    for p in payloads:
+        pair = (p.entity.get("type", ""), p.entity.get("value", ""))
+        if pair not in entity_scope:
+            continue
+        p_start, p_end = p.window
+        if p_start <= hi and lo <= p_end:
+            out.append(p)
+    return tuple(out)
+
+
 def build_agent_context(
-    session: Session, tenant_id: uuid.UUID, incident_id: uuid.UUID
+    session: Session,
+    tenant_id: uuid.UUID,
+    incident_id: uuid.UUID,
+    *,
+    evidence_payloads: Sequence[EvidencePayload] | None = None,
 ) -> AgentContext:
     """Load everything one incident's triage run needs, once, up front.
+
+    `evidence_payloads`, when given, is used as-is (still filtered to this incident's scope) --
+    the escape hatch `triage_top_incidents_for_analysis` uses to compute an analysis's evidence
+    once and share it across every incident's context instead of paying `compute_evidence_
+    payloads`'s cost once per incident. `None` (the default, and every direct `build_agent_context`
+    call in this package's own tests) computes it fresh.
 
     `tenant_id` is a required argument, not derived from the incident row — `app.models.base`'s
     tenant guard rejects *any* query against a tenant-scoped table (including a bare
@@ -250,6 +428,17 @@ def build_agent_context(
     if tenant is None:  # pragma: no cover - FK guarantees this in practice
         raise AgentContextError(f"tenant {tenant_id} not found")
 
+    all_evidence = (
+        evidence_payloads
+        if evidence_payloads is not None
+        else compute_evidence_payloads(
+            session, analysis_id=incident.analysis_id, tenant_id=tenant_id
+        )
+    )
+    incident_evidence = _filter_evidence_for_incident(
+        all_evidence, entity_scope=scope, window_start=window_start, window_end=window_end
+    )
+
     ctx = AgentContext(
         session=session,
         tenant_id=incident.tenant_id,
@@ -260,6 +449,7 @@ def build_agent_context(
         window_end=window_end,
         entity_scope=scope,
         anomaly_confidence=round(incident.anomaly_confidence, 1),
+        evidence_payloads=incident_evidence,
     )
     # Seed the reverse cache with every entity already known to be in scope, so a tool call
     # referencing one of the incident's own entities resolves even before query_events has

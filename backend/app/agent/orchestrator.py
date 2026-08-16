@@ -1,49 +1,51 @@
-"""Three-role agentic triage flow — docs/07-AGENT.md "Multi-agent flow":
+"""Four-stage evidence-first pipeline -- docs/v2_migration/MIGRATION-01-evidence-first.md changes
+5, 6, 7, 14, 15. Replaces the pre-migration three-role Investigator -> Devil's Advocate -> Reporter
+flow entirely.
 
-    Investigator -> Devil's Advocate -> Reporter
+## Path B -- per-incident investigation (change 6, refined by change 15)
 
-| Role | Job | Tools |
-|---|---|---|
-| Investigator | Gather evidence, form a hypothesis | all five (`app.agent.tools.TOOL_DEFINITIONS`) |
-| Devil's Advocate | Argue the false-positive case against the hypothesis | read-only subset |
-| Reporter | Reconcile both and emit the final structured verdict | none |
+```
+evidence package + retrieved KB
+    -> Analyst LLM -> verifier pass 1 (cheap) -> Judge LLM -> verifier pass 2 (full) -> Presenter LLM
+```
 
-**"Read-only subset" for the Devil's Advocate.** Every tool in this package is already
-read-only (docs/07: "the agent cannot mutate anything") — so docs/07's "subset" has to mean a
-subset of the *five tools*, not a stricter mutation guarantee. This build's choice: the Devil's
-Advocate gets everything except `query_events` (`DEVILS_ADVOCATE_TOOLS` below). Rationale: the
-Investigator's job is open-ended discovery — it doesn't yet know what it's looking for, so
-`query_events`'s free-form filtering matters. The Devil's Advocate's job is to re-examine
-*already-surfaced* evidence and run *targeted* verification against it
-(`get_entity_timeline`/`get_entity_baseline`/`get_related_signals`/`search_mitre` all take a
-specific entity or query, no open-ended search) — giving it a fresh fishing expedition would
-both cost more of the shared tool budget and dilute its actual job, which is critiquing what's
-already on the table, not re-discovering the incident from scratch.
+Three LLM calls per incident (Analyst, Judge, Presenter) -- **not four.** Change 6 is explicit that
+the deterministic verifier is "code, not a model," so it is never counted as a call here even
+though it runs twice. Change 14's own cost line ("1 narrator call + (4 x triaged incidents)")
+implies four LLM calls per incident, which does not reconcile with change 6's three-LLM-stage
+description of the *same* pipeline -- flagged as a doc inconsistency in this build's report rather
+than silently invented around; this implementation follows change 6's unambiguous "verifier is
+code" statement and makes three real API calls per incident.
 
-## Why the Investigator and Devil's Advocate each get their own terminal tool
+**The devil's-advocate function did not get its own role.** Change 6 says it "survives as the
+mandatory `evidence_against` field and in the judge rubric" -- there is no longer a second,
+independent model call arguing the counter-case; `Finding.benign_alternatives` (required,
+non-empty) and `HypothesisEvaluation.evidence_against` are what the single Analyst call is
+required to produce, and judge rubric item 6 ("Are benign alternatives considered?") is what
+checks it was done seriously, not rubber-stamped.
 
-docs/07 specifies the *final* verdict's schema (`app.agent.schemas.TriageVerdictOut`,
-`emit_verdict`) but the Reporter has **no tools** and therefore cannot re-derive citations
-itself. For `narrative[].evidence_event_ids` to reach the Reporter in a form it can carry
-forward faithfully (not invent), the Investigator's own conclusion has to already be
-structured — hence `submit_findings` (`InvestigationFindings`). Symmetrically,
-`contradicting_evidence` is a *required* field on the final verdict (docs/07); the Devil's
-Advocate is the role that actually argues it, so it is forced to produce that argument in
-structured form (`submit_rebuttal` / `Rebuttal`) rather than leaving the Reporter to summarize
-free text it might get wrong. Every role boundary in this file is a schema boundary, not a
-prose hand-off.
+## Path A -- analysis-level narrative (change 14, once per upload)
 
-## Cost control (CLAUDE.md "Budget discipline")
+```
+deterministic overview stats + incident list + timeline entries -> Narrator LLM (one call)
+    -> deterministic verifier -> executive summary + timeline phase narratives
+```
 
-`effort` is set per role, not uniformly at the API default: `medium` for the Investigator (the
-role doing the real reasoning and tool orchestration) and Reporter (the role whose output is
-graded), `low` for the Devil's Advocate (a narrower, more mechanical task — read what's already
-there, run a few targeted checks, argue the counter-case). `AGENT_MAX_TOOL_CALLS`
-(`app.core.config.Settings.agent_max_tool_calls`, default 8) is a **shared** budget across the
-Investigator and Devil's Advocate, enforced by one `_ToolBudget` instance threaded through both
-— not eight calls *each*. When it hits zero, the next request from either role offers only the
-role's terminal tool (`tool_choice` forced), so the run always reaches a verdict rather than
-erroring out mid-investigation.
+No judge stage (change 14: "a judge pass over descriptive narrative is not worth the call"). The
+verifier still runs -- `narrate_analysis` below, `app.agent.verifier.verify_narrator_output`.
+
+## Cost control
+
+`effort` is set per stage, not uniformly: `medium` for the Analyst (the role doing the real
+reasoning and tool orchestration) and the Judge (careful evidentiary grading against a ten-item
+rubric is not a narrow, mechanical task -- the pre-migration Devil's Advocate's `low` effort choice
+does not transfer to a role now solely responsible for catching overclaims), `low` for the
+Presenter (it is handed already-verified structured findings and asked to reformat them into
+prose -- the narrowest, most mechanical stage in the pipeline) and the Narrator (Path A's single
+call, over data that is already fully reduced). `AGENT_MAX_TOOL_CALLS`
+(`app.core.config.Settings.agent_max_tool_calls`, default 8) belongs to the Analyst alone now --
+it is the only stage with tools; the Judge and Presenter make exactly one forced tool-use call
+each and never touch the shared budget.
 """
 
 from __future__ import annotations
@@ -61,26 +63,41 @@ from sqlalchemy.orm import Session
 
 from app.agent import prompts
 from app.agent.client import LiveCaller, LLMCaller, estimate_cost_usd
-from app.agent.context import AgentContext, AgentContextError, build_agent_context
+from app.agent.context import (
+    AgentContext,
+    AgentContextError,
+    build_agent_context,
+    compute_evidence_payloads,
+    log_citation_id,
+)
+from app.agent.retrieval import RetrievalCandidate, retrieve_candidates
 from app.agent.schemas import (
-    AgentRole,
-    InvestigationFindings,
-    Rebuttal,
+    AnalystOutput,
+    Finding,
+    JudgeOutput,
+    NarratorOutput,
     SchemaValidationError,
     ToolTraceEntry,
     TriageVerdictOut,
-    build_emit_verdict_tool,
-    build_submit_findings_tool,
-    build_submit_rebuttal_tool,
+    build_narrate_tool,
+    build_present_verdict_tool,
+    build_submit_analysis_tool,
+    build_submit_judgement_tool,
 )
 from app.agent.tools import TOOL_DEFINITIONS, ToolError, dispatch_tool
 from app.agent.verifier import (
     AnomalyConfidenceIntegrityError,
+    Pass1Result,
+    Pass2Result,
     verify_anomaly_confidence,
     verify_citations,
+    verify_narrator_output,
+    verify_pass1,
+    verify_pass2,
 )
 from app.core.config import get_settings
 from app.core.logging import get_logger
+from app.detection.evidence.payload import EvidencePayload
 from app.graph.timeline import build_timeline
 from app.models.analysis import Analysis
 from app.models.base import tenant_scope
@@ -88,7 +105,7 @@ from app.models.incident import Incident
 from app.models.signal import Signal
 from app.models.triage_verdict import TriageVerdict
 
-try:  # M13, concurrent — see this module's own docstring and CLAUDE.md's build brief item 8.
+try:  # M13, concurrent -- see this module's own docstring and CLAUDE.md's build brief item 8.
     from app.learning.memory import (
         get_prior_analyst_decisions_for_incident,
         render_prior_analyst_decisions_block,
@@ -101,7 +118,10 @@ except ImportError:  # pragma: no cover - integration point for when app/learnin
 __all__ = [
     "AgentRefusalError",
     "AgentTimeoutError",
+    "InsufficientEvidenceError",
     "MissingAPIKeyError",
+    "NarrationResult",
+    "narrate_analysis",
     "triage_incident",
     "triage_top_incidents_for_analysis",
 ]
@@ -111,27 +131,24 @@ log = get_logger(__name__)
 MAX_TOKENS_PER_TURN = 8192
 MAX_ROLE_TURNS = 12  # safety cap independent of the tool-call budget — see _run_tool_role
 MAX_SIGNALS_IN_CONTEXT = 30  # highest-confidence first — see _build_incident_context_block
-MAX_EVIDENCE_IDS_IN_CONTEXT = 20  # per signal/timeline-phase, same reasoning
+MAX_EVIDENCE_IDS_IN_CONTEXT = 20  # per signal/timeline-phase/evidence-payload, same reasoning
+MAX_EVIDENCE_PAYLOADS_IN_CONTEXT = 40  # CLAUDE.md rule 1 — cap before the prompt, not after
+MAX_RETRIEVED_CANDIDATES = 8  # change 4: "a small, evidence-relevant candidate set"
 
 # docs/07 "Bounds": "Input tokens | 60k per incident | Truncate oldest tool results." Checked
-# after every turn against that turn's own `usage.input_tokens` (the size of the request that
-# was just sent — the best available proxy for what the *next* request would cost before it's
-# built) — a live run without this measured 64.5k input tokens on a 9-signal incident, so this
-# is not a theoretical bound.
+# after every turn against that turn's own `usage.input_tokens`.
 MAX_INPUT_TOKENS = 60_000
 _TRUNCATED_TOOL_RESULT_PLACEHOLDER = (
     "[earlier tool result omitted to stay within the 60k input-token budget — call the tool "
     "again if you need this data]"
 )
 
-INVESTIGATOR_TOOLS: list[dict[str, Any]] = TOOL_DEFINITIONS
-DEVILS_ADVOCATE_TOOLS: list[dict[str, Any]] = [
-    t for t in TOOL_DEFINITIONS if t["name"] != "query_events"
-]
+ANALYST_TOOLS: list[dict[str, Any]] = TOOL_DEFINITIONS
 
-INVESTIGATOR_EFFORT = "medium"
-DEVILS_ADVOCATE_EFFORT = "low"
-REPORTER_EFFORT = "medium"
+ANALYST_EFFORT = "medium"
+JUDGE_EFFORT = "medium"
+PRESENTER_EFFORT = "low"
+NARRATOR_EFFORT = "low"
 
 
 class AgentTimeoutError(Exception):
@@ -144,9 +161,8 @@ class AgentTimeoutError(Exception):
 
 
 class AgentRefusalError(Exception):
-    """Claude Opus 5's safety classifiers declined a turn (`stop_reason == "refusal"`) — see the
-    claude-api skill's Claude Opus 5 migration notes. Treated the same as a timeout: emit
-    `needs_review`, never crash the triage run."""
+    """Claude Opus 5's safety classifiers declined a turn (`stop_reason == "refusal"`). Treated
+    the same as a timeout: emit `needs_review`, never crash the triage run."""
 
     def __init__(self, role: str, category: str | None) -> None:
         super().__init__(f"model refused during {role} (category={category})")
@@ -154,18 +170,25 @@ class AgentRefusalError(Exception):
         self.category = category
 
 
+class InsufficientEvidenceError(Exception):
+    """Every finding either failed to survive judging (REJECT) or failed pass 2's full
+    verification check -- there is nothing left that both a judge and code agree is trustworthy
+    enough to present. Distinct from `SchemaValidationError`: the Analyst/Judge outputs were all
+    individually well-formed, there is simply no verified finding left to hand the Presenter.
+    Caught by `triage_incident` exactly like the other flow-failure exceptions, falling back to
+    `needs_review` with `Pass2Result.invalid_citations` carried through so the reason is
+    inspectable, not a bare string."""
+
+    def __init__(self, reason: str, *, invalid_citations: tuple[dict[str, Any], ...] = ()) -> None:
+        super().__init__(reason)
+        self.invalid_citations = invalid_citations
+
+
 class MissingAPIKeyError(RuntimeError):
     """Raised by `triage_incident` when it needs to make a live call (no `caller` was injected)
     and `Settings.anthropic_api_key` is unset. docs/v2_migration change 12 removed the old
-    DEMO_MODE / no-key fallback (`app.agent.demo.synthesize_demo_verdict`) entirely — every
-    upload now makes real calls, so a missing key is a configuration error, not a mode to
-    degrade into. Raised here, at the one call site that would otherwise construct a
-    `LiveCaller`, rather than at process startup: `api`/`orchestrator`/`parser`/`enricher`/
-    `anonymizer`/`detector`/`correlator`/`tier2-sync` never need a key at all (docs/01), so
-    refusing to *boot* without one would fail healthy services for a key only the `agent`
-    worker (and its `POST /api/incidents/{id}/triage` callers) actually needs. This is also
-    the one path every test that wants live-call behavior already has to inject a `caller`
-    for (`tests/fixtures/llm/`, recorded fixtures) — see this module's own docstring."""
+    DEMO_MODE / no-key fallback entirely -- every upload now makes real calls, so a missing key is
+    a configuration error, not a mode to degrade into."""
 
     def __init__(self) -> None:
         super().__init__(
@@ -207,21 +230,62 @@ class _UsageAccumulator:
 # ---------------------------------------------------------------------------- incident context
 
 
-def _build_incident_context_block(ctx: AgentContext) -> str:
-    """The Investigator's (and, folded in again for the Devil's Advocate / Reporter's own first
-    turns, everyone's) view of the incident as computed upstream — docs/05 correlation, docs/04
-    detection, docs/05 timeline. Deterministic ordering (`app.graph.timeline.build_timeline`,
-    read-only import, M10's own public function — never reimplemented here) means the model
-    never has to order raw events itself.
+def _evidence_payload_for_prompt(p: EvidencePayload) -> dict[str, Any]:
+    """One `EvidencePayload`, rendered for the prompt with its citable `LOG-n` line ids instead
+    of bare integers (change 7) -- `evidence_id` itself (`EVIDENCE-n`) is already the citation the
+    model uses to reference this whole object."""
+    return {
+        "evidence_id": p.evidence_id,
+        "extractor": p.extractor,
+        "entity": p.entity,
+        "window_start": p.window[0].isoformat(),
+        "window_end": p.window[1].isoformat(),
+        "measurements": p.measurements,
+        "historical": p.historical,
+        "log_ids": [
+            log_citation_id(n) for n in p.contributing_line_numbers[:MAX_EVIDENCE_IDS_IN_CONTEXT]
+        ],
+        "nominates_candidate": p.nominates_candidate,
+        "nomination_score": p.nomination_score,
+    }
 
-    Signals are capped at `MAX_SIGNALS_IN_CONTEXT`, highest-confidence first — CLAUDE.md rule 1
-    ("The LLM never sees raw log volume... more than a few hundred events into a prompt, stop")
-    applies just as much to a large incident's signal list as to raw events: a real correlated
-    incident can carry thousands of signals (a whole beaconing/burst campaign on one entity, one
-    signal per window), and passing all of them would blow the 60k input-token budget on context
-    alone before the model ever calls a tool. `total_signal_count` tells the model the true size
-    so it knows to reach for `get_related_signals` on a specific entity for anything not shown
-    here, rather than assuming the shown list is exhaustive."""
+
+def _retrieved_candidate_for_prompt(rc: RetrievalCandidate) -> dict[str, Any]:
+    """One retrieved technique, with every change-4 detection-knowledge field the Analyst and
+    Judge both need -- `observable_with_zscaler_proxy`/`evidence_that_weakens` are "load-bearing:
+    the judge uses them to reject claims requiring telemetry we don't have" (change 4's own
+    words), so they travel with the candidate rather than being looked up separately."""
+    t = rc.technique
+    return {
+        "citation": f"MITRE-{t.id}",
+        "id": t.id,
+        "name": t.name,
+        "tactics": list(t.tactics),
+        "description": t.description,
+        "observable_with_zscaler_proxy": t.observable_with_zscaler_proxy,
+        "required_fields": list(t.required_fields),
+        "useful_additional_evidence": list(t.useful_additional_evidence),
+        "zscaler_observables": list(t.zscaler_observables),
+        "supporting_detectors": list(t.supporting_detectors),
+        "evidence_required": list(t.evidence_required),
+        "evidence_that_weakens": list(t.evidence_that_weakens),
+        "attack_detection_guidance": t.attack_detection_guidance,
+        "score": t.score,
+        "evidence_sources": list(rc.evidence_sources),
+    }
+
+
+def _build_incident_context_block(ctx: AgentContext) -> str:
+    """Every stage's (Analyst directly; Judge/Presenter folded back in for their own first turns)
+    view of the incident, computed upstream -- docs/05 correlation, docs/04 detection, change 2's
+    evidence extractors, change 4/5's evidence-driven retrieval. Deterministic ordering
+    (`app.graph.timeline.build_timeline`) means no stage ever has to order raw events itself.
+
+    Has the side effect of running the automatic evidence-driven retrieval step
+    (`app.agent.retrieval.retrieve_candidates`) and recording every technique it surfaces into
+    `ctx.retrieved_technique_ids` -- this is the one call site upstream of the Analyst's first
+    turn, so it must run before anything downstream can legitimately cite a retrieved technique.
+    """
     with tenant_scope(ctx.session, ctx.tenant_id):
         incident = ctx.session.get(Incident, ctx.incident_id)
         if incident is None:  # pragma: no cover - build_agent_context already proved this exists
@@ -237,8 +301,14 @@ def _build_incident_context_block(ctx: AgentContext) -> str:
 
     total_signal_count = len(all_signals)
     signals = sorted(all_signals, key=lambda s: s.confidence, reverse=True)[:MAX_SIGNALS_IN_CONTEXT]
-
     timeline_phases = build_timeline(list(signals))
+
+    all_event_ids: set[int] = set()
+    for s in signals:
+        all_event_ids.update(s.evidence_event_ids)
+    for phase in timeline_phases:
+        all_event_ids.update(phase.event_ids)
+    log_ids_by_event_id = ctx.log_ids_for_event_ids(all_event_ids)
 
     signals_payload = [
         {
@@ -249,24 +319,43 @@ def _build_incident_context_block(ctx: AgentContext) -> str:
             "entity_type": s.entity_type,
             "entity_value": ctx.pseudonymize_value(s.entity_value, s.entity_type),
             "mitre_technique": s.mitre_technique,
-            "evidence_event_ids": list(s.evidence_event_ids)[:MAX_EVIDENCE_IDS_IN_CONTEXT],
+            "log_ids": [
+                log_ids_by_event_id[eid]
+                for eid in list(s.evidence_event_ids)[:MAX_EVIDENCE_IDS_IN_CONTEXT]
+                if eid in log_ids_by_event_id
+            ],
             "explanation": s.explanation,
         }
         for s in signals
     ]
     timeline_payload = [
         {
+            "phase_index": i,
             "ts": p.ts.isoformat() if p.ts else None,
             "tactic": p.tactic,
-            "event_ids": p.event_ids[:MAX_EVIDENCE_IDS_IN_CONTEXT],
+            "log_ids": [
+                log_ids_by_event_id[eid]
+                for eid in p.event_ids[:MAX_EVIDENCE_IDS_IN_CONTEXT]
+                if eid in log_ids_by_event_id
+            ],
             "summary": p.summary,
         }
-        for p in timeline_phases
+        for i, p in enumerate(timeline_phases)
     ]
     entity_scope_payload = [
         {"entity_type": t, "entity_value": ctx.pseudonymize_value(v, t)}
         for t, v in sorted(ctx.entity_scope)
     ]
+    evidence_payloads_payload = [
+        _evidence_payload_for_prompt(p)
+        for p in list(ctx.evidence_payloads)[:MAX_EVIDENCE_PAYLOADS_IN_CONTEXT]
+    ]
+
+    candidates = retrieve_candidates(
+        evidence=list(ctx.evidence_payloads), top_k=MAX_RETRIEVED_CANDIDATES
+    )
+    ctx.record_retrieved_techniques([c.technique.id for c in candidates])
+    retrieved_payload = [_retrieved_candidate_for_prompt(c) for c in candidates]
 
     return prompts.build_incident_context(
         incident_title=title,
@@ -277,14 +366,15 @@ def _build_incident_context_block(ctx: AgentContext) -> str:
         timeline=timeline_payload,
         entity_scope=entity_scope_payload,
         total_signal_count=total_signal_count,
+        evidence_payloads=evidence_payloads_payload,
+        retrieved_candidates=retrieved_payload,
     )
 
 
 def _prior_analyst_decisions_block(ctx: AgentContext) -> str:
-    """M13's few-shot memory integration point (CLAUDE.md build brief item 8). Used exactly as
-    `app.learning.memory`'s own module docstring specifies it will be, if the module is present;
-    degrades to an empty string (no block spliced in) on any failure, including the module not
-    existing at all — few-shot memory is a quality enhancement, never a triage blocker."""
+    """M13's few-shot memory integration point. Degrades to an empty string on any failure,
+    including the module not existing at all -- few-shot memory is a quality enhancement, never a
+    triage blocker."""
     if not _HAS_FEW_SHOT_MEMORY:
         return ""
     try:
@@ -299,19 +389,32 @@ def _prior_analyst_decisions_block(ctx: AgentContext) -> str:
         return ""
 
 
-# ---------------------------------------------------------------------------- tool-calling loop
+def _render_finding_flags(finding_flags: dict[str, tuple[str, ...]]) -> str:
+    payload = {
+        "automated_precheck_flags": {fid: list(notes) for fid, notes in finding_flags.items()}
+    }
+    return prompts.wrap_untrusted(payload)
+
+
+def _wrap_presenter_findings(findings: list[Finding]) -> str:
+    return prompts.wrap_untrusted(
+        {"verified_findings": [f.model_dump(mode="json") for f in findings]}
+    )
+
+
+# ---------------------------------------------------------------------------- tool-calling loop (Analyst)
 
 
 def _summarize_tool_result(name: str, result: Any) -> str:
     """A short, human-readable line for `tool_trace` — the trace records *that* a tool was
-    called and roughly what came back, not the full payload (that would defeat the point of
-    keeping the LLM's own context, and this trace, small — CLAUDE.md rule 1)."""
+    called and roughly what came back, never the full payload (CLAUDE.md rule 1)."""
     if isinstance(result, list):
         return f"{len(result)} result(s)"
     if isinstance(result, dict) and name == "get_entity_baseline":
         return (
             f"value={result.get('value')} baseline_mean={result.get('baseline_mean')} "
-            f"z_score={result.get('z_score')} n_baseline_windows={result.get('n_baseline_windows')}"
+            f"z_score={result.get('z_score')} n_baseline_windows={result.get('n_baseline_windows')} "
+            f"baseline_id={result.get('baseline_id')}"
         )
     return "ok"
 
@@ -319,10 +422,7 @@ def _summarize_tool_result(name: str, result: Any) -> str:
 def _truncate_oldest_tool_result(messages: list[dict[str, Any]]) -> bool:
     """Finds the oldest not-yet-truncated `tool_result` content block anywhere in `messages`
     and collapses it to a short placeholder, in place. Returns `False` once every tool result is
-    already collapsed (nothing left to shrink) so the caller can stop looping instead of spinning
-    forever on a conversation that's grown large for reasons other than tool-result bulk (e.g. a
-    naturally long system prompt or narrative — `_run_flow`'s per-role system prompts are static
-    and small, so this should not be the steady state, but the loop bounds itself regardless)."""
+    already collapsed."""
     for message in messages:
         if message.get("role") != "user":
             continue
@@ -341,15 +441,11 @@ def _truncate_oldest_tool_result(messages: list[dict[str, Any]]) -> bool:
 
 
 def _enforce_input_token_budget(
-    messages: list[dict[str, Any]], last_input_tokens: int, *, role: AgentRole
+    messages: list[dict[str, Any]], last_input_tokens: int, *, role: str
 ) -> None:
-    """Called after every turn with that turn's own `usage.input_tokens` — the size of the
-    request that produced it, and the best available proxy for what the *next* request would
-    cost before it's built (a `count_tokens` call to measure precisely would itself spend
-    against the same budget it's trying to protect). Collapses exactly one oldest tool result
-    per over-budget turn rather than guessing how many to collapse at once: growth is
-    incremental (one tool call at a time), so shrinking incrementally and re-checking on the
-    next real `usage.input_tokens` converges without ever needing a precise token count."""
+    """Called after every turn with that turn's own `usage.input_tokens`. Collapses exactly one
+    oldest tool result per over-budget turn (see the pre-migration orchestrator's own reasoning,
+    unchanged here)."""
     if last_input_tokens <= MAX_INPUT_TOKENS:
         return
     if _truncate_oldest_tool_result(messages):
@@ -362,7 +458,7 @@ def _run_tool_role(
     *,
     caller: LLMCaller,
     ctx: AgentContext,
-    role: AgentRole,
+    role: str,
     system_prompt: str,
     first_user_content: str,
     investigation_tools: list[dict[str, Any]],
@@ -375,9 +471,9 @@ def _run_tool_role(
     effort: str,
 ) -> dict[str, Any]:
     """Drives one role's turn loop until it calls its terminal tool, or raises `AgentTimeoutError` /
-    `AgentRefusalError` / `SchemaValidationError`. Returns the terminal tool call's raw `input` dict
-    (parsed into a pydantic model by the caller, not here — this function only knows about the
-    Messages API, not the domain schema)."""
+    `AgentRefusalError` / `SchemaValidationError`. Returns the terminal tool call's raw `input` dict.
+    Used only by the Analyst -- the Judge and Presenter have no investigation tools and go through
+    `_run_notool_role` instead."""
     terminal_name = terminal_tool["name"]
     messages: list[dict[str, Any]] = [{"role": "user", "content": first_user_content}]
 
@@ -419,9 +515,6 @@ def _run_tool_role(
 
         tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
         if not tool_use_blocks:
-            # Model responded with plain text instead of a tool call. Nudge it back on track —
-            # the shared system prompt already says tools are the only acceptable path, so this
-            # is recovery from an occasional deviation, not the expected steady state.
             messages.append(
                 {
                     "role": "user",
@@ -516,27 +609,33 @@ def _to_json(value: Any) -> str:
     return json.dumps(value, default=str)
 
 
-def _run_reporter(
+def _run_notool_role(
     *,
     caller: LLMCaller,
+    role: str,
     system_prompt: str,
     user_content: str,
+    terminal_tool: dict[str, Any],
     model: str,
     deadline: float,
     usage: _UsageAccumulator,
+    effort: str,
 ) -> dict[str, Any]:
+    """One forced tool-use call, no investigation tools -- the Judge, Presenter, and Narrator all
+    go through here. Replaces the pre-migration `_run_reporter`, generalized to any single-shot
+    terminal-tool role."""
     if time.monotonic() >= deadline:
-        raise AgentTimeoutError("reporter")
+        raise AgentTimeoutError(role)
 
-    emit_tool = build_emit_verdict_tool()
+    terminal_name = terminal_tool["name"]
     response = caller.create(
         model=model,
         max_tokens=MAX_TOKENS_PER_TURN,
         system=system_prompt,
         messages=[{"role": "user", "content": user_content}],
-        tools=[emit_tool],
-        tool_choice={"type": "tool", "name": "emit_verdict"},
-        effort=REPORTER_EFFORT,
+        tools=[terminal_tool],
+        tool_choice={"type": "tool", "name": terminal_name},
+        effort=effort,
     )
     usage.add(response.usage)
 
@@ -544,17 +643,17 @@ def _run_reporter(
         category = (
             getattr(response.stop_details, "category", None) if response.stop_details else None
         )
-        raise AgentRefusalError("reporter", category)
+        raise AgentRefusalError(role, category)
     if response.stop_reason == "max_tokens":
-        raise SchemaValidationError("reporter hit max_tokens before calling emit_verdict")
+        raise SchemaValidationError(f"{role} hit max_tokens before calling {terminal_name}")
 
     tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
-    if not tool_use_blocks or tool_use_blocks[0].name != "emit_verdict":
-        raise SchemaValidationError("reporter did not call emit_verdict")
+    if not tool_use_blocks or tool_use_blocks[0].name != terminal_name:
+        raise SchemaValidationError(f"{role} did not call {terminal_name}")
     return tool_use_blocks[0].input
 
 
-# ---------------------------------------------------------------------------- full flow
+# ---------------------------------------------------------------------------- Path B: full flow
 
 
 def _run_flow(
@@ -571,68 +670,143 @@ def _run_flow(
     prior_block = _prior_analyst_decisions_block(ctx)
     prior_suffix = f"\n\n{prompts.wrap_prior_analyst_decisions(prior_block)}" if prior_block else ""
 
-    findings_raw = _run_tool_role(
+    # ---- stage 1: Analyst ----
+    analysis_raw = _run_tool_role(
         caller=caller,
         ctx=ctx,
-        role="investigator",
-        system_prompt=prompts.INVESTIGATOR_SYSTEM_PROMPT,
+        role="analyst",
+        system_prompt=prompts.ANALYST_SYSTEM_PROMPT,
         first_user_content=incident_context + prior_suffix,
-        investigation_tools=INVESTIGATOR_TOOLS,
-        terminal_tool=build_submit_findings_tool(),
+        investigation_tools=ANALYST_TOOLS,
+        terminal_tool=build_submit_analysis_tool(),
         budget=budget,
         deadline=deadline,
         trace=trace,
         usage=usage,
         model=model,
-        effort=INVESTIGATOR_EFFORT,
+        effort=ANALYST_EFFORT,
     )
     try:
-        InvestigationFindings.model_validate(findings_raw)
+        analyst_output = AnalystOutput.model_validate(analysis_raw)
     except ValidationError as exc:
-        raise SchemaValidationError(f"investigator submit_findings invalid: {exc}") from exc
+        raise SchemaValidationError(f"analyst submit_analysis invalid: {exc}") from exc
 
-    rebuttal_raw = _run_tool_role(
-        caller=caller,
-        ctx=ctx,
-        role="devils_advocate",
-        system_prompt=prompts.DEVILS_ADVOCATE_SYSTEM_PROMPT,
-        first_user_content=incident_context
-        + "\n\n"
-        + prompts.wrap_investigator_findings(findings_raw),
-        investigation_tools=DEVILS_ADVOCATE_TOOLS,
-        terminal_tool=build_submit_rebuttal_tool(),
-        budget=budget,
-        deadline=deadline,
-        trace=trace,
-        usage=usage,
-        model=model,
-        effort=DEVILS_ADVOCATE_EFFORT,
+    # ---- verifier pass 1 (cheap, no LLM) — change 15 ----
+    pass1: Pass1Result = verify_pass1(ctx, analyst_output)
+    trace.append(
+        ToolTraceEntry(
+            role="verifier",
+            tool_name="verify_pass1",
+            tool_input={"n_findings": len(analyst_output.findings)},
+            summary=(
+                f"dropped {len(pass1.dropped_claim_checks)} hypothesis-evaluation claim(s) "
+                f"before the judge; flagged {len(pass1.finding_flags)} finding(s)"
+            ),
+        )
     )
-    try:
-        Rebuttal.model_validate(rebuttal_raw)
-    except ValidationError as exc:
-        raise SchemaValidationError(f"devils_advocate submit_rebuttal invalid: {exc}") from exc
 
-    reporter_content = (
+    # ---- stage 2: Judge ----
+    judge_content = (
         incident_context
         + "\n\n"
-        + prompts.wrap_investigator_findings(findings_raw)
-        + "\n\n"
-        + prompts.wrap_rebuttal(rebuttal_raw)
-        + prior_suffix
+        + prompts.wrap_analyst_output(pass1.sanitized_output.model_dump(mode="json"))
     )
-    verdict_raw = _run_reporter(
+    if pass1.finding_flags:
+        judge_content += "\n\n" + _render_finding_flags(pass1.finding_flags)
+
+    judgement_raw = _run_notool_role(
         caller=caller,
-        system_prompt=prompts.REPORTER_SYSTEM_PROMPT,
-        user_content=reporter_content,
+        role="judge",
+        system_prompt=prompts.JUDGE_SYSTEM_PROMPT,
+        user_content=judge_content,
+        terminal_tool=build_submit_judgement_tool(),
         model=model,
         deadline=deadline,
         usage=usage,
+        effort=JUDGE_EFFORT,
+    )
+    try:
+        judge_output = JudgeOutput.model_validate(judgement_raw)
+    except ValidationError as exc:
+        raise SchemaValidationError(f"judge submit_judgement invalid: {exc}") from exc
+
+    submitted_ids = {f.finding_id for f in analyst_output.findings}
+    verdict_ids = {v.finding_id for v in judge_output.verdicts}
+    if verdict_ids != submitted_ids:
+        raise SchemaValidationError(
+            f"judge verdicts {sorted(verdict_ids)} do not match submitted findings "
+            f"{sorted(submitted_ids)}"
+        )
+    trace.append(
+        ToolTraceEntry(
+            role="judge",
+            tool_name="submit_judgement",
+            tool_input=judgement_raw,
+            summary=", ".join(f"{v.finding_id}={v.decision}" for v in judge_output.verdicts),
+        )
+    )
+
+    findings_by_id = {f.finding_id: f for f in analyst_output.findings}
+    judge_survived: list[Finding] = []
+    for v in judge_output.verdicts:
+        if v.decision == "PASS":
+            judge_survived.append(findings_by_id[v.finding_id])
+        elif v.decision == "REVISE":
+            assert v.revised_finding is not None  # JudgeVerdict's own validator guarantees this
+            judge_survived.append(v.revised_finding)
+        # REJECT: excluded entirely from what reaches the Presenter.
+
+    # ---- verifier pass 2 (full, incl. scope + confidence integrity) — change 15 ----
+    pass2: Pass2Result = verify_pass2(ctx, judge_survived)
+    trace.append(
+        ToolTraceEntry(
+            role="verifier",
+            tool_name="verify_pass2",
+            tool_input={"n_findings": len(judge_survived)},
+            summary=(
+                f"{len(pass2.invalid_citations)} invalid citation(s) across "
+                f"{len(judge_survived)} judge-surviving finding(s)"
+            ),
+        )
+    )
+
+    presenter_findings = [
+        f for f, check in zip(judge_survived, pass2.finding_checks, strict=True) if check.valid
+    ]
+    if not presenter_findings:
+        raise InsufficientEvidenceError(
+            f"no finding survived judging and full verification ({len(analyst_output.findings)} "
+            f"submitted, {len(judge_survived)} passed/revised by the judge, 0 passed the final "
+            "verifier check)",
+            invalid_citations=pass2.invalid_citations,
+        )
+
+    # ---- stage 4: Presenter ----
+    presenter_content = (
+        incident_context
+        + "\n\n"
+        + prompts.wrap_judge_output(
+            {"verdicts": [v.model_dump(mode="json") for v in judge_output.verdicts]}
+        )
+        + "\n\n"
+        + _wrap_presenter_findings(presenter_findings)
+        + prior_suffix
+    )
+    verdict_raw = _run_notool_role(
+        caller=caller,
+        role="presenter",
+        system_prompt=prompts.PRESENTER_SYSTEM_PROMPT,
+        user_content=presenter_content,
+        terminal_tool=build_present_verdict_tool(),
+        model=model,
+        deadline=deadline,
+        usage=usage,
+        effort=PRESENTER_EFFORT,
     )
     trace.append(
         ToolTraceEntry(
-            role="reporter",
-            tool_name="emit_verdict",
+            role="presenter",
+            tool_name="present_verdict",
             tool_input=verdict_raw,
             summary="final verdict",
         )
@@ -641,15 +815,10 @@ def _run_flow(
     try:
         verdict = TriageVerdictOut.model_validate(verdict_raw)
     except ValidationError as exc:
-        raise SchemaValidationError(f"reporter emit_verdict invalid: {exc}") from exc
+        raise SchemaValidationError(f"presenter present_verdict invalid: {exc}") from exc
 
-    # docs/v2_migration change 3: hard rejection, not a warning -- see app.agent.verifier's own
-    # docstring for why this gets different treatment from citation verification below. Checked
-    # here (inside _run_flow, before the caller sees a "successful" verdict) so the exception
-    # flows through triage_incident's existing AgentTimeoutError/AgentRefusalError/
-    # SchemaValidationError/ToolError handling and produces a needs_review fallback with the
-    # failure reason recorded, exactly like every other way this flow can fail to produce a
-    # trustworthy verdict.
+    # docs/v2_migration change 3: hard rejection, not a warning — see verifier.verify_anomaly_
+    # confidence's own docstring for why this gets different treatment from citation verification.
     confidence_check = verify_anomaly_confidence(ctx, verdict)
     if not confidence_check.ok:
         log.warning(
@@ -663,7 +832,7 @@ def _run_flow(
     return verdict
 
 
-# ---------------------------------------------------------------------------- public entry points
+# ---------------------------------------------------------------------------- public entry points (Path B)
 
 
 def _latest_verdict(session: Session, incident_id: uuid.UUID) -> TriageVerdict | None:
@@ -683,6 +852,8 @@ def _needs_review_fallback(
     elapsed_ms: int,
     model: str,
     anomaly_confidence: float,
+    citation_valid: bool = True,
+    invalid_citations: tuple[dict[str, Any], ...] = (),
 ) -> TriageVerdictOut:
     return TriageVerdictOut(
         disposition="needs_review",
@@ -691,9 +862,6 @@ def _needs_review_fallback(
             f"Triage did not complete, so there is no hypothesis-evaluation judgment to report: "
             f"{reason}"
         ),
-        # Still the incident's own, untouched value (app.agent.context.AgentContext.
-        # anomaly_confidence) -- a failed run never had a chance to change it, and this field is
-        # never persisted onto triage_verdicts regardless (TriageVerdictOut's own docstring).
         anomaly_confidence=anomaly_confidence,
         llm_severity_opinion=None,
         mitre_techniques=(),
@@ -702,8 +870,8 @@ def _needs_review_fallback(
         contradicting_evidence=f"Investigation could not be completed to weigh a counter-case: {reason}",
         recommended_actions=(),
         tool_trace=tuple(trace),
-        citation_valid=True,
-        invalid_citations=(),
+        citation_valid=citation_valid,
+        invalid_citations=invalid_citations,
         model=model,
         tokens_in=usage.input_tokens,
         tokens_out=usage.output_tokens,
@@ -716,16 +884,9 @@ def _needs_review_fallback(
 def _accumulate_analysis_cost(
     session: Session, tenant_id: uuid.UUID, incident_id: uuid.UUID, cost_usd: Decimal | None
 ) -> None:
-    """docs/v2_migration change 12 ("surface spend per analysis"): every persisted verdict's
-    real per-call cost (`app.agent.client.estimate_cost_usd`) rolls up into
-    `analyses.llm_cost_usd`, which `GET /api/analyses/{id}` already exposes
-    (`app.schemas.uploads.AnalysisOut`) — this is the write side that was missing. An atomic
-    `UPDATE ... SET x = x + delta` rather than read-modify-write so concurrent triage runs
-    against the same analysis (not how this codebase drives triage today —
-    `triage_top_incidents_for_analysis` triages sequentially — but not guaranteed to stay that
-    way) can never lose an increment to a last-write-wins race. Skipped for zero/None cost
-    (inherited-recurrence verdicts, `_persist_inherited`, cost 0 by construction) to avoid a
-    pointless write."""
+    """docs/v2_migration change 14 ("surface spend per analysis"): every persisted verdict's real
+    per-call cost rolls up into `analyses.llm_cost_usd`. An atomic `UPDATE ... SET x = x + delta`
+    so concurrent triage runs against the same analysis never lose an increment."""
     if not cost_usd:
         return
     with tenant_scope(session, tenant_id):
@@ -773,8 +934,7 @@ def _persist_inherited(
     session: Session, incident_id: uuid.UUID, parent: TriageVerdict
 ) -> TriageVerdict:
     """docs/07 "Scope discipline": "Recurrences are skipped and inherit their parent's
-    verdict." No LLM call, no cost — the inherited row's `tool_trace` records the inheritance
-    itself so the provenance is visible in the UI rather than looking like an independent run."""
+    verdict." No LLM call, no cost."""
     row = TriageVerdict(
         incident_id=incident_id,
         disposition=parent.disposition,
@@ -819,18 +979,19 @@ def triage_incident(
     *,
     caller: LLMCaller | None = None,
     force: bool = False,
+    evidence_payloads: list[EvidencePayload] | None = None,
 ) -> TriageVerdict:
-    """Triage one incident end to end and persist the verdict. Idempotent by default: if a
-    verdict already exists and `force` is false, it is returned unchanged rather than
-    re-triaged (re-running costs real money — CLAUDE.md "Budget discipline" — and a caller that
-    wants a fresh opinion says so explicitly).
+    """Triage one incident end to end and persist the verdict. Idempotent by default.
+
+    `evidence_payloads`, when given, is passed straight through to `build_agent_context` instead
+    of being recomputed — `triage_top_incidents_for_analysis` uses this to compute an analysis's
+    evidence once and share it across every incident it triages.
 
     Dispatch order:
     1. Existing verdict (unless `force`) — return it.
-    2. Recurrence with an already-triaged parent — inherit, no API call (docs/07 scope discipline).
-    3. Otherwise, the real three-role flow — raises `MissingAPIKeyError` if no `caller` was
-       injected and `Settings.anthropic_api_key` is unset (docs/v2_migration change 12: no more
-       silent demo-verdict fallback).
+    2. Recurrence with an already-triaged parent — inherit, no API call.
+    3. Otherwise, the real Analyst -> Judge -> verifier -> Presenter flow — raises
+       `MissingAPIKeyError` if no `caller` was injected and `Settings.anthropic_api_key` is unset.
     """
     settings = get_settings()
 
@@ -854,13 +1015,13 @@ def triage_incident(
                 parent_incident_id=str(recurrence_of),
             )
             return _persist_inherited(session, incident_id, parent_verdict)
-        # Parent has no verdict of its own yet (not triaged, or outside the top-N window) —
-        # fall through and triage this incident on its own merits rather than blocking on it.
+        # Parent has no verdict of its own yet — fall through and triage this incident on its own
+        # merits rather than blocking on it.
 
     if caller is None and not settings.llm_enabled:
         raise MissingAPIKeyError
 
-    ctx = build_agent_context(session, tenant_id, incident_id)
+    ctx = build_agent_context(session, tenant_id, incident_id, evidence_payloads=evidence_payloads)
     active_caller = caller or LiveCaller(api_key=settings.anthropic_api_key.get_secret_value())
 
     start = time.monotonic()
@@ -885,6 +1046,7 @@ def triage_incident(
         SchemaValidationError,
         ToolError,
         AnomalyConfidenceIntegrityError,
+        InsufficientEvidenceError,
     ) as exc:
         elapsed_ms = int((time.monotonic() - start) * 1000)
         log.warning(
@@ -900,6 +1062,8 @@ def triage_incident(
             elapsed_ms=elapsed_ms,
             model=settings.anthropic_model,
             anomaly_confidence=ctx.anomaly_confidence,
+            invalid_citations=getattr(exc, "invalid_citations", ()),
+            citation_valid=not getattr(exc, "invalid_citations", ()),
         )
         row = _persist(session, incident_id, verdict_out)
         _accumulate_analysis_cost(session, tenant_id, incident_id, verdict_out.cost_usd)
@@ -945,8 +1109,10 @@ def triage_top_incidents_for_analysis(
     force: bool = False,
 ) -> list[TriageVerdict]:
     """docs/07 "Scope discipline": "Only the top MAX_TRIAGE_INCIDENTS (15) by fused_score."
-    Recurrences among them inherit rather than re-triage (`triage_incident` handles that per
-    incident). Returns one verdict per incident, in the same fused_score-descending order."""
+    Recurrences among them inherit rather than re-triage. Computes this analysis's
+    `EvidencePayload`s exactly once (`compute_evidence_payloads`) and shares them across every
+    incident's `triage_incident` call — `app.agent.context`'s own module docstring on why
+    recomputing per-incident would otherwise happen `MAX_TRIAGE_INCIDENTS` times over."""
     settings = get_settings()
     with tenant_scope(session, tenant_id):
         incident_ids = list(
@@ -957,7 +1123,108 @@ def triage_top_incidents_for_analysis(
                 .limit(settings.max_triage_incidents)
             ).scalars()
         )
+    evidence_payloads = compute_evidence_payloads(
+        session, analysis_id=analysis_id, tenant_id=tenant_id
+    )
     return [
-        triage_incident(session, tenant_id, incident_id, caller=caller, force=force)
+        triage_incident(
+            session,
+            tenant_id,
+            incident_id,
+            caller=caller,
+            force=force,
+            evidence_payloads=evidence_payloads,
+        )
         for incident_id in incident_ids
     ]
+
+
+# ---------------------------------------------------------------------------- Path A: narrator
+
+
+@dataclass(slots=True)
+class NarrationResult:
+    """change 14 Path A's output — not persisted to any table by this module (no schema for one
+    exists yet; wiring this into `analyses`/an API response is out of `app/agent`'s ownership).
+    `citation_valid`/`invalid_citations` mirror the Path B verdict's own fields — "Verifier still
+    runs" applies here exactly as it does for the per-incident pipeline."""
+
+    executive_summary: str
+    phase_narratives: tuple[dict[str, Any], ...]
+    citation_valid: bool
+    invalid_citations: tuple[dict[str, Any], ...]
+    model: str
+    tokens_in: int
+    tokens_out: int
+    cost_usd: Decimal
+    latency_ms: int
+
+
+def narrate_analysis(
+    *,
+    overview: dict[str, Any],
+    incidents: list[dict[str, Any]],
+    timeline_phases: list[dict[str, Any]],
+    caller: LLMCaller,
+    model: str,
+    timeout_seconds: float = 60.0,
+) -> NarrationResult:
+    """change 14 Path A, the single LLM call in the analysis-level narrative path:
+
+        deterministic overview stats + incident list + analysis timeline entries
+            -> Narrator LLM (one call)
+            -> deterministic verifier
+            -> executive summary + timeline phase narratives
+
+    **No judge stage** (change 14: "a judge pass over descriptive narrative is not worth the
+    call"). `overview`/`incidents`/`timeline_phases` are deterministic, pre-computed inputs — this
+    function does no detection, correlation, or SQL of its own; it is the LLM-and-verifier half of
+    Path A only. `timeline_phases` entries are expected to already carry a stable `phase_index`
+    and their own citable ids (`log_ids`/`evidence_ids`) — *selection* of which phases matter is
+    deterministic and happens upstream (docs/05), never here.
+    """
+    start = time.monotonic()
+    deadline = start + timeout_seconds
+    usage = _UsageAccumulator()
+
+    context_block = prompts.build_narrator_context(
+        overview=overview, incidents=incidents, timeline_phases=timeline_phases
+    )
+    raw = _run_notool_role(
+        caller=caller,
+        role="narrator",
+        system_prompt=prompts.NARRATOR_SYSTEM_PROMPT,
+        user_content=context_block,
+        terminal_tool=build_narrate_tool(),
+        model=model,
+        deadline=deadline,
+        usage=usage,
+        effort=NARRATOR_EFFORT,
+    )
+    try:
+        output = NarratorOutput.model_validate(raw)
+    except ValidationError as exc:
+        raise SchemaValidationError(f"narrator narrate_analysis invalid: {exc}") from exc
+
+    citation_valid, invalid_citations = verify_narrator_output(
+        overview=overview, incidents=incidents, timeline_phases=timeline_phases, output=output
+    )
+    elapsed_ms = int((time.monotonic() - start) * 1000)
+    log.info(
+        "agent.narrate_complete",
+        citation_valid=citation_valid,
+        n_invalid_citations=len(invalid_citations),
+        cost_usd=str(estimate_cost_usd(usage)),
+        latency_ms=elapsed_ms,
+    )
+    return NarrationResult(
+        executive_summary=output.executive_summary,
+        phase_narratives=tuple(p.model_dump(mode="json") for p in output.phase_narratives),
+        citation_valid=citation_valid,
+        invalid_citations=tuple(invalid_citations),
+        model=model,
+        tokens_in=usage.input_tokens,
+        tokens_out=usage.output_tokens,
+        cost_usd=estimate_cost_usd(usage),
+        latency_ms=elapsed_ms,
+    )

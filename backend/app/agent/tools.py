@@ -42,7 +42,7 @@ from typing import Any, Final
 
 from sqlalchemy import select
 
-from app.agent.context import TRUNCATE_FIELDS, AgentContext
+from app.agent.context import TRUNCATE_FIELDS, AgentContext, log_citation_id
 from app.agent.mitre import search_mitre
 from app.models.base import tenant_scope
 from app.models.event import Event
@@ -94,6 +94,11 @@ def _serialize_event(ctx: AgentContext, event: Event) -> dict[str, Any]:
 
     return {
         "id": event.id,
+        # docs/v2_migration change 7's `[LOG-1291]` citation form -- keyed on the *file's* line
+        # number (`Event.raw_line_no`), the same identifier `EvidencePayload.
+        # contributing_line_numbers` already uses, not the DB primary key above. This is the id
+        # the model is instructed to cite; `id` stays only for internal tool-trace bookkeeping.
+        "log_id": log_citation_id(event.raw_line_no),
         "ts": event.ts.isoformat(),
         "principal": principal,
         "src_ip": src_ip,
@@ -311,7 +316,7 @@ def get_entity_baseline(
         else:
             z_score = None
 
-    return {
+    result = {
         "entity_type": entity_type,
         "entity_value": entity_value,
         "metric": metric,
@@ -321,6 +326,11 @@ def get_entity_baseline(
         "z_score": round(z_score, 3) if z_score is not None else None,
         "n_baseline_windows": n_baseline_windows,
     }
+    # docs/v2_migration change 7's `[BASELINE-3]` citation namespace -- minted here, the one place
+    # an ad hoc baseline comparison is computed, so the model sees its own citation id in the tool
+    # result rather than having to invent one. See `AgentContext.cite_baseline`'s own docstring.
+    result["baseline_id"] = ctx.cite_baseline(result)
+    return result
 
 
 def _percentile(values: list[float], p: float) -> float:
@@ -361,6 +371,9 @@ def get_related_signals(
             .all()
         )
 
+    all_event_ids = {eid for s in rows for eid in s.evidence_event_ids}
+    log_ids_by_event_id = ctx.log_ids_for_event_ids(all_event_ids)
+
     out: list[dict[str, Any]] = []
     for s in rows:
         out.append(
@@ -374,7 +387,14 @@ def get_related_signals(
                 "window_start": s.window_start.isoformat() if s.window_start else None,
                 "window_end": s.window_end.isoformat() if s.window_end else None,
                 "mitre_technique": s.mitre_technique,
-                "evidence_event_ids": list(s.evidence_event_ids),
+                # docs/v2_migration change 7: citable LOG-n ids, not the bare event primary keys
+                # `Signal.evidence_event_ids` stores internally -- see `_serialize_event`'s own
+                # docstring for why LOG-n (Event.raw_line_no) is the citation identifier now.
+                "log_ids": [
+                    log_ids_by_event_id[eid]
+                    for eid in s.evidence_event_ids
+                    if eid in log_ids_by_event_id
+                ],
                 "explanation": s.explanation,
             }
         )
@@ -384,8 +404,14 @@ def get_related_signals(
 # ---------------------------------------------------------------------------- search_mitre (thin wrapper)
 
 
-def _search_mitre_tool(_ctx: AgentContext, query: str, top_k: int = 5) -> list[dict[str, Any]]:
-    return [asdict(t) for t in search_mitre(query, top_k=top_k)]
+def _search_mitre_tool(ctx: AgentContext, query: str, top_k: int = 5) -> list[dict[str, Any]]:
+    results = search_mitre(query, top_k=top_k)
+    # docs/v2_migration change 7 check 3 (retrieval match): a technique the Analyst pulls via this
+    # tool mid-investigation is just as "actually retrieved" as one the automatic evidence-driven
+    # step surfaced -- record it so the verifier does not treat a later citation of it as a
+    # hallucination.
+    ctx.record_retrieved_techniques([t.id for t in results])
+    return [asdict(t) for t in results]
 
 
 # ---------------------------------------------------------------------------- tool schemas

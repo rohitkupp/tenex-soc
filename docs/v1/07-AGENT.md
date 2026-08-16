@@ -154,3 +154,85 @@ must never require an API key.
 
 When `DEMO_MODE=true`, serve precomputed verdicts from `data/demo/` instead of calling the API.
 The deployed demo must be explorable without latency or spend.
+
+
+# v2: four stages, evidence-first — `docs/v2_migration` changes 5, 6, 7, 14, 15
+
+Replaces Investigator → Devil's Advocate → Reporter. The devil's-advocate function survives as the
+mandatory `evidence_against` field and in the judge rubric, rather than as its own model call.
+
+## The LLM evaluates hypotheses; it does not generate them
+
+It no longer answers *"what attack happened?"* It answers *"is each retrieved hypothesis supported
+by the supplied evidence?"* — returning `evidence_for`, `evidence_against`, `missing_evidence`, an
+assessment of `supported | plausible | unsupported | not_observable`, and a threat confidence.
+
+**`NO_KNOWN_MAPPING` is mandatory in every candidate set**, and it exists because RAG introduces a
+failure mode it does not fix: retrieve five techniques, the model assumes one must be right, false
+attribution follows. The prompt says so directly — returning it *"is a correct answer, not a
+failure."* The brief asks for anomaly explanations and confidence scores; it does not ask for
+every anomaly to receive a named technique.
+
+## Stage order, and why the verifier runs first
+
+```
+Analyst → verifier pass 1 → Judge → verifier pass 2 → Presenter
+```
+
+This inverts the source diagrams, which put the judge first. The deterministic verifier is free;
+the judge costs a model call. Running the cheap check first means the judge never spends tokens on
+a claim whose arithmetic already fails, and every claim it does see is numerically sound.
+
+**Pass 2 is not optional.** A `REVISE` can introduce a number that was never in the original
+output and has therefore never been checked.
+
+**The judge is a second opinion, not the safeguard.** LLM judges have known self-preference and
+correlated-error problems. What actually prevents hallucination is stage 3, which is code.
+
+## Five deterministic checks, all in code
+
+1. **Existence** — every cited `LOG-n` exists in this analysis; every `EVIDENCE-n`/`BASELINE-n`
+   exists in the payload
+2. **Numeric match** — every number in the narrative appears in the cited evidence object.
+   *"transferred 2.4 GB [EVIDENCE-14]"* where that evidence says 1.8 GB is rejected. Exact for
+   counts, ±1% for byte and duration values rounded for display
+3. **Retrieval match** — every cited technique was actually in the retrieved candidate set. A
+   technique recalled from training and never retrieved is a hallucination *even when the mapping
+   is reasonable*
+4. **Scope** — cited log lines belong to the incident's entities and window ±1h
+5. **Confidence integrity** — `anomaly_confidence` equals the value passed in (change 3)
+
+Check 2 is the hard one. `extract_numbers` strips citation tokens, technique ids and timestamps
+**before** parsing, so `T1567.002`, `EVIDENCE-14` and `2026-02-23T16:19Z` are never misread as
+measurements — then matches against every numeric leaf of the cited object, testing both decimal
+and binary interpretations of byte units.
+
+Failures are recorded in `invalid_citations` and marked in the UI, never suppressed.
+`hallucination_rate = rejected_claims / total_claims`.
+
+## Two LLM paths, never interchanged
+
+**Path A — analysis narrative, once per upload.** Deterministic overview stats + incident list +
+timeline entries → Narrator → verifier. **No judge**: a judge pass over descriptive narrative is
+not worth the call. The verifier still runs, because descriptive prose hallucinating a byte count
+is still a hallucination. Timeline entry *selection* stays deterministic (docs/05); the LLM writes
+prose for entries it did not choose and cannot reorder.
+
+**Path B — per-incident investigation.** The full four stages above.
+
+### Cost, corrected
+
+Change 14 states `1 narrator + (4 × triaged incidents)`. That over-counts: stage 3 is the
+deterministic verifier, which is code. The real figure is **1 + (3 × triaged incidents)** — at
+`MAX_TRIAGE_INCIDENTS=15`, at most 46 calls per upload rather than 61.
+
+## Known gaps, recorded rather than hidden
+
+- **`ZscalerVerdictEvidence` is not yet wired.** `retrieval.retrieve_candidates` supports Zscaler's
+  own threat verdicts as a distinct second source, but only the `EvidencePayload` path is
+  connected. Until that lands, "Zscaler said so" evidence does not reach the Analyst.
+- **`ZSCALER-KB-*` citation existence is not rigorously checked**, because `data/kb/zscaler/` has
+  no bounded per-document citable-id registry. That namespace currently passes existence trivially.
+- **Evidence payloads are recomputed, not persisted.** Nothing in the live pipeline produces and
+  stores them yet, so `context.compute_evidence_payloads` re-runs the pure, read-only steps. A
+  standalone single-incident triage pays that cost twice.

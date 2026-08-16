@@ -1,27 +1,59 @@
-"""Structured-output schemas for the three-role flow — docs/07-AGENT.md "Output schema" and
+"""Structured-output schemas for the four-stage evidence-first pipeline --
+docs/v2_migration/MIGRATION-01-evidence-first.md changes 5, 6, 7 and
 docs/06-PRIVACY-SECURITY.md defense #4/#5 ("Structured output only" / "Output validation").
 
-Defense against a fabricated technique id, deliberately redundant across two layers:
+    Analyst -> Judge -> Deterministic verifier -> Presenter
 
-1. **Schema-level (this module, `build_*_tool`)**: the `mitre_techniques[].id` tool-parameter
-   field is a JSON-Schema `enum` built from `app.agent.mitre.all_technique_ids()` at request
-   time. With `strict: true` on the tool definition, the Messages API itself cannot produce a
-   value outside the enum — a fabricated id is not just invalid, it is not a representable
-   output.
-2. **Pydantic-level (the models below)**: `MitreTechniqueRef` re-validates the same constraint
-   independently of the API. This is not redundant paranoia — it is what lets
-   `tests/test_agent_verifier.py` prove the rejection path works by constructing a bad payload
-   directly, without needing a live (or even a fixture) API response that somehow defeats layer
-   1, and it is what protects a fixture-replay test path from ever silently accepting a corpus
-   drift that layer 1 alone wouldn't catch offline.
+replaces the old three-role Investigator -> Devil's Advocate -> Reporter flow entirely (change 6).
+The devil's-advocate function survives as `Finding.benign_alternatives` (mandatory, non-empty)
+and as judge rubric item 6 ("Are benign alternatives considered?").
 
-`recommended_actions` carries no such enum: docs/v2_migration change 20 removed the response
-action graph and its catalog, so this is now free-text **investigation guidance** for a human
-analyst — concrete next steps, not action IDs from a catalog (diagram 3's wording; matched in
-the case-file UI, `frontend/components/incidents/case/InvestigationGuidance.tsx`).
+## Change 5 -- hypothesis evaluation, not free generation
 
-Every model here is used for the *final* verdict and the two intermediate role outputs
-(`InvestigationFindings`, `Rebuttal`) — see `app/agent/orchestrator.py`.
+`HypothesisEvaluation` is change 5's required per-candidate output, verbatim in field name and
+intent: `technique_id`, `evidence_for`, `evidence_against`, `missing_evidence`, `assessment`,
+`threat_confidence`. `NO_KNOWN_MAPPING` (this module's own constant) is mandatory: `AnalystOutput`
+rejects any payload whose `hypothesis_evaluations` never evaluates it, so "retrieve five
+techniques, the model assumes one must be right" cannot silently happen -- the schema layer
+forces the model to have actually considered "none of them" as a candidate answer, not just
+permits it.
+
+## Change 6 -- four fields lists, kept structurally separate
+
+Change 6's Analyst field list (`finding_id`, `anomaly_ids`, `observation`, `hypothesis`,
+`supporting_evidence_ids`, `contradicting_evidence_ids`, `missing_evidence`,
+`attack_technique_id`, `attack_source_id`, `threat_confidence`, `confidence_reason`,
+`benign_alternatives`) is `Finding` below, deliberately distinct from `HypothesisEvaluation`:
+change 5 describes the Analyst's per-candidate *evaluation* (did the evidence support T1567.002,
+yes/no/how), change 6 describes the Analyst's *terminal output* (the finding(s) it is actually
+reporting). `AnalystOutput` carries both and cross-validates that every `Finding.
+attack_technique_id` traces back to a `HypothesisEvaluation` the Analyst actually ran -- a finding
+cannot report a technique the model never evaluated against the evidence.
+
+`Judge` (`JudgeVerdict`/`JudgeOutput`) grades each `Finding` against the ten-item rubric verbatim
+below (`JUDGE_RUBRIC`) and returns PASS/REVISE/REJECT. **The judge is a second opinion, not the
+safeguard** -- the deterministic verifier (`app.agent.verifier`) is what actually prevents
+hallucination; LLM judges have known self-preference and correlated-error problems (change 6's own
+wording). Nothing in this module or `orchestrator.py` treats a judge PASS as sufficient on its
+own -- verifier pass 2 always runs after, per change 15.
+
+`Presenter`'s output keeps the name `TriageVerdictOut` for continuity with
+`app.models.triage_verdict.TriageVerdict` and every existing caller of
+`app.agent.orchestrator.triage_incident` -- it is the same "final, persisted verdict" concept the
+pre-migration Reporter produced, now assembled by the Presenter from verified `Finding`s instead
+of from a single free-form investigation.
+
+## Change 7 -- dual citations
+
+Every citation-bearing field in this module (`Claim.evidence_ids`, `Finding.
+supporting_evidence_ids`/`contradicting_evidence_ids`/`anomaly_ids`, `NarrativeStep.evidence_ids`)
+is a tuple of plain strings, not a typed union -- the two namespaces (`EVIDENCE-n`/`BASELINE-n`/
+`LOG-n` for evidence, `MITRE-Txxx.xxx`/`ZSCALER-KB-*` for knowledge) are enforced and interpreted
+by `app.agent.verifier`'s regexes, not by pydantic here. Keeping the wire type a plain string
+(rather than a tagged union) is deliberate: `strict: true` tool schemas need one JSON Schema
+`type: "string"` for this field regardless of which namespace a given citation happens to use, and
+the verifier is the one place namespace-specific meaning (does this exist? does the number in the
+claim match this object? was this technique actually retrieved?) belongs.
 """
 
 from __future__ import annotations
@@ -37,29 +69,52 @@ from app.agent.mitre import all_technique_ids, technique_exists
 __all__ = [
     "ANOMALY_CONFIDENCE_MAX",
     "ANOMALY_CONFIDENCE_MIN",
+    "JUDGE_RUBRIC",
+    "NO_KNOWN_MAPPING",
     "AgentRole",
+    "AnalystOutput",
+    "Assessment",
+    "Claim",
     "Disposition",
-    "InvestigationFindings",
+    "Finding",
+    "HypothesisEvaluation",
+    "JudgeDecision",
+    "JudgeOutput",
+    "JudgeVerdict",
     "MitreTechniqueRef",
     "NarrativeStep",
-    "Rebuttal",
+    "NarratorOutput",
+    "RubricItemResult",
     "SchemaValidationError",
     "ThreatConfidence",
+    "TimelinePhaseNarrative",
     "ToolTraceEntry",
     "TriageVerdictOut",
-    "build_emit_verdict_tool",
-    "build_submit_findings_tool",
-    "build_submit_rebuttal_tool",
+    "build_narrate_tool",
+    "build_present_verdict_tool",
+    "build_submit_analysis_tool",
+    "build_submit_judgement_tool",
 ]
 
 Disposition = Literal["true_positive", "false_positive", "benign", "needs_review"]
 Severity = Literal["critical", "high", "medium", "low"]
-AgentRole = Literal["investigator", "devils_advocate", "reporter"]
 # docs/v2_migration change 3 ("two confidences, never mixed"): the LLM's own hypothesis-evaluation
 # judgement of how well the evidence supports *this specific* security interpretation -- never a
 # raw float, and never to be confused with `anomaly_confidence` (calibrated, 0-100, upstream-
-# computed, see this module's `TriageVerdictOut` docstring below).
+# computed, see `TriageVerdictOut`'s docstring below).
 ThreatConfidence = Literal["low", "moderate", "high"]
+# change 5's required per-candidate verdict.
+Assessment = Literal["supported", "plausible", "unsupported", "not_observable"]
+# change 6 stage 2: "Returns PASS | REVISE | REJECT per finding". "Prefer REJECT over REVISE
+# when evidence is insufficient" is enforced in the judge system prompt, not here -- a schema
+# cannot know whether evidence was "insufficient".
+JudgeDecision = Literal["PASS", "REVISE", "REJECT"]
+# Which stage produced a `ToolTraceEntry` -- widened beyond the old three roles. "system" (not
+# part of this literal) is still used for the recurrence-inheritance trace entry
+# (`orchestrator._persist_inherited`); `ToolTraceEntry.role` is a plain `str` below for exactly
+# that reason -- it is a display/debug field, not a security boundary, so a closed enum buys
+# nothing and costs a widening every time a new trace producer is added.
+AgentRole = Literal["analyst", "judge", "presenter", "narrator"]
 
 _DISPOSITIONS: Final[tuple[str, ...]] = (
     "true_positive",
@@ -69,22 +124,72 @@ _DISPOSITIONS: Final[tuple[str, ...]] = (
 )
 _SEVERITIES: Final[tuple[str, ...]] = ("critical", "high", "medium", "low")
 _THREAT_CONFIDENCE_LEVELS: Final[tuple[str, ...]] = ("low", "moderate", "high")
+_ASSESSMENTS: Final[tuple[str, ...]] = ("supported", "plausible", "unsupported", "not_observable")
+_JUDGE_DECISIONS: Final[tuple[str, ...]] = ("PASS", "REVISE", "REJECT")
 
 # docs/v2_migration change 3: `anomaly_confidence` is 0-100 (see `app.detection.fusion.
-# anomaly_confidence_from_fused_score`), never the 0-1 scale `fused_score`/the old `confidence`
-# field used.
+# anomaly_confidence_from_fused_score`), never the 0-1 scale `fused_score` uses.
 ANOMALY_CONFIDENCE_MIN: Final[float] = 0.0
 ANOMALY_CONFIDENCE_MAX: Final[float] = 100.0
 
+# change 5, verbatim sentinel. Mandatory in every `AnalystOutput.hypothesis_evaluations` set --
+# see `AnalystOutput`'s own validator and this module's docstring.
+NO_KNOWN_MAPPING: Final[str] = "NO_KNOWN_MAPPING"
+
+# change 6 stage 2's ten-item rubric, copied verbatim -- both the judge system prompt
+# (`app.agent.prompts`) and `JudgeVerdict.rubric_assessment`'s completeness check below render
+# from this single tuple, so the ten items can never drift between what the model is told to
+# grade against and what a submitted verdict is checked to have actually graded.
+JUDGE_RUBRIC: Final[tuple[str, ...]] = (
+    "Is every factual claim supported by supplied evidence?",
+    "Do all numerical claims appear exactly in the evidence?",
+    "Does each cited log line actually support the statement?",
+    "Does the cited ATT&CK document support the mapping?",
+    "Is observation clearly separated from inference?",
+    "Are benign alternatives considered?",
+    "Is required evidence missing?",
+    "Does confidence match evidence strength?",
+    "Is the technique observable from Zscaler proxy telemetry?",
+    "Has maliciousness been claimed where only anomaly is established?",
+)
+
 
 class SchemaValidationError(Exception):
-    """A structured-output payload failed post-hoc validation (bad technique id, bad action id,
-    bad enum value, blank required field). docs/06 defense #5: "Failures are rejected, not
-    coerced" — the orchestrator catches this and emits `needs_review`, it never tries to patch
-    the payload into something valid."""
+    """A structured-output payload failed post-hoc validation (bad technique id, bad enum value,
+    blank required field, an incomplete rubric). docs/06 defense #5: "Failures are rejected, not
+    coerced" -- the orchestrator catches this and falls back to `needs_review`, it never tries to
+    patch the payload into something valid."""
+
+
+def _validate_technique_or_no_mapping(v: str) -> str:
+    """Shared by every field that can hold either a real, allowlisted MITRE technique id or the
+    literal `NO_KNOWN_MAPPING` sentinel (change 5) -- `HypothesisEvaluation.technique_id` and
+    `Finding.attack_technique_id`. Whether a given id was *actually retrieved* for this incident
+    (as opposed to merely existing somewhere in the thirteen-technique corpus) is a runtime,
+    per-triage-run fact this module cannot know statically -- that is `app.agent.verifier`'s
+    retrieval-match check, deliberately not duplicated here."""
+    if v == NO_KNOWN_MAPPING:
+        return v
+    if not technique_exists(v):
+        raise ValueError(
+            f"technique id {v!r} does not exist in the MITRE corpus and is not {NO_KNOWN_MAPPING!r}"
+        )
+    return v
+
+
+def _not_blank(v: str) -> str:
+    if not v or not v.strip():
+        raise ValueError("must not be blank")
+    return v
 
 
 class MitreTechniqueRef(BaseModel):
+    """A *real* technique reference only -- never `NO_KNOWN_MAPPING` (see `Finding.
+    attack_technique_id` for the field that carries that sentinel). Used on the Presenter's final
+    `mitre_techniques` list: when the surviving finding(s) for an incident all evaluate to
+    `NO_KNOWN_MAPPING`, this list is simply empty, exactly like the old `_pick_top_technique`
+    returning `None` did for the pre-agent pipeline."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str
@@ -100,80 +205,250 @@ class MitreTechniqueRef(BaseModel):
 
     @field_validator("name", "rationale")
     @classmethod
-    def _not_blank(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("must not be blank")
-        return v
+    def _fields_not_blank(cls, v: str) -> str:
+        return _not_blank(v)
+
+
+class Claim(BaseModel):
+    """One atomic, citable assertion -- the unit `app.agent.verifier` checks for existence,
+    numeric match, retrieval match, and scope (change 7). Used inside `HypothesisEvaluation.
+    evidence_for`/`evidence_against` (change 5's own contract) and, via `NarrativeStep` below, in
+    the Presenter's final narrative."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    text: str
+    evidence_ids: tuple[str, ...] = Field(default_factory=tuple)
+
+    @field_validator("text")
+    @classmethod
+    def _text_not_blank(cls, v: str) -> str:
+        return _not_blank(v)
 
 
 class NarrativeStep(BaseModel):
+    """One step of the Presenter's final, human-readable narrative. `evidence_ids` replaces the
+    pre-migration `evidence_event_ids: tuple[int, ...]` -- change 7's dual-namespace citation
+    strings (`EVIDENCE-14`, `BASELINE-3`, `LOG-1291`, `MITRE-T1567.002`, `ZSCALER-KB-threat-cat`)
+    supersede the old bare-event-id-only scheme entirely, not just extend it."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     step: int = Field(ge=1)
     claim: str
-    evidence_event_ids: tuple[int, ...] = Field(default_factory=tuple)
+    evidence_ids: tuple[str, ...] = Field(default_factory=tuple)
 
     @field_validator("claim")
     @classmethod
-    def _not_blank(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("must not be blank")
-        return v
+    def _claim_not_blank(cls, v: str) -> str:
+        return _not_blank(v)
 
 
-class InvestigationFindings(BaseModel):
-    """The Investigator role's terminal `submit_findings` tool call — docs/07's own output
-    schema doesn't separately name this (it only specifies the *final* verdict shape), but the
-    Reporter has no tools of its own, so the Investigator's citations have to reach it in a
-    structurally-validated form rather than scraped from prose. See orchestrator.py's module
-    docstring for the full three-role rationale."""
+class HypothesisEvaluation(BaseModel):
+    """Change 5's required output, per retrieved candidate technique (plus the mandatory
+    `NO_KNOWN_MAPPING` entry -- see `AnalystOutput`'s validator). This is the Analyst's *evaluation*
+    of one hypothesis, not its final report -- `Finding` below is what actually gets judged,
+    verified, and presented."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
+    technique_id: str
+    evidence_for: tuple[Claim, ...] = Field(default_factory=tuple)
+    evidence_against: tuple[Claim, ...] = Field(default_factory=tuple)
+    missing_evidence: tuple[str, ...] = Field(default_factory=tuple)
+    assessment: Assessment
+    threat_confidence: ThreatConfidence
+
+    @field_validator("technique_id")
+    @classmethod
+    def _technique_id_valid(cls, v: str) -> str:
+        return _validate_technique_or_no_mapping(v)
+
+
+class Finding(BaseModel):
+    """Change 6 stage 1's Analyst output fields, verbatim. `benign_alternatives` is required and
+    non-empty -- the devil's-advocate function change 6 says "survives as the mandatory
+    evidence_against field and in the judge rubric" lives here (the false-positive case the
+    Analyst itself must articulate) and in `HypothesisEvaluation.evidence_against` (the
+    per-technique counter-evidence)."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    finding_id: str
+    anomaly_ids: tuple[str, ...] = Field(default_factory=tuple)
+    observation: str
     hypothesis: str
-    disposition_lean: Disposition
-    narrative: tuple[NarrativeStep, ...]
-    mitre_techniques: tuple[MitreTechniqueRef, ...] = Field(default_factory=tuple)
-    recommended_actions: tuple[str, ...] = Field(default_factory=tuple)
+    supporting_evidence_ids: tuple[str, ...] = Field(default_factory=tuple)
+    contradicting_evidence_ids: tuple[str, ...] = Field(default_factory=tuple)
+    missing_evidence: tuple[str, ...] = Field(default_factory=tuple)
+    attack_technique_id: str
+    attack_source_id: str | None = None
+    threat_confidence: ThreatConfidence
+    confidence_reason: str
+    benign_alternatives: tuple[str, ...]
 
-    @field_validator("hypothesis")
+    @field_validator("finding_id", "observation", "hypothesis", "confidence_reason")
     @classmethod
-    def _not_blank(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("must not be blank")
-        return v
+    def _text_fields_not_blank(cls, v: str) -> str:
+        return _not_blank(v)
 
-    @field_validator("recommended_actions")
+    @field_validator("attack_technique_id")
     @classmethod
-    def _actions_not_blank(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+    def _attack_technique_id_valid(cls, v: str) -> str:
+        return _validate_technique_or_no_mapping(v)
+
+    @field_validator("benign_alternatives")
+    @classmethod
+    def _benign_alternatives_required(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        if not v:
+            raise ValueError(
+                "benign_alternatives must be non-empty -- the devil's-advocate function is "
+                "mandatory on every finding, even when the Analyst ultimately rejects it "
+                "(docs/v2_migration change 6)"
+            )
         if any(not item or not item.strip() for item in v):
-            raise ValueError("recommended_actions entries must not be blank")
+            raise ValueError("benign_alternatives entries must not be blank")
         return v
 
+    @model_validator(mode="after")
+    def _attack_source_matches_technique(self) -> Finding:
+        if self.attack_technique_id == NO_KNOWN_MAPPING:
+            if self.attack_source_id is not None:
+                raise ValueError(
+                    "attack_source_id must be null when attack_technique_id is NO_KNOWN_MAPPING "
+                    "-- there is no knowledge-base document backing a non-mapping"
+                )
+        elif not self.attack_source_id or not self.attack_source_id.strip():
+            raise ValueError(
+                "attack_source_id is required (a knowledge citation, e.g. 'MITRE-T1567.002') "
+                "whenever attack_technique_id names a real technique"
+            )
+        return self
 
-class Rebuttal(BaseModel):
-    """The Devil's Advocate role's terminal `submit_rebuttal` tool call. `contradicting_evidence`
-    is the field docs/07 calls out as required on the *final* verdict — captured here, at the
-    role that actually argues it, and carried forward verbatim by the Reporter."""
+
+class AnalystOutput(BaseModel):
+    """The Analyst's terminal `submit_analysis` tool call. Two cross-checks beyond each nested
+    model's own validation, both structural anti-hallucination guarantees:
+
+    1. **`NO_KNOWN_MAPPING` is mandatory** (change 5, verbatim): without at least one
+       `hypothesis_evaluations` entry evaluating it, a schema-valid payload could still retrieve
+       five techniques and silently assume one must be right.
+    2. **Every finding's technique traces back to an evaluation.** A `Finding.attack_technique_id`
+       that never appears in `hypothesis_evaluations` would let the Analyst report a mapping it
+       never actually ran the change-5 evaluation for.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    contradicting_evidence: str
-    agrees_with_disposition: bool
-    notes: str = ""
+    hypothesis_evaluations: tuple[HypothesisEvaluation, ...]
+    findings: tuple[Finding, ...]
 
-    @field_validator("contradicting_evidence")
+    @model_validator(mode="after")
+    def _no_known_mapping_is_mandatory(self) -> AnalystOutput:
+        if not any(h.technique_id == NO_KNOWN_MAPPING for h in self.hypothesis_evaluations):
+            raise ValueError(
+                f"hypothesis_evaluations must include an entry evaluating {NO_KNOWN_MAPPING!r} "
+                "-- docs/v2_migration change 5: retrieval must never force an attribution"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _findings_non_empty(self) -> AnalystOutput:
+        if not self.findings:
+            raise ValueError("findings must be non-empty -- at least one finding per incident")
+        return self
+
+    @model_validator(mode="after")
+    def _finding_techniques_were_evaluated(self) -> AnalystOutput:
+        evaluated = {h.technique_id for h in self.hypothesis_evaluations}
+        for f in self.findings:
+            if f.attack_technique_id not in evaluated:
+                raise ValueError(
+                    f"finding {f.finding_id!r} reports attack_technique_id "
+                    f"{f.attack_technique_id!r}, which was never evaluated in "
+                    "hypothesis_evaluations"
+                )
+        return self
+
+
+class RubricItemResult(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    item: int = Field(ge=1, le=len(JUDGE_RUBRIC))
+    satisfied: bool
+    note: str
+
+    @field_validator("note")
     @classmethod
-    def _not_blank(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("must not be blank")
+    def _note_not_blank(cls, v: str) -> str:
+        return _not_blank(v)
+
+
+class JudgeVerdict(BaseModel):
+    """One finding's judgement. `revised_finding` is populated if and only if `decision ==
+    "REVISE"` -- change 15's whole reason for existing: a REVISE's replacement finding can
+    introduce a number or citation verifier pass 1 never saw, and pass 2 (`app.agent.verifier`)
+    checks it *after* this model validates, not instead of."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    finding_id: str
+    decision: JudgeDecision
+    rubric_assessment: tuple[RubricItemResult, ...]
+    rationale: str
+    revised_finding: Finding | None = None
+
+    @field_validator("finding_id", "rationale")
+    @classmethod
+    def _text_fields_not_blank(cls, v: str) -> str:
+        return _not_blank(v)
+
+    @field_validator("rubric_assessment")
+    @classmethod
+    def _rubric_is_complete(cls, v: tuple[RubricItemResult, ...]) -> tuple[RubricItemResult, ...]:
+        items = sorted(r.item for r in v)
+        expected = list(range(1, len(JUDGE_RUBRIC) + 1))
+        if items != expected:
+            raise ValueError(
+                f"rubric_assessment must cover every item 1..{len(JUDGE_RUBRIC)} exactly once; "
+                f"got {items}"
+            )
+        return v
+
+    @model_validator(mode="after")
+    def _revised_finding_matches_decision(self) -> JudgeVerdict:
+        if self.decision == "REVISE":
+            if self.revised_finding is None:
+                raise ValueError("decision REVISE requires a revised_finding")
+            if self.revised_finding.finding_id != self.finding_id:
+                raise ValueError(
+                    "revised_finding.finding_id must match the finding_id being judged "
+                    f"({self.finding_id!r} != {self.revised_finding.finding_id!r})"
+                )
+        elif self.revised_finding is not None:
+            raise ValueError(
+                f"revised_finding must be null when decision is {self.decision!r}, not REVISE"
+            )
+        return self
+
+
+class JudgeOutput(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    verdicts: tuple[JudgeVerdict, ...]
+
+    @field_validator("verdicts")
+    @classmethod
+    def _verdicts_non_empty(cls, v: tuple[JudgeVerdict, ...]) -> tuple[JudgeVerdict, ...]:
+        if not v:
+            raise ValueError("verdicts must be non-empty -- one per finding submitted")
         return v
 
 
 class ToolTraceEntry(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    role: AgentRole
+    role: str
     tool_name: str
     tool_input: dict[str, Any]
     is_error: bool = False
@@ -181,31 +456,24 @@ class ToolTraceEntry(BaseModel):
 
 
 class TriageVerdictOut(BaseModel):
-    """docs/07's final output schema, exactly, plus the fields
+    """The Presenter's terminal `present_verdict` tool call, plus the fields
     `app.models.triage_verdict.TriageVerdict` needs for persistence (`tool_trace`,
     `citation_valid`, `invalid_citations`, `model`, token/cost/latency). Citation-verification
-    fields default empty and are filled in by `app.agent.verifier` *after* this model validates —
-    they are not part of what the LLM emits.
+    fields default empty and are filled in by `app.agent.verifier` *after* this model validates.
+
+    Kept as the final, persisted shape (same class name, same DB-facing fields) the pre-migration
+    Reporter also produced -- change 6 replaces *how* this gets assembled (from verified `Finding`s
+    via Analyst -> Judge -> verifier -> Presenter, not from one free-form investigation), not the
+    shape every downstream consumer of a triage verdict already depends on.
 
     ## Two confidences, never mixed (docs/v2_migration change 3)
 
-    `confidence` (a single 0-1 float) is gone, split into two fields the LLM's job is never to
-    conflate:
-
-    - `threat_confidence` / `threat_confidence_reason` — the LLM's own hypothesis-evaluation
-      judgement: how well *this specific* security interpretation is supported by the evidence.
-      Deliberately coarse (low/moderate/high) rather than a float the model would otherwise
-      invent with false precision, and always paired with a reason.
-    - `anomaly_confidence` — **not the LLM's opinion at all.** This is `incidents.
-      anomaly_confidence` (the calibrated, 0-100 "how unusual is this vs. history" number,
-      `app.detection.fusion.anomaly_confidence_from_fused_score`), passed into the prompt and
-      required back on this model with an explicit instruction to reproduce it unchanged
-      (`app.agent.prompts.REPORTER_SYSTEM_PROMPT`). It exists on this schema only so
-      `app.agent.verifier.verify_anomaly_confidence` has something to check the echoed value
-      against — it is never written back to `incidents.anomaly_confidence` (no code path does;
-      `app.agent.orchestrator._persist`/`_persist_inherited` never touch that column) and never
-      persisted onto `triage_verdicts` (no such column exists there either, by design — see
-      `app.models.triage_verdict`'s own docstring).
+    - `threat_confidence` / `threat_confidence_reason` -- the Presenter's own synthesis of the
+      surviving findings' hypothesis-evaluation judgements.
+    - `anomaly_confidence` -- **not the LLM's opinion at all.** Passed into every stage's prompt
+      and required back on this model unchanged; `app.agent.verifier.verify_anomaly_confidence` is
+      the deterministic check. Transport only -- never persisted to `triage_verdicts` (no such
+      column exists there) and never written back to `incidents.anomaly_confidence`.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -213,17 +481,12 @@ class TriageVerdictOut(BaseModel):
     disposition: Disposition
     threat_confidence: ThreatConfidence
     threat_confidence_reason: str
-    # Passed in verbatim via the prompt and required back unchanged -- `app.agent.verifier.
-    # verify_anomaly_confidence` is the hard, deterministic check that it was not modified. This
-    # field is transport only: it is never persisted (see class docstring above).
     anomaly_confidence: float = Field(ge=ANOMALY_CONFIDENCE_MIN, le=ANOMALY_CONFIDENCE_MAX)
     llm_severity_opinion: Severity | None = None
     mitre_techniques: tuple[MitreTechniqueRef, ...] = Field(default_factory=tuple)
     summary: str
     narrative: tuple[NarrativeStep, ...]
     contradicting_evidence: str
-    # Free-text investigation guidance for a human analyst (docs/v2_migration change 20) — not
-    # action IDs from a response catalog. Diagram 3 calls this "Investigation guidance".
     recommended_actions: tuple[str, ...] = Field(default_factory=tuple)
 
     # --- filled in after construction, not part of the LLM's tool-use payload ---
@@ -240,10 +503,8 @@ class TriageVerdictOut(BaseModel):
 
     @field_validator("summary", "contradicting_evidence", "threat_confidence_reason")
     @classmethod
-    def _not_blank(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("must not be blank")
-        return v
+    def _text_fields_not_blank(cls, v: str) -> str:
+        return _not_blank(v)
 
     @field_validator("recommended_actions")
     @classmethod
@@ -254,7 +515,7 @@ class TriageVerdictOut(BaseModel):
 
     @model_validator(mode="after")
     def _narrative_required_unless_needs_review(self) -> TriageVerdictOut:
-        # needs_review is a legitimate answer with insufficient evidence (docs/07): don't force a
+        # needs_review is a legitimate answer with insufficient evidence: don't force a
         # fabricated narrative step just to satisfy a non-empty-list rule.
         if self.disposition != "needs_review" and not self.narrative:
             raise ValueError(
@@ -263,7 +524,71 @@ class TriageVerdictOut(BaseModel):
         return self
 
 
+# ---------------------------------------------------------------------------- Path A (narrator)
+
+
+class TimelinePhaseNarrative(BaseModel):
+    """One selected timeline phase's prose, change 14 Path A: "Timeline entry *selection* stays
+    deterministic; the LLM writes prose for selected phases only." `phase_index` ties this back
+    to the deterministically-chosen phase the caller supplied -- the Narrator may not introduce a
+    phase that was not in its input."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    phase_index: int = Field(ge=0)
+    narrative: str
+    cited_log_ids: tuple[str, ...] = Field(default_factory=tuple)
+
+    @field_validator("narrative")
+    @classmethod
+    def _narrative_not_blank(cls, v: str) -> str:
+        return _not_blank(v)
+
+
+class NarratorOutput(BaseModel):
+    """Path A's single call: deterministic overview stats + incident list + timeline entries in,
+    executive summary + per-phase prose out. **No judge stage** (change 14: "A judge pass over
+    descriptive narrative is not worth the call") -- the deterministic verifier still runs over
+    this output (numbers must match the overview stats, `cited_log_ids` must exist/scope-check),
+    same as Path B's verifier, just without an intervening judge call."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    executive_summary: str
+    phase_narratives: tuple[TimelinePhaseNarrative, ...] = Field(default_factory=tuple)
+
+    @field_validator("executive_summary")
+    @classmethod
+    def _summary_not_blank(cls, v: str) -> str:
+        return _not_blank(v)
+
+
 # ---------------------------------------------------------------------------- dynamic tool schemas
+
+
+def _claim_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "text": {"type": "string"},
+            "evidence_ids": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["text", "evidence_ids"],
+        "additionalProperties": False,
+    }
+
+
+def _narrative_step_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "step": {"type": "integer"},
+            "claim": {"type": "string"},
+            "evidence_ids": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["step", "claim", "evidence_ids"],
+        "additionalProperties": False,
+    }
 
 
 def _technique_ref_schema() -> dict[str, Any]:
@@ -279,98 +604,164 @@ def _technique_ref_schema() -> dict[str, Any]:
     }
 
 
-def _narrative_step_schema() -> dict[str, Any]:
+def _technique_or_no_mapping_enum() -> list[str]:
+    return [*all_technique_ids(), NO_KNOWN_MAPPING]
+
+
+def _hypothesis_evaluation_schema() -> dict[str, Any]:
     return {
         "type": "object",
         "properties": {
-            "step": {"type": "integer"},
-            "claim": {"type": "string"},
-            "evidence_event_ids": {"type": "array", "items": {"type": "integer"}},
+            "technique_id": {"type": "string", "enum": _technique_or_no_mapping_enum()},
+            "evidence_for": {"type": "array", "items": _claim_schema()},
+            "evidence_against": {"type": "array", "items": _claim_schema()},
+            "missing_evidence": {"type": "array", "items": {"type": "string"}},
+            "assessment": {"type": "string", "enum": list(_ASSESSMENTS)},
+            "threat_confidence": {"type": "string", "enum": list(_THREAT_CONFIDENCE_LEVELS)},
         },
-        "required": ["step", "claim", "evidence_event_ids"],
+        "required": [
+            "technique_id",
+            "evidence_for",
+            "evidence_against",
+            "missing_evidence",
+            "assessment",
+            "threat_confidence",
+        ],
         "additionalProperties": False,
     }
 
 
-def build_submit_findings_tool() -> dict[str, Any]:
-    """The Investigator's terminal tool. `strict: true` (like `emit_verdict` below) so the
-    `mitre_techniques[].id` corpus enum is enforced at the API layer, not just by
-    `InvestigationFindings`'s pydantic validator after the fact. Strict mode requires every
-    property to appear in `required` — `mitre_techniques`/`recommended_actions` are still
-    semantically optional; the model satisfies "required" by sending `[]` when it has none."""
+def _finding_schema() -> dict[str, Any]:
     return {
-        "name": "submit_findings",
+        "type": "object",
+        "properties": {
+            "finding_id": {"type": "string"},
+            "anomaly_ids": {"type": "array", "items": {"type": "string"}},
+            "observation": {"type": "string"},
+            "hypothesis": {"type": "string"},
+            "supporting_evidence_ids": {"type": "array", "items": {"type": "string"}},
+            "contradicting_evidence_ids": {"type": "array", "items": {"type": "string"}},
+            "missing_evidence": {"type": "array", "items": {"type": "string"}},
+            "attack_technique_id": {"type": "string", "enum": _technique_or_no_mapping_enum()},
+            "attack_source_id": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+            "threat_confidence": {"type": "string", "enum": list(_THREAT_CONFIDENCE_LEVELS)},
+            "confidence_reason": {"type": "string"},
+            "benign_alternatives": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": [
+            "finding_id",
+            "anomaly_ids",
+            "observation",
+            "hypothesis",
+            "supporting_evidence_ids",
+            "contradicting_evidence_ids",
+            "missing_evidence",
+            "attack_technique_id",
+            "attack_source_id",
+            "threat_confidence",
+            "confidence_reason",
+            "benign_alternatives",
+        ],
+        "additionalProperties": False,
+    }
+
+
+def build_submit_analysis_tool() -> dict[str, Any]:
+    """The Analyst's terminal tool (change 6 stage 1). `strict: true` closes every enum,
+    including `technique_id`/`attack_technique_id`'s corpus-plus-NO_KNOWN_MAPPING enum, at the
+    API layer -- the same anti-hallucination defense-in-depth `app.agent.schemas`'s pre-migration
+    docstring described for the old `mitre_techniques[].id` field, now covering two fields
+    instead of one."""
+    return {
+        "name": "submit_analysis",
         "description": (
-            "Submit your investigation findings: a working hypothesis, a disposition lean, a "
-            "step-by-step narrative where every factual claim cites the specific event ids that "
-            "support it, any MITRE techniques you can defend from the search_mitre corpus "
-            "(empty array if none apply), and free-text investigation guidance for the human "
-            "analyst who picks this up next — concrete next steps, not a formal action catalog "
-            "(empty array if none). Call this once, when your investigation is complete."
+            "Submit your evidence-first analysis: an evaluation of every retrieved candidate "
+            "technique against the supplied evidence (hypothesis_evaluations -- always include "
+            "an entry for NO_KNOWN_MAPPING; do not select a technique solely because it is the "
+            "closest retrieved result), and the finding(s) you are actually reporting for this "
+            "incident (findings -- at least one; every finding's attack_technique_id must be one "
+            "you evaluated above). Call this once, when your investigation is complete."
         ),
         "strict": True,
         "input_schema": {
             "type": "object",
             "properties": {
-                "hypothesis": {"type": "string"},
-                "disposition_lean": {"type": "string", "enum": list(_DISPOSITIONS)},
-                "narrative": {"type": "array", "items": _narrative_step_schema()},
-                "mitre_techniques": {"type": "array", "items": _technique_ref_schema()},
-                "recommended_actions": {"type": "array", "items": {"type": "string"}},
+                "hypothesis_evaluations": {
+                    "type": "array",
+                    "items": _hypothesis_evaluation_schema(),
+                },
+                "findings": {"type": "array", "items": _finding_schema()},
             },
-            "required": [
-                "hypothesis",
-                "disposition_lean",
-                "narrative",
-                "mitre_techniques",
-                "recommended_actions",
-            ],
+            "required": ["hypothesis_evaluations", "findings"],
             "additionalProperties": False,
         },
     }
 
 
-def build_submit_rebuttal_tool() -> dict[str, Any]:
+def _rubric_item_schema() -> dict[str, Any]:
     return {
-        "name": "submit_rebuttal",
+        "type": "object",
+        "properties": {
+            "item": {"type": "integer", "enum": list(range(1, len(JUDGE_RUBRIC) + 1))},
+            "satisfied": {"type": "boolean"},
+            "note": {"type": "string"},
+        },
+        "required": ["item", "satisfied", "note"],
+        "additionalProperties": False,
+    }
+
+
+def _judge_verdict_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "finding_id": {"type": "string"},
+            "decision": {"type": "string", "enum": list(_JUDGE_DECISIONS)},
+            "rubric_assessment": {"type": "array", "items": _rubric_item_schema()},
+            "rationale": {"type": "string"},
+            "revised_finding": {"anyOf": [_finding_schema(), {"type": "null"}]},
+        },
+        "required": ["finding_id", "decision", "rubric_assessment", "rationale", "revised_finding"],
+        "additionalProperties": False,
+    }
+
+
+def build_submit_judgement_tool() -> dict[str, Any]:
+    """The Judge's terminal tool (change 6 stage 2). One `JudgeVerdict` per finding it was
+    handed. `revised_finding` is `required` (strict mode's rule) but semantically optional --
+    the model satisfies it with `null` for PASS/REJECT and only populates it for REVISE
+    (`JudgeVerdict`'s own validator enforces the pairing independently)."""
+    return {
+        "name": "submit_judgement",
         "description": (
-            "Submit your devil's-advocate review: the strongest benign/false-positive "
-            "explanation for this incident (required, even if you ultimately find it "
-            "unpersuasive — state it and say why it fails), whether you agree with the "
-            "investigator's disposition lean, and any additional notes (empty string if none)."
+            "Submit your judgement of each finding you were given, one verdict per finding, "
+            "against the ten-item evidentiary rubric. Prefer REJECT over REVISE when the "
+            "evidence is insufficient -- a REVISE should fix a specific, fixable defect (a "
+            "citation, a confidence level, an overclaim), not paper over missing evidence."
         ),
         "strict": True,
         "input_schema": {
             "type": "object",
-            "properties": {
-                "contradicting_evidence": {"type": "string"},
-                "agrees_with_disposition": {"type": "boolean"},
-                "notes": {"type": "string"},
-            },
-            "required": ["contradicting_evidence", "agrees_with_disposition", "notes"],
+            "properties": {"verdicts": {"type": "array", "items": _judge_verdict_schema()}},
+            "required": ["verdicts"],
             "additionalProperties": False,
         },
     }
 
 
-def build_emit_verdict_tool() -> dict[str, Any]:
-    """The Reporter's forced terminal tool — docs/07: "Emitted via tool-use so it is
-    schema-validated, not parsed from prose." `strict: true` closes every enum (disposition,
-    severity opinion, technique id, threat_confidence) at the API layer. `recommended_actions` is
-    free text (investigation guidance for a human analyst, docs/v2_migration change 20) — no enum.
-
-    `anomaly_confidence` is `required` like every other field here (strict mode's rule — see
-    `TriageVerdictOut`'s own docstring), but it is not something the model computes: the incident
-    context block (`app.agent.prompts.build_incident_context`) hands it the exact number and
-    `REPORTER_SYSTEM_PROMPT` instructs it to echo that value back unchanged.
-    `app.agent.verifier.verify_anomaly_confidence` is the actual enforcement — this schema only
-    makes the field mandatory so the model cannot omit it and have the check silently pass on a
-    default."""
+def build_present_verdict_tool() -> dict[str, Any]:
+    """The Presenter's forced terminal tool (change 6 stage 4). `anomaly_confidence` is
+    `required` like every other field here (strict mode's rule), but it is not something the
+    model computes -- the incident context hands it the exact number and the Presenter system
+    prompt instructs it to echo that value back unchanged; `app.agent.verifier.
+    verify_anomaly_confidence` is the actual enforcement."""
     return {
-        "name": "emit_verdict",
+        "name": "present_verdict",
         "description": (
-            "Emit the final, reconciled triage verdict for this incident. This is the only "
-            "acceptable way to answer — do not respond with plain text."
+            "Present the final, human-readable triage verdict for this incident, built only "
+            "from the verified finding(s) you were given. Do not introduce a fact, a number, or "
+            "a technique that did not survive verification -- this is presentation, not further "
+            "investigation."
         ),
         "strict": True,
         "input_schema": {
@@ -401,6 +792,50 @@ def build_emit_verdict_tool() -> dict[str, Any]:
                 "contradicting_evidence",
                 "recommended_actions",
             ],
+            "additionalProperties": False,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------- Path A tool schema
+
+
+def _timeline_phase_narrative_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "phase_index": {"type": "integer"},
+            "narrative": {"type": "string"},
+            "cited_log_ids": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["phase_index", "narrative", "cited_log_ids"],
+        "additionalProperties": False,
+    }
+
+
+def build_narrate_tool() -> dict[str, Any]:
+    """The Narrator's terminal tool (change 14, Path A). One call per analysis, no judge, no
+    investigation tools -- deterministic overview stats + incident list + timeline entries are
+    already in the prompt in full (change 9: "do not ask a model to count 83,241 rows")."""
+    return {
+        "name": "narrate_analysis",
+        "description": (
+            "Write the executive summary for this analysis and prose for each of the selected "
+            "timeline phases you were given. You may not select, reorder, or invent a timeline "
+            "phase -- write prose only for the phase_index values you were shown, citing only "
+            "the log lines / evidence ids attached to that phase."
+        ),
+        "strict": True,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "executive_summary": {"type": "string"},
+                "phase_narratives": {
+                    "type": "array",
+                    "items": _timeline_phase_narrative_schema(),
+                },
+            },
+            "required": ["executive_summary", "phase_narratives"],
             "additionalProperties": False,
         },
     }
