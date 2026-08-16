@@ -5,13 +5,37 @@ You cannot develop or evaluate detection without labeled ground truth.
 
 `backend/datagen/`. Entry point `make gen-data`. Fully seeded and reproducible.
 
+## History: one generator, not two
+
+For a period this repo carried **two independently hand-maintained generators** for the same
+output. `datagen/generate_corpus.py` (delivered per `docs/v2_migration` change 13, wiring the
+train/validation/golden split below into `make gen-data`) wrote
+`datetime.strftime("%Y-%m-%d %H:%M:%S")`. Every other command in this document — `benign`,
+`scenario`, `demo`, and the `datagen/emitters/zscaler.py` module all of them share — writes ISO
+`...THH:MM:SSZ`, which is the only format `app/parsers/zscaler.py` accepts. Nobody tied the two
+back together with a test, so they drifted silently: **every one of the 271 files under
+`backend/data/corpus/` plus the 30 under `backend/data/eval/golden/` was 100% `ParseFailure`, 0
+events.** A reviewer running `make gen-data` and uploading the result got nothing.
+
+The fix was not a format patch. `generate_corpus.py` is deleted. The one artifact only it
+produced — the labeled train/validation/golden split, `manifest.json`, and the 6-month
+`data/baseline/` rollup — is now built on top of the same `datagen` package every other command
+in this document uses (`datagen/labeled_corpus.py`), so there is exactly one place a log line's
+shape gets decided. `tests/test_parsers_zscaler.py::test_every_registered_scenario_parses_with_zero_failures`
+is the regression test: it generates one file per registered scenario through the real generator
+and asserts the real parser reads it back with zero failures, so a future scenario module (or a
+future emitter timestamp change) that breaks this contract fails in seconds instead of shipping
+another unparseable corpus.
+
 ## Outputs
 
 | Artifact | Purpose |
 |---|---|
-| `data/corpus/benign_*.log` | Large clean corpus for training the autoencoder and other L3 models |
-| `data/eval/scenario_*.log` + `.labels.json` | Held-out labeled test files |
+| `data/corpus/benign_*.log` | Large clean corpus for training the L3 models |
+| `data/eval/scenario_*.log` + `.labels.json` | Held-out labeled test files, one scenario each |
 | `data/demo/demo_mixed.log` | The file used in the walkthrough recording |
+| `data/corpus/{train,val}_NNNN_<scenario>.log` + `.labels.json`, `data/eval/golden/golden_NNNN_<scenario>.log` + `.labels.json`, `data/corpus/manifest.json` | The labeled train/validation/golden split (`python -m datagen split`, docs/v2_migration change 13) — see below |
+| `data/baseline/baseline_{windows.jsonl,profiles.json,contacts.json}` | 6-month per-tenant history, loaded by `app.baseline.loader` into the `baseline_*` tables (`make seed`) |
 
 All ZScaler NSS Web format — there is no Okta or CloudTrail emitter to maintain (`docs/03`).
 
@@ -100,6 +124,24 @@ with the source, kept as a purely proxy-shaped false-positive test (a burst of n
 that looks like reconnaissance but is a new hire's first week, or an automated scan pattern that
 looks like a bot but is a scheduled pen test).
 
+### Two more, labeled-corpus only
+
+The labeled train/validation/golden split below carries two additional scenario identities that
+predate this table (`generate_corpus.py`'s original eleven) and have no L3-model-vs-baseline
+story of their own — they exercise correlation and Sigma rules rather than a specific ML model,
+so they are not part of the eight above but are registered `Scenario` subclasses like the rest.
+
+| # | Scenario | ATT&CK | What must fire |
+|---|---|---|---|
+| 9 | Multi-domain C2 failover | T1008 | beaconing, rarity, `graph.shared_infra` — several short-lived sibling domains sharing one address block, each burst too short for `signal.beaconing` alone to carry, so detection depends on the graph tying them together |
+| 10 | Web shell / secret-file probing | T1505.003 | rarity, `sigma.blocked_then_allowed` — a dictionary walk of shell/secret-file paths against one rarely-visited host, mostly blocked with an occasional `200` close behind a block |
+
+Plus an eleventh identity with no `Scenario` subclass at all: a pure `benign` file (background
+traffic only, nothing injected) — the false-positive floor `benign_but_weird` is deliberately not
+(`benign_but_weird` is suspicious-*shaped* benign traffic; plain `benign` is nothing unusual at
+all). `datagen/labeled_corpus.py`'s `_write_benign` builds it directly rather than through a
+`Scenario` subclass, since there is no injection behaviour to encapsulate.
+
 ## Ground truth format
 
 ```json
@@ -148,4 +190,31 @@ python -m datagen benign  --events 2000000 --seed 42 --out data/corpus/
 python -m datagen scenario --name c2_beaconing --seed 7 --out data/eval/
 python -m datagen sweep   --scenario c2_beaconing --param jitter_pct --range 0.02:0.6:0.05
 python -m datagen demo    --out data/demo/
+python -m datagen split   --out data/ --files 1000              # make gen-data's target
+python -m datagen split   --out data/ --files 40 --skip-baseline # small local check
 ```
+
+## The labeled train/validation/golden split
+
+`python -m datagen split` (`datagen/labeled_corpus.py`, `make gen-data`) is the one command that
+does not appear in the CLI block above: it writes the full labeled corpus that `backend/evals/`
+and `app/detection/ml/train.py`/`evaluate.py` benchmark against, not a single eval file.
+
+Three named splits, each a **different seed and a different simulated org** (sharing either
+between splits is how synthetic benchmarks fake good numbers, same rule as `benign` vs.
+`scenario` above): `train` (org `northwind`, seed 42, 70%), `val` (org `contoso`, seed 1337, 20%),
+`golden` (org `fabrikam`, seed 90210, 10%) — `data/corpus/train_NNNN_<scenario>.log` /
+`val_NNNN_<scenario>.log`, `data/eval/golden/golden_NNNN_<scenario>.log`, each with a `.labels.json`
+sidecar in the ground-truth format above, plus one `data/corpus/manifest.json` covering all three
+splits (`splits`, `scenario_counts`, `files`).
+
+File count defaults to 1000 (`--files`, `FILES=n` on `make gen-data`) but the largest split always
+reserves its first few slots — one per scenario identity — before falling back to the normal
+weighted-random draw for the rest, so even a small `--files` run still proves every scenario type
+is represented rather than leaving a low-weight scenario (`prompt_injection_canary` at 3%) to
+maybe never appear. The three scenarios with a real statistical acceptance check (`peer_group_
+deviation`, `seasonal_deviation`, `low_and_slow_exfil`) get a higher background-event floor than
+the rest for the same reason — verified empirically to need it to reliably clear their own gate.
+
+`--skip-baseline` writes the corpus only, skipping the slower `data/baseline/` 6-month rollup —
+`make gen-data-quick`'s mode, for a fast local check that a change didn't break generation.

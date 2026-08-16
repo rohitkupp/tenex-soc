@@ -198,9 +198,9 @@ def percentile_for(
         )
 
     # A profile with n_windows >= MIN_WINDOWS_FOR_BASELINE always has real p50/mad (the loader
-    # only ever writes both together, from datagen/generate_corpus.py::build_baseline()'s
-    # median/MAD computation) -- the None-handling above exists for the row itself being absent
-    # or thin, not for a present-but-half-populated row.
+    # only ever writes both together, from datagen.labeled_corpus.build_baseline's median/MAD
+    # computation) -- the None-handling above exists for the row itself being absent or thin,
+    # not for a present-but-half-populated row.
     assert profile.p50 is not None and profile.mad is not None
     z = _robust_z_from_stats(value, profile.p50, profile.mad)
     percentile = min(100.0, max(0.0, _normal_cdf(z) * 100.0))

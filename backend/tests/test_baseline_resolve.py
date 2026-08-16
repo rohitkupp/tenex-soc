@@ -4,10 +4,11 @@ Rows are inserted directly (bypassing `app.baseline.loader`) so each test contro
 distribution/contact-count numbers precisely, independent of the loader's fixture data
 (`tests/test_baseline_loader.py` covers the loader's own file-parsing/rollup behaviour).
 
-`rosaa@northwind.example` (Finance) and `umad@northwind.example` (Engineering) are real users
-of the deterministic seeded org `app.baseline.org_directory` reconstructs -- same two used in
-`tests/test_baseline_loader.py`, for the same reason (a real `department_for_user` lookup, not a
-stubbed one).
+`bjohann@northwind.example` (Finance) and `rpanter@northwind.example` (Engineering) are real
+users of the deterministic seeded org `app.baseline.org_directory` reconstructs (`python -m
+datagen split`'s train/northwind org, `datagen.labeled_corpus.DEFAULT_SPLITS[0]`) -- same two
+used in `tests/test_baseline_loader.py`, for the same reason (a real `department_for_user`
+lookup, not a stubbed one).
 """
 
 from __future__ import annotations
@@ -32,8 +33,8 @@ from app.models.baseline_contact import BaselineContact
 from app.models.baseline_profile import BaselineProfile
 from tests.conftest import make_tenant
 
-FINANCE_USER = "rosaa@northwind.example"
-ENGINEERING_USER = "umad@northwind.example"
+FINANCE_USER = "bjohann@northwind.example"
+ENGINEERING_USER = "rpanter@northwind.example"
 UNKNOWN_USER = "nobody@not-in-the-org.example"
 
 _ORG_SCOPE_VALUE = "org"

@@ -19,6 +19,7 @@ from app.parsers.zscaler import (
     _status_class,
 )
 from datagen import corpus
+from datagen.scenarios import scenario_keys
 from datagen.types import TimeWindow
 
 _ORG_SPEC = corpus.OrgSpec(n_users=15, n_departments=2, offices=("US-CA",), n_service_accounts=2)
@@ -240,3 +241,68 @@ def test_iter_events_skips_the_header_line_and_counts_line_numbers(tmp_path: Pat
     line_nos = [r.line_no for r in results if isinstance(r, HTTPActivity)]
     assert line_nos[0] == 2
     assert line_nos == sorted(line_nos)
+
+
+# ---------------------------------------------------------------------------- regression: every
+# generator output must round-trip through this parser
+#
+# The legacy `datagen/generate_corpus.py` (deleted; see `datagen/labeled_corpus.py`'s module
+# docstring and docs/v1/11-SYNTHETIC-DATA.md) wrote `datetime.strftime("%Y-%m-%d %H:%M:%S")`
+# while this parser only ever accepted `...THH:MM:SSZ` (`_DATETIME_FORMATS` above) — every one of
+# the 271 files under `backend/data/corpus/` plus the 30 under `backend/data/eval/golden/` it
+# produced was 100% `ParseFailure`, 0 events. The two generators drifted because they were
+# maintained independently with no test tying either one's output back to this parser. This is
+# that test for the generator that survived the consolidation: every scenario `datagen` can
+# register, plus the unlabeled benign corpus, must still produce a file this parser reads with
+# zero failures. A future scenario module or a future emitter timestamp change that breaks this
+# contract fails here, in seconds, instead of silently shipping an unparseable corpus again.
+#
+# Seed 7 (docs/11's own CLI example seed) at 10,000 background events is the smallest
+# empirically-verified-reliable combination for every scenario currently registered, including
+# the three with a real statistical acceptance check (`peer_group_deviation`, `seasonal_deviation`,
+# `low_and_slow_exfil` — see their own `*AcceptanceError` classes): their gates are sensitive to
+# the specific (seed, org) pair, not just event volume, so this pin is deliberate, not an
+# arbitrary default that happened to work once.
+_REGRESSION_SEED = 7
+_REGRESSION_EVENTS = 10_000
+
+
+def test_every_registered_scenario_parses_with_zero_failures(tmp_path: Path) -> None:
+    assert scenario_keys(), "no scenarios registered — datagen.scenarios discovery is broken"
+
+    for key in scenario_keys():
+        written = corpus.run_scenario(
+            key, _REGRESSION_SEED, tmp_path / key, total_events=_REGRESSION_EVENTS
+        )
+        log_path = next(p for p in written if p.suffix == ".log")
+
+        n_events = n_failures = 0
+        with log_path.open(encoding="utf-8") as fh:
+            for result in iter_events("zscaler", fh):
+                if isinstance(result, ParseFailure):
+                    n_failures += 1
+                else:
+                    n_events += 1
+
+        assert n_failures == 0, f"{key}: {n_failures} parse failures in {log_path}"
+        assert n_events > 0, f"{key}: parser yielded zero events from {log_path}"
+
+
+def test_benign_corpus_parses_with_zero_failures(tmp_path: Path) -> None:
+    """The large unlabeled benign corpus (`python -m datagen benign`) writes through a different
+    path (`write_benign_corpus`, external-merge-sorted) than the eval scenarios above — its own
+    assertion rather than assuming the scenario check covers it. This is also the single largest
+    share of `make gen-data`'s output by volume, and the file the original bug report's "upload
+    the result and get nothing" scenario would hit first."""
+    log_path = _write_corpus(tmp_path, events=2_000)
+
+    n_events = n_failures = 0
+    with log_path.open(encoding="utf-8") as fh:
+        for result in iter_events("zscaler", fh):
+            if isinstance(result, ParseFailure):
+                n_failures += 1
+            else:
+                n_events += 1
+
+    assert n_failures == 0
+    assert n_events > 0

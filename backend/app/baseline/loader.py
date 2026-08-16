@@ -1,8 +1,8 @@
 """Idempotent ETL: `data/baseline/*` -> `baseline_windows` / `baseline_profiles` /
 `baseline_contacts` (docs/v2_migration/MIGRATION-01-evidence-first.md, change 1).
 
-`datagen/generate_corpus.py::build_baseline()` (the delivered generator, wired into
-`make gen-data`) writes three files this loader reads verbatim:
+`datagen.labeled_corpus.build_baseline` (wired into `make gen-data` via `python -m datagen split`)
+writes three files this loader reads verbatim:
 
 | File | Shape | Loads into |
 |---|---|---|

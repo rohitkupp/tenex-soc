@@ -1,16 +1,18 @@
 """`user -> department` resolution for the single seeded live tenant.
 
 docs/v2_migration change 23 collapses the system to one live tenant (`northwind`,
-`app.models.tenant.LIVE_TENANT_NAME`), seeded from `datagen.generate_corpus`'s train-split org.
-That org is the *only* source this system has for "which department is this user in" — docs/02
-defines no identity/HR directory table, and change 1's schema (`app.baseline`) adds exactly the
-three tables the migration lists, none of them a directory.
+`app.models.tenant.LIVE_TENANT_NAME`), seeded from `datagen`'s train-split org
+(`datagen.labeled_corpus.DEFAULT_SPLITS[0]`). That org is the *only* source this system has for
+"which department is this user in" — docs/02 defines no identity/HR directory table, and change
+1's schema (`app.baseline`) adds exactly the three tables the migration lists, none of them a
+directory.
 
-`datagen.generate_corpus.Org.build` is a pure function of `(name, n_users, n_service, seed)` —
-`random.Random(seed)` makes it fully reproducible. Reconstructing the same org here, with the
-exact parameters `datagen.generate_corpus.main()` uses for the baseline's org, reproduces the
-same `user -> department` assignment as whatever produced `data/baseline/`, with no extra file
-to ship and no drift risk between "what `app.baseline.loader` rolled contacts up by" and "what a
+`datagen.labeled_corpus.build_split_org` is a pure function of a `SplitSpec` — `SeededRandom`
+(blake2b-derived, not stdlib `random`) makes it fully reproducible. Reconstructing the same org
+here, with the exact `SplitSpec` `python -m datagen split` uses for the baseline's org
+(`build_labeled_corpus`'s `--skip-baseline`-guarded step, same module), reproduces the same
+`user -> department` assignment as whatever produced `data/baseline/`, with no extra file to
+ship and no drift risk between "what `app.baseline.loader` rolled contacts up by" and "what a
 live `app.baseline.resolve.contact_counts` call resolves department as" — both call
 `department_for_user` below.
 
@@ -19,37 +21,33 @@ multi-tenant deployment would replace this module with a lookup against a real H
 keyed by tenant — out of scope for change 1, and not needed while docs/v2_migration change 23
 keeps the whole system on one seeded tenant.
 
-Importing `datagen.generate_corpus.Org` here (rather than `datagen`'s own top-level `Org`,
-`datagen/org.py` — the *other* generator, predating the migration's delivered single-file
-replacement) is deliberate: `datagen/__init__.py` re-exports its own, differently-shaped `Org`
-(`Org(seed=42)`, no `.department` per user in the same way), so the import below is
-module-qualified on purpose to avoid picking up the wrong one.
+**History:** this used to reconstruct the org via `datagen.generate_corpus.Org.build`, the
+generator delivered for migration change 13. That generator wrote a `datetime` format the shipped
+parser could not read and was deleted rather than patched (see
+`datagen/labeled_corpus.py`'s module docstring) — `data/baseline/` is now produced by
+`build_baseline` in that same module, on the real `datagen.org.Org`, so this directory was
+repointed to match rather than left resolving departments against an org nothing else builds
+anymore.
 """
 
 from __future__ import annotations
 
-import random
 from functools import lru_cache
 
-from datagen.generate_corpus import Org
-
-# Exactly datagen/generate_corpus.py::main()'s northwind (train-split) org -- the org
-# build_baseline() is always called with, regardless of --files. Changing --files changes how
-# many corpus *files* that org narrates, not the org itself.
-_BASELINE_ORG_NAME = "northwind"
-_BASELINE_ORG_USERS = 250
-_BASELINE_ORG_SERVICE_ACCOUNTS = 12
-_BASELINE_ORG_SEED = 42
+from datagen.labeled_corpus import DEFAULT_SPLITS, build_split_org
 
 __all__ = ["department_for_user"]
 
 
 @lru_cache(maxsize=1)
 def _department_directory() -> dict[str, str]:
-    # Reproducing the generator's own deterministic org, not a security-sensitive random value.
-    rng = random.Random(_BASELINE_ORG_SEED)  # noqa: S311
-    org = Org.build(_BASELINE_ORG_NAME, _BASELINE_ORG_USERS, _BASELINE_ORG_SERVICE_ACCOUNTS, rng)
-    return {user.email: user.department for user in org.users}
+    # DEFAULT_SPLITS[0] is the train/northwind split -- the org build_baseline() is always
+    # called with, regardless of --files. Changing --files changes how many corpus *files* that
+    # org narrates, not the org itself. `.principals`, not `.users`: service accounts get a
+    # baseline_contacts row too (app.baseline.loader's user-scope rollup does not distinguish),
+    # so they need a department to roll up into just as much as human users do.
+    org = build_split_org(DEFAULT_SPLITS[0])
+    return {user.email: user.department for user in org.principals}
 
 
 def department_for_user(user_email: str) -> str | None:

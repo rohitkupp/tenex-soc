@@ -1,7 +1,7 @@
 [
-  {"scope": "user", "scope_value": "rosaa@northwind.example", "domain": "github.com", "contact_count": 120},
-  {"scope": "user", "scope_value": "yaraf@northwind.example", "domain": "github.com", "contact_count": 30},
-  {"scope": "user", "scope_value": "umad@northwind.example", "domain": "github.com", "contact_count": 500},
-  {"scope": "user", "scope_value": "rosaa@northwind.example", "domain": "salesforce.com", "contact_count": 40},
-  {"scope": "user", "scope_value": "umad@northwind.example", "domain": "salesforce.com", "contact_count": 10}
+  {"scope": "user", "scope_value": "bjohann@northwind.example", "domain": "github.com", "contact_count": 120},
+  {"scope": "user", "scope_value": "kgaither@northwind.example", "domain": "github.com", "contact_count": 30},
+  {"scope": "user", "scope_value": "rpanter@northwind.example", "domain": "github.com", "contact_count": 500},
+  {"scope": "user", "scope_value": "bjohann@northwind.example", "domain": "salesforce.com", "contact_count": 40},
+  {"scope": "user", "scope_value": "rpanter@northwind.example", "domain": "salesforce.com", "contact_count": 10}
 ]

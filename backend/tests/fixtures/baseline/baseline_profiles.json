@@ -1,10 +1,10 @@
 {
-  "rosaa@northwind.example|n_events": {
-    "entity_type": "user", "entity_value": "rosaa@northwind.example", "metric": "n_events",
+  "bjohann@northwind.example|n_events": {
+    "entity_type": "user", "entity_value": "bjohann@northwind.example", "metric": "n_events",
     "p50": 15.0, "p95": 21.0, "p99": 22.0, "mean": 15.25, "mad": 4.5, "n_windows": 24
   },
-  "umad@northwind.example|n_events": {
-    "entity_type": "user", "entity_value": "umad@northwind.example", "metric": "n_events",
+  "rpanter@northwind.example|n_events": {
+    "entity_type": "user", "entity_value": "rpanter@northwind.example", "metric": "n_events",
     "p50": 37.5, "p95": 40.0, "p99": 40.0, "mean": 37.5, "mad": 2.5, "n_windows": 8
   }
 }

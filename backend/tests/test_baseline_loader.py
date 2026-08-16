@@ -1,13 +1,14 @@
 """`app.baseline.loader` — docs/v2_migration/MIGRATION-01-evidence-first.md, change 1.
 
 Fixtures under `tests/fixtures/baseline/` are a small, hand-built stand-in for
-`datagen/generate_corpus.py::build_baseline()`'s real output, shaped identically (same three
-files, same key names) but sized for a fast, precise unit test rather than the real 250-user /
-6-month scale. `rosaa@northwind.example` and `yaraf@northwind.example` (Finance) and
-`umad@northwind.example` (Engineering) are real users of the deterministic seeded org
-`app.baseline.org_directory` reconstructs — picked by inspecting `Org.build("northwind", 250,
-12, random.Random(42))` directly, not invented, so the department rollup below exercises the
-same `department_for_user` lookup production code path uses.
+`datagen.labeled_corpus.build_baseline`'s real output, shaped identically (same three files,
+same key names) but sized for a fast, precise unit test rather than the real 250-user / 6-month
+scale. `bjohann@northwind.example` and `kgaither@northwind.example` (Finance) and
+`rpanter@northwind.example` (Engineering) are real users of the deterministic seeded org
+`app.baseline.org_directory` reconstructs — picked by inspecting
+`datagen.labeled_corpus.build_split_org(DEFAULT_SPLITS[0])` directly, not invented, so the
+department rollup below exercises the same `department_for_user` lookup production code path
+uses.
 """
 
 from __future__ import annotations
@@ -79,8 +80,8 @@ def test_load_baseline_loads_windows_profiles_and_rolled_up_contacts(
         )
     assert len(windows) == 6
     assert {w.entity_value for w in windows} == {
-        "rosaa@northwind.example",
-        "umad@northwind.example",
+        "bjohann@northwind.example",
+        "rpanter@northwind.example",
     }
 
     assert summary.window_period_start is not None
@@ -92,8 +93,8 @@ def test_load_baseline_loads_windows_profiles_and_rolled_up_contacts(
 def test_department_and_org_rollups_sum_correctly_from_user_scope_contacts(
     db: Session, tenant_id: uuid.UUID
 ) -> None:
-    """Fixture: rosaa (Finance) 120 + yaraf (Finance) 30 + umad (Engineering) 500 on
-    github.com; rosaa (Finance) 40 + umad (Engineering) 10 on salesforce.com. Department
+    """Fixture: bjohann (Finance) 120 + kgaither (Finance) 30 + rpanter (Engineering) 500 on
+    github.com; bjohann (Finance) 40 + rpanter (Engineering) 10 on salesforce.com. Department
     totals must sum only same-department users; org totals must sum every user regardless of
     department -- the two are deliberately made to disagree (Finance's salesforce.com total,
     40, is not the org total, 50) so a rollup bug that conflates the two scopes fails loudly.
@@ -109,9 +110,9 @@ def test_department_and_org_rollups_sum_correctly_from_user_scope_contacts(
         )
     by_key = {(r.scope, r.scope_value, r.domain): r.contact_count for r in rows}
 
-    assert by_key[("user", "rosaa@northwind.example", "github.com")] == 120
-    assert by_key[("user", "yaraf@northwind.example", "github.com")] == 30
-    assert by_key[("user", "umad@northwind.example", "github.com")] == 500
+    assert by_key[("user", "bjohann@northwind.example", "github.com")] == 120
+    assert by_key[("user", "kgaither@northwind.example", "github.com")] == 30
+    assert by_key[("user", "rpanter@northwind.example", "github.com")] == 500
 
     assert by_key[("department", "Finance", "github.com")] == 150  # 120 + 30
     assert by_key[("department", "Engineering", "github.com")] == 500

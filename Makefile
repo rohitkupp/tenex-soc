@@ -41,11 +41,17 @@ seed: ## Create the live tenant, demo user, seeded feedback history, Tier 2 peer
 	$(BACKEND) python -m app.scripts.seed_tier2
 	$(BACKEND) python -m app.baseline.loader
 
+# `python -m datagen split`, not the old `datagen/generate_corpus.py`. That second generator
+# was deleted: it emitted `"%Y-%m-%d %H:%M:%S"` timestamps while `app/parsers/zscaler.py`
+# accepts only the ISO `...THH:MM:SSZ` form `datagen/emitters/zscaler.py` writes, so every file
+# it ever produced was 100% unparseable — `make gen-data` silently generated a corpus the
+# product could not read. One generator now decides a log line's shape, so the two cannot drift
+# apart again. See `datagen/labeled_corpus.py`'s docstring for the full consolidation.
 gen-data: ## Regenerate the 1000-file corpus + 6-month baseline (FILES=n to shrink)
-	$(BACKEND) python datagen/generate_corpus.py --out data --files $(FILES)
+	$(BACKEND) python -m datagen split --out data --files $(FILES)
 
 gen-data-quick: ## Small corpus, no baseline — for a fast local check
-	$(BACKEND) python datagen/generate_corpus.py --out data --files 20 --skip-baseline
+	$(BACKEND) python -m datagen split --out data --files 20 --skip-baseline
 
 train: ## Train all models, writing artifacts to backend/data/models/
 	$(BACKEND) python -m app.detection.train

@@ -181,6 +181,37 @@ def _cmd_demo(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_split(args: argparse.Namespace) -> int:
+    from .labeled_corpus import (
+        DEFAULT_SPLITS,
+        build_baseline,
+        build_labeled_corpus,
+        build_split_org,
+    )
+
+    t0 = time.perf_counter()
+    manifest = build_labeled_corpus(
+        args.out, total_files=args.files, events_per_file=args.events_per_file
+    )
+    log.info(
+        "split.corpus.done",
+        elapsed_s=round(time.perf_counter() - t0, 2),
+        total_files=len(manifest["files"]),
+        scenario_counts=manifest["scenario_counts"],
+    )
+
+    if not args.skip_baseline:
+        # The baseline is the live tenant's own six-month history — the train/northwind split by
+        # construction (docs/11), not a fourth org.
+        train = DEFAULT_SPLITS[0]
+        t1 = time.perf_counter()
+        stats = build_baseline(build_split_org(train), args.out / "baseline", train.seed)
+        log.info("split.baseline.done", elapsed_s=round(time.perf_counter() - t1, 2), **stats)
+
+    log.info("split.done", elapsed_s=round(time.perf_counter() - t0, 2))
+    return 0
+
+
 def _cmd_all(args: argparse.Namespace) -> int:
     from .scenarios import scenario_keys
 
@@ -289,6 +320,31 @@ def build_parser() -> argparse.ArgumentParser:
     p_all.add_argument("--benign-events", type=int, default=_DEFAULT_BENIGN_EVENTS)
     p_all.add_argument("--window-days", type=int, default=corpus.DEFAULT_WINDOW_DAYS)
     p_all.set_defaults(func=_cmd_all)
+
+    p_split = sub.add_parser(
+        "split",
+        help=(
+            "Write the labeled train/validation/golden corpus + manifest.json "
+            "(docs/v2_migration change 13; `make gen-data`'s target)"
+        ),
+    )
+    p_split.add_argument("--out", type=Path, default=Path("data"))
+    p_split.add_argument(
+        "--files",
+        type=int,
+        default=1000,
+        help="Total files across train/val/golden, 70/20/10 split (default: %(default)s)",
+    )
+    p_split.add_argument(
+        "--events-per-file",
+        type=int,
+        default=6_000,
+        help="Benign background events per file, before scenario injection (default: %(default)s)",
+    )
+    p_split.add_argument(
+        "--skip-baseline", action="store_true", help="Skip the 6-month data/baseline/ rollup"
+    )
+    p_split.set_defaults(func=_cmd_split)
 
     return parser
 

@@ -36,7 +36,7 @@ from app.models.baseline_profile import BaselineProfile
 from tests.conftest import make_tenant
 
 _T0 = datetime(2026, 1, 1, tzinfo=UTC)
-FINANCE_USER = "rosaa@northwind.example"  # real seeded org user -- tests/test_baseline_resolve.py
+FINANCE_USER = "bjohann@northwind.example"  # real seeded org user -- tests/test_baseline_resolve.py
 _ORG_SCOPE_VALUE = "org"
 
 
