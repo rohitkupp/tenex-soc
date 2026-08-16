@@ -1,10 +1,13 @@
 .DEFAULT_GOAL := help
+# Migration change 13 specifies 1000 files. That is ~2.5 GB of .log — override for a
+# quicker local run (`make gen-data FILES=50`) rather than editing this file.
+FILES ?= 1000
 SHELL := /bin/bash
 
 COMPOSE := docker compose
 BACKEND := $(COMPOSE) exec -T api
 
-.PHONY: help up down logs ps migrate revision seed gen-data train eval test lint fmt clean
+.PHONY: help up down logs ps migrate revision seed gen-data gen-data-quick train eval test lint fmt clean
 
 help: ## Show this help
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) \
@@ -36,8 +39,11 @@ seed: ## Create the demo tenant, user, and seeded feedback history
 	$(BACKEND) python -m app.scripts.seed
 	$(BACKEND) python -m app.scripts.seed_feedback
 
-gen-data: ## Regenerate the synthetic corpus, eval scenarios, and demo file
-	$(BACKEND) python -m datagen all
+gen-data: ## Regenerate the 1000-file corpus + 6-month baseline (FILES=n to shrink)
+	$(BACKEND) python datagen/generate_corpus.py --out data --files $(FILES)
+
+gen-data-quick: ## Small corpus, no baseline — for a fast local check
+	$(BACKEND) python datagen/generate_corpus.py --out data --files 20 --skip-baseline
 
 train: ## Train all models, writing artifacts to backend/data/models/
 	$(BACKEND) python -m app.detection.train
