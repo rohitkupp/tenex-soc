@@ -111,8 +111,21 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # Build-time, not runtime — see frontend/Dockerfile.
+        API_ORIGIN: ${API_ORIGIN:-http://api:8000}
     environment:
-      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      # Browser-facing: the browser resolves this, so it must be a host address, not a
+      # container name. Empty means same-origin — requests go to /api/* on :3000 and
+      # next.config.ts's rewrite proxies them, which is what makes the session cookie
+      # first-party (see that file).
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL-}
+      # Server-facing: the rewrite target and fetchServer's base, resolved *inside* the web
+      # container, where `localhost` is the web container itself and not the API. This has to
+      # be the compose service name. Without it every proxied request 500s and login is
+      # impossible — which is exactly what happened, and it went unnoticed because Vercel
+      # never runs this compose file and the web container had never been started.
+      API_ORIGIN: ${API_ORIGIN:-http://api:8000}
     ports: ["3000:3000"]
     depends_on: [api]
 

@@ -1,0 +1,7 @@
+Next.js serves static assets from this directory. It is empty today — the app uses no
+static files — but `frontend/Dockerfile` copies it unconditionally (`COPY --from=builder
+/app/public ./public`), which is the standard Next standalone layout. Without this file the
+directory does not exist in git, the COPY fails, and `docker compose up web` dies with
+"/app/public: not found" — so `make up`, the first command in the README, could never bring
+up the web service. Vercel builds from source and never runs this Dockerfile, which is why
+the deployed site worked and the break stayed invisible.
