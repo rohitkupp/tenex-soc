@@ -80,34 +80,101 @@ def _render_summary_table(gate_checks: list[GateCheck], passed: bool) -> str:
 
 def _render_l3_table(l3_result: dict[str, Any]) -> str:
     agg = l3_result["aggregate"]
-    winner = l3_result["winner"]
+    pooled = l3_result.get("pooled", {})
+    winner_f2 = l3_result.get("winner_rule_f2", l3_result["winner"])
+    winner_f1_legacy = l3_result.get("winner_rule_f1_legacy")
+    rule_change = l3_result.get("winner_rule_change")
     baseline = l3_result["baseline"]
     lines = [
         "### L3 unsupervised model comparison",
         "",
-        f"Winner (pre-registered rule: highest mean F1 at the fixed confidence threshold, tied by "
-        f"mean AUC-PR): **`{winner}`**. Baseline every model must beat: `{baseline}`.",
-        "",
-        "| Model | Mean F1 | Mean AUC-PR | Mean recall | Mean precision | Scenarios detected |",
-        "|---|---|---|---|---|---|",
+        f"**Current winner rule (forward change, see below): highest mean F2 at the fixed "
+        f"confidence threshold, tied by mean AUC-PR — `{winner_f2}`.**",
     ]
-    for model, m in agg.items():
-        marker = " **(winner)**" if model == winner else ""
+    if winner_f1_legacy is not None:
         lines.append(
-            f"| `{model}`{marker} | {_fmt(m['mean_f1'])} | {_fmt(m['mean_auc_pr'])} | "
-            f"{_fmt(m['mean_recall'])} | {_fmt(m['mean_precision'])} | "
+            f"Superseded rule (pre-registered, kept for the record — never retroactively "
+            f"rewritten, CLAUDE.md rule 2): highest mean F1, same tie-break — `{winner_f1_legacy}`"
+            + (
+                " (differs from the F2 winner)"
+                if winner_f1_legacy != winner_f2
+                else " (same model both ways)"
+            )
+            + "."
+        )
+    if rule_change:
+        lines.append(
+            f"Rule changed **{rule_change['date']}**: {rule_change['old_rule']} → "
+            f"{rule_change['new_rule']}. Rationale: {rule_change['rationale']} Full record: "
+            f"docs/12-EVALUATION.md § Forward changes."
+        )
+    lines.append(f"Baseline every model must beat: `{baseline}`.")
+    lines.append("")
+    lines.append(
+        "**Macro** (mean of each scenario's own metric — weights a 2-positive scenario the same "
+        "as a 100-positive one):"
+    )
+    lines.append("")
+    lines.append(
+        "| Model | Mean F1 | Mean F2 | Mean AUC-PR | Mean recall | Mean precision | "
+        "Scenarios detected |"
+    )
+    lines.append("|---|---|---|---|---|---|---|")
+    for model, m in agg.items():
+        marker = ""
+        if model == winner_f2:
+            marker += " **(F2 winner)**"
+        if model == winner_f1_legacy and winner_f1_legacy != winner_f2:
+            marker += " *(F1 winner, superseded rule)*"
+        lines.append(
+            f"| `{model}`{marker} | {_fmt(m['mean_f1'])} | {_fmt(m.get('mean_f2'))} | "
+            f"{_fmt(m['mean_auc_pr'])} | {_fmt(m['mean_recall'])} | {_fmt(m['mean_precision'])} | "
             f"{int(m['n_scenarios_detected'])} / {int(m['n_scenarios'])} |"
         )
     lines.append("")
+    if pooled:
+        lines.append(
+            "**Pooled / micro** (sum TP/FP/FN across the attack scenarios first, divide once — "
+            "the honest aggregate figure per docs/12; a model's mean-recall row above can read "
+            "far higher than its pooled recall here when its detections cluster in low-positive "
+            "scenarios):"
+        )
+        lines.append("")
+        lines.append(
+            "| Model | TP | FP | FN | FN per TP | Pooled precision | Pooled recall | "
+            "Pooled F1 | Pooled F2 |"
+        )
+        lines.append("|---|--:|--:|--:|--:|--:|--:|--:|--:|")
+        for model, p in pooled.items():
+            fn_per_tp = p.get("fn_per_tp")
+            fn_per_tp_s = f"{fn_per_tp:.1f}" if fn_per_tp is not None else "n/a"
+            lines.append(
+                f"| `{model}` | {int(p['tp'])} | {int(p['fp'])} | {int(p['fn'])} | "
+                f"{fn_per_tp_s} | {_fmt(p['precision'])} | {_fmt(p['recall'])} | "
+                f"{_fmt(p['f1'])} | {_fmt(p['f2'])} |"
+            )
+        lines.append("")
+        # TP + FN == n_pos sanity readout, right in the report -- makes the "computed from
+        # predictions, not backed out of a rate" claim (docs/12) checkable by eye.
+        lines.append(
+            "Confusion-matrix sanity check: TP + FN must equal the model's total pooled positive "
+            "count (it is identical across models -- the same events are malicious for every "
+            "model). " + ", ".join(f"`{m}`: {int(p['tp'] + p['fn'])}" for m, p in pooled.items())
+        )
+        lines.append("")
     lines.append("#### Per-scenario recall (L3)")
     lines.append("")
-    lines.append("| Scenario | Model | n_pos | Precision | Recall | F1 | AUC-PR | Detected |")
-    lines.append("|---|---|--:|--:|--:|--:|--:|:--:|")
+    lines.append(
+        "| Scenario | Model | n_pos | TP | FP | FN | Precision | Recall | F1 | F2 | AUC-PR | "
+        "Detected |"
+    )
+    lines.append("|---|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|:--:|")
     for row in l3_result["per_scenario"]:
         lines.append(
             f"| {row['scenario']} | `{row['model']}` | {row['n_positive']} | "
+            f"{row.get('tp', 'n/a')} | {row.get('fp', 'n/a')} | {row.get('fn', 'n/a')} | "
             f"{_fmt(row['precision'])} | {_fmt(row['recall'])} | {_fmt(row['f1'])} | "
-            f"{_fmt(row['auc_pr'])} | {'✓' if row['detected'] else '✗'} |"
+            f"{_fmt(row.get('f2'))} | {_fmt(row['auc_pr'])} | {'✓' if row['detected'] else '✗'} |"
         )
     lines.append("")
     return "\n".join(lines)
@@ -171,7 +238,11 @@ def _render_fp_rates(detection_report: Any) -> str:
         "### False-positive rate",
         "",
         "`fp_rate = signals_raised_by_detector / n_events_in_file` on files with zero malicious "
-        "lines by construction — every signal raised on them is a false positive.",
+        "lines by construction — every signal raised on them is a false positive. Every "
+        "`ml.*` row is measured for **all six** `ML_MODEL_FIELDS` models (docs/12 change 1), via "
+        "a dedicated scoring pass independent of the persisted-Signal path other rows use — see "
+        "`evals.pipeline.ml_fp_counts_for_file`. A 0.00000 for `ml.ecod` means it was measured "
+        "and fired zero times, not that it went unmeasured.",
         "",
         f"**Aggregate FP rate, scenario 8 (benign-but-weird):** {_fmt(detection_report.fp_rate_scenario8_total, 5)}  ",
         f"**Aggregate FP rate, pure-benign corpus:** {_fmt(detection_report.fp_rate_benign_pure_total, 5)}",
@@ -395,6 +466,57 @@ def _render_known_weaknesses(extra: list[str]) -> str:
     return "\n".join(lines)
 
 
+def _render_initial_fusion_weights(
+    weights: dict[str, float] | None, source: dict[str, Any] | None
+) -> str:
+    lines = [
+        "## Initial fusion weights — seeded default, before any analyst feedback",
+        "",
+        'docs/12 change 4 ("Audit and set initial fusion weights"). Every detector\'s '
+        "`detector_stats.fusion_weight` used to default to a uniform 1.0 until an analyst had "
+        "confirmed or dismissed enough alerts for mechanism 2 (`app.learning.weights."
+        "retune_detector_weights`, docs/08 Part 2 §2) to run — fusing a low-precision detector "
+        "with the same authority as a high-precision one before a single analyst click. The "
+        "weights below are seeded from this run's own measured L3 benchmark, using mechanism 2's "
+        "*identical* clamp formula (`clamp(precision_d / prior_precision, 0.25, 1.5)` — "
+        "`app.learning.weights.clamp_fusion_weight`/`pooled_precision`, reused not "
+        "reimplemented) so the seeded value and whatever mechanism 2 later learns from real "
+        "feedback sit on one scale.",
+        "",
+    ]
+    if not weights or not source:
+        lines.append("Not computed this run.")
+        lines.append("")
+        return "\n".join(lines)
+    prior = source.get("prior_precision")
+    lines.append(
+        f"Prior precision (pooled across the three shipped models' benchmark TP/FP, this run): "
+        f"{_fmt(prior, 5) if prior is not None else 'n/a'}."
+    )
+    lines.append("")
+    lines.append("| Detector | Pooled TP | Pooled FP | Measured precision | Initial weight |")
+    lines.append("|---|--:|--:|--:|--:|")
+    pooled_counts = source.get("pooled_counts", {})
+    for key, weight in sorted(weights.items()):
+        counts = pooled_counts.get(key, {})
+        tp, fp = counts.get("tp"), counts.get("fp")
+        precision = (
+            (tp / (tp + fp)) if (tp is not None and fp is not None and (tp + fp) > 0) else None
+        )
+        lines.append(
+            f"| `{key}` | {tp if tp is not None else 'n/a'} | {fp if fp is not None else 'n/a'} | "
+            f"{_fmt(precision) if precision is not None else 'n/a'} | {_fmt(weight)} |"
+        )
+    lines.append("")
+    lines.append(
+        f"Written to `data/models/initial_fusion_weights.json` "
+        f"(eval seed {source.get('eval_seed', 'n/a')}) for "
+        "`app.pipeline.stages.correlate._fusion_weight` to read as its fallback."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def render(
     *,
     git_sha: str,
@@ -411,6 +533,8 @@ def render(
     injection_detail: str,
     sweep: dict[str, Any] | None,
     extra_weaknesses: list[str],
+    initial_fusion_weights: dict[str, float] | None = None,
+    initial_fusion_weights_source: dict[str, Any] | None = None,
 ) -> str:
     parts = [
         "# Evaluation Report",
@@ -428,6 +552,7 @@ def render(
         _render_per_scenario_breakdown(detection_report),
         _render_fp_rates(detection_report),
         _render_predictions(predictions),
+        _render_initial_fusion_weights(initial_fusion_weights, initial_fusion_weights_source),
         _render_correlation(correlation),
         _render_injection_resistance(injection_resistance, injection_detail),
         _render_agent(agent),

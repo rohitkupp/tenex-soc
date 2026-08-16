@@ -24,6 +24,7 @@ MODEL.md` is explicitly off limits here) — flagged here rather than silently w
 from __future__ import annotations
 
 import uuid
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -39,11 +40,34 @@ __all__ = [
     "MIN_FUSION_WEIGHT",
     "DetectorWeightChange",
     "WeightTuningResult",
+    "clamp_fusion_weight",
+    "pooled_precision",
     "retune_detector_weights",
 ]
 
 MIN_FUSION_WEIGHT = 0.25
 MAX_FUSION_WEIGHT = 1.5
+
+
+def clamp_fusion_weight(value: float) -> float:
+    """`clamp(value, MIN_FUSION_WEIGHT, MAX_FUSION_WEIGHT)` -- the one clamp mechanism 2 applies,
+    exported so `app.learning.initial_weights` (docs/12 change: "Audit and set initial fusion
+    weights") can seed a detector's *first* `fusion_weight` on the identical scale this module
+    later tunes it on, rather than a second, independently-drifting copy of the same two floats."""
+    return _clamp(value, MIN_FUSION_WEIGHT, MAX_FUSION_WEIGHT)
+
+
+def pooled_precision(counts: Iterable[tuple[int, int]]) -> float | None:
+    """Pooled (TP summed / (TP+FP) summed) precision over a collection of `(tp, fp)` pairs --
+    `retune_detector_weights`'s own `prior_precision` formula, factored out so
+    `app.learning.initial_weights` can compute the identical "prior" a cold-start weight is
+    measured against, from benchmark TP/FP counts instead of analyst-feedback counts. `None` when
+    there is no evidence at all (`total_tp + total_fp == 0`), matching `prior_precision`'s own
+    documented `None` case below."""
+    counts = list(counts)
+    total_tp = sum(tp for tp, _ in counts)
+    total_fp = sum(fp for _, fp in counts)
+    return total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else None
 
 
 @dataclass(slots=True)
@@ -95,10 +119,7 @@ def retune_detector_weights(
     """
     examples = labeled_examples(session, tenant_id)
     counts = _counts_by_detector(examples)
-
-    total_tp = sum(tp for tp, _ in counts.values())
-    total_fp = sum(fp for _, fp in counts.values())
-    prior_precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else None
+    prior_precision = pooled_precision(counts.values())
 
     changes: list[DetectorWeightChange] = []
     with tenant_scope(session, tenant_id):
@@ -114,9 +135,7 @@ def retune_detector_weights(
             if precision is None or prior_precision is None or prior_precision == 0:
                 weight_after = weight_before
             else:
-                weight_after = _clamp(
-                    precision / prior_precision, MIN_FUSION_WEIGHT, MAX_FUSION_WEIGHT
-                )
+                weight_after = clamp_fusion_weight(precision / prior_precision)
 
             changes.append(
                 DetectorWeightChange(

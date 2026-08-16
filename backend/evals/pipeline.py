@@ -188,6 +188,45 @@ def fit_isolated_calibrators(
     return store
 
 
+def ml_fp_counts_for_file(log_path: Path) -> dict[str, int]:
+    """`{detector_key: n_flagged_entity_windows}` for **every** model in `app.detection.ml.
+    detect.ML_MODEL_FIELDS` (all six -- iforest, mahalanobis, ecod, peer_group/LOF, eif, kth_nn),
+    scored directly against `log_path` at the live-pipeline confidence threshold. This is the fix
+    for docs/12's change 1 ("Measure the missing false-positive rates"): `run_scenario`'s own
+    persisted-`Signal` path only ever scores `SHIPPED_MODEL_FIELDS` (`_run_l3` inside
+    `app.graph.pipeline_demo`, reused above) -- deliberately, so the eval harness's simulated
+    fusion/incident-formation stays faithful to what migration change 19 actually made production
+    score. That means `ml.ecod`/`ml.eif`/`ml.kth_nn` never produce persisted signals in this
+    harness at all, so their false-positive rate on either control file was unmeasurable from
+    persisted signals alone -- not merely omitted by a hardcoded list (though `evals.metrics.
+    detection.known_detector_registry`'s ml section *was* also that same class of bug, fixed
+    separately). This function is a second, independent, benchmark-style scoring pass -- it loads
+    `MLModelBundle` and scores the file directly, exactly the way `app.detection.ml.evaluate`
+    already does for its own FP-rate figures -- and never persists a `Signal` row or touches
+    `form_incidents`/`fuse_signals`, so it cannot perturb `run_scenario`'s production-fidelity
+    incident metrics. Call it against `evals.golden.scenario_log_and_labels(FP_CONTROL_SCENARIO)`
+    and `evals.golden.benign_pure_log()` -- the two files every signal on which is a false
+    positive by construction (docs/12)."""
+    from app.detection.ml.detect import ML_MODEL_FIELDS, SIGNAL_CONFIDENCE_THRESHOLD, MLModelBundle
+    from app.detection.ml.events import load_ml_events
+    from app.detection.ml.features import build_entity_window_features
+
+    events = load_ml_events({"zscaler": log_path})
+    df = build_entity_window_features(events)
+    if df.empty:
+        return dict.fromkeys(ML_MODEL_FIELDS, 0)
+
+    bundle = MLModelBundle.load()
+    x_scaled = bundle.transform(df)
+    counts: dict[str, int] = {}
+    for key, bundle_field in ML_MODEL_FIELDS.items():
+        model = getattr(bundle, bundle_field)
+        raw = model.raw_scores(x_scaled)
+        conf = model.confidence(raw)
+        counts[key] = int((conf >= SIGNAL_CONFIDENCE_THRESHOLD).sum())
+    return counts
+
+
 @dataclass(slots=True)
 class ScenarioRun:
     key: str
@@ -279,9 +318,7 @@ class BenignPureRun:
     reliability_samples: list[tuple[float, int]] = field(default_factory=list)
 
 
-def run_benign_pure(
-    *, calibrators: CalibratorStore
-) -> tuple[BenignPureRun, list[uuid.UUID]]:
+def run_benign_pure(*, calibrators: CalibratorStore) -> tuple[BenignPureRun, list[uuid.UUID]]:
     """Run L1-L5 over the pure-benign FP-control corpus (docs/12: false-positive rate "on pure
     benign files"). No `.labels.json` exists for this file (`datagen benign` does not write one,
     unlike `datagen scenario`) so `app.graph.pipeline_demo.run_scenario` cannot be reused directly
@@ -372,6 +409,7 @@ __all__ = [
     "ScenarioRun",
     "correlation_metrics",
     "fit_isolated_calibrators",
+    "ml_fp_counts_for_file",
     "run_benign_pure",
     "run_golden_scenarios",
 ]

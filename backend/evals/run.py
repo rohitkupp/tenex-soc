@@ -19,9 +19,11 @@ from typing import Any
 from app.core.db import get_session_factory
 from app.core.logging import configure_logging, get_logger
 from app.detection.calibration import CalibratorStore
+from app.learning import initial_weights
+from app.learning import weights as weights_module
 from app.models.eval_run import EvalRun
 from evals import gate, golden, pipeline, predictions, report
-from evals.config import EVAL_CALIBRATORS_DIR, EVAL_SEED, RESULTS_MD_PATH
+from evals.config import EVAL_CALIBRATORS_DIR, EVAL_SEED, FP_CONTROL_SCENARIO, RESULTS_MD_PATH
 from evals.db import cleanup_tenants
 from evals.metrics import agent as agent_metrics
 from evals.metrics import calibration as calibration_metrics
@@ -110,8 +112,22 @@ def main(argv: list[str] | None = None) -> int:
     benign_run, benign_tenant_ids = pipeline.run_benign_pure(calibrators=calibrators)
     all_tenant_ids.extend(benign_tenant_ids)
 
+    log.info("run.ml_fp_rates")
+    # docs/12 change 1 ("Measure the missing false-positive rates"): every model in
+    # `app.detection.ml.detect.ML_MODEL_FIELDS` (all six), scored directly against both FP-control
+    # files — independent of `run_scenario`'s persisted-Signal/fusion path, which stays scoped to
+    # the three shipped models (see `evals.pipeline.ml_fp_counts_for_file`'s own docstring).
+    scenario8_log_path, _scenario8_labels_path = golden.scenario_log_and_labels(FP_CONTROL_SCENARIO)
+    ml_fp_counts_scenario8 = pipeline.ml_fp_counts_for_file(scenario8_log_path)
+    ml_fp_counts_benign_pure = pipeline.ml_fp_counts_for_file(golden.benign_pure_log())
+
     log.info("run.detection_metrics")
-    detection_report = detection_metrics.build_report(runs, benign_run)
+    detection_report = detection_metrics.build_report(
+        runs,
+        benign_run,
+        ml_fp_counts_scenario8=ml_fp_counts_scenario8,
+        ml_fp_counts_benign_pure=ml_fp_counts_benign_pure,
+    )
 
     log.info("run.correlation_metrics")
     correlation = correlation_metrics.build_report(runs)
@@ -119,6 +135,31 @@ def main(argv: list[str] | None = None) -> int:
     log.info("run.l3_benchmark")
     l3_result = predictions.run_l3_benchmark()
     predictions_report = predictions.build_report(l3_result, detection_report.per_scenario_detector)
+
+    log.info("run.initial_fusion_weights")
+    # docs/12 change 4 ("Audit and set initial fusion weights"): derived from this run's own
+    # freshly-measured pooled L3 benchmark (l3_result["pooled"], docs/12 change 2), using
+    # mechanism 2's own clamp formula (`app.learning.weights.clamp_fusion_weight`/
+    # `pooled_precision`, reused not reimplemented — see `app.learning.initial_weights`). Written
+    # to `data/models/initial_fusion_weights.json` (production `MODELS_DIR`, since this run
+    # already scored `l3_result` against those exact artifacts) for
+    # `app.pipeline.stages.correlate._fusion_weight` to read as its fallback the next time it is
+    # imported, replacing the uniform-1.0-for-every-detector starting point.
+    shipped_initial_weights = initial_weights.compute_shipped_initial_weights(l3_result["pooled"])
+    shipped_pooled_counts = {
+        key: (int(l3_result["pooled"][key]["tp"]), int(l3_result["pooled"][key]["fp"]))
+        for key in shipped_initial_weights
+    }
+    initial_weights_prior = weights_module.pooled_precision(shipped_pooled_counts.values())
+    initial_weights_source = {
+        "eval_seed": l3_result.get("eval_seed"),
+        "derived_from": "app.detection.ml.evaluate.evaluate()['pooled'], this run",
+        "pooled_counts": {k: {"tp": tp, "fp": fp} for k, (tp, fp) in shipped_pooled_counts.items()},
+        "prior_precision": initial_weights_prior,
+    }
+    initial_weights.save_initial_fusion_weights(
+        shipped_initial_weights, source=initial_weights_source
+    )
 
     log.info("run.calibration_metrics")
     calibration = calibration_metrics.build_report(runs, benign_run)
@@ -167,6 +208,8 @@ def main(argv: list[str] | None = None) -> int:
         injection_resistance=injection_resistance,
         injection_detail=injection_detail,
         sweep=sweep,
+        initial_fusion_weights=shipped_initial_weights,
+        initial_fusion_weights_source=initial_weights_source,
         extra_weaknesses=[
             "**A real defect found and worked around, not silently patched.** "
             "`app/graph/features.py`'s graph-signal explanation payload can carry a raw "
@@ -179,6 +222,23 @@ def main(argv: list[str] | None = None) -> int:
             "this harness can run at all. Every one of the eight golden scenarios hit this at "
             "this harness's 120-user org size — a real, reproducible bug filed here, not "
             "silently avoided.",
+            "**`app.graph.pipeline_demo._ml_model_pairs` still scores the pre-migration-19 L3 "
+            "roster (`ml.iforest`/`ml.mahalanobis`/`ml.ecod`/`ml.peer_group`), not "
+            "`SHIPPED_MODEL_FIELDS` (`ml.eif`/`ml.kth_nn`/`ml.peer_group`) — a stale hardcoded "
+            "list, the same class of bug fixed in this run for `known_detector_registry` and "
+            "`app.detection.calibration._model_pairs`. Left unfixed here because `evals/"
+            "pipeline.py`'s own module docstring states `app/graph/pipeline_demo.py` is out of "
+            "this harness's ownership to modify, and because `_ml_model_pairs` is shared between "
+            "signal emission (which must stay faithful to what production actually fuses) and "
+            "calibration-sample collection (which should cover all six) — widening it in place "
+            "would need splitting that shared function, a larger change than this pass makes. "
+            "Net effect: `ml.eif`/`ml.kth_nn` never appear in section 3's live-pipeline detection "
+            "breakdown or per-detector/per-layer aggregates (only in the L3 benchmark table and "
+            "the false-positive-rate table above, both scored independently of that function), "
+            "and this run's simulated incident-formation/fusion still credits `ml.iforest`/"
+            "`ml.mahalanobis`/`ml.ecod` instead of the models production actually ships. Filed "
+            "here rather than silently worked around; fixing it for real needs sign-off to touch "
+            "`app/graph/pipeline_demo.py`.",
         ],
     )
     RESULTS_MD_PATH.write_text(md, encoding="utf-8")

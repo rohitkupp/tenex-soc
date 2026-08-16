@@ -127,3 +127,73 @@ def test_appendix_does_not_grow_across_repeated_runs() -> None:
 def test_no_prior_file_omits_appendix() -> None:
     md = report.render(**_minimal_render_kwargs())
     assert report._APPENDIX_MARKER not in md
+
+
+def test_l3_table_reports_pooled_and_macro_labeled_separately_and_both_f1_and_f2() -> None:
+    """docs/12 changes 2 and 3: pooled must never silently replace macro (or vice versa), and F1
+    and F2 must both be reported permanently, with the current (F2) and superseded (F1) winners
+    both visible."""
+    kwargs = _minimal_render_kwargs()
+    kwargs["l3_result"] = {
+        "aggregate": {
+            "ml.ecod": {
+                "mean_f1": 0.33,
+                "mean_f2": 0.15,
+                "mean_auc_pr": 0.4,
+                "mean_recall": 0.33,
+                "mean_precision": 0.33,
+                "n_scenarios_detected": 2,
+                "n_scenarios": 6,
+            },
+            "ml.eif": {
+                "mean_f1": 0.22,
+                "mean_f2": 0.35,
+                "mean_auc_pr": 0.24,
+                "mean_recall": 0.5,
+                "mean_precision": 0.15,
+                "n_scenarios_detected": 5,
+                "n_scenarios": 6,
+            },
+        },
+        "pooled": {
+            "ml.ecod": {
+                "tp": 12,
+                "fp": 0,
+                "fn": 224,
+                "precision": 1.0,
+                "recall": 0.051,
+                "f1": 0.097,
+                "f2": 0.063,
+                "fn_per_tp": 18.7,
+            },
+            "ml.eif": {
+                "tp": 33,
+                "fp": 127,
+                "fn": 203,
+                "precision": 0.207,
+                "recall": 0.140,
+                "f1": 0.167,
+                "f2": 0.150,
+                "fn_per_tp": 6.1,
+            },
+        },
+        "winner": "ml.eif",
+        "winner_rule_f1_legacy": "ml.ecod",
+        "winner_rule_f2": "ml.eif",
+        "winner_rule_change": {
+            "date": "2026-08-16",
+            "old_rule": "mean F1, tie-broken by mean AUC-PR",
+            "new_rule": "mean F2, tie-broken by mean AUC-PR",
+            "rationale": "test rationale",
+        },
+        "baseline": "ml.iforest",
+        "per_scenario": [],
+    }
+    md = report.render(**kwargs)
+    assert "Macro" in md
+    assert "Pooled" in md or "pooled" in md
+    assert "Mean F1" in md and "Mean F2" in md
+    assert "F2 winner" in md
+    assert "ml.ecod" in md and "ml.eif" in md
+    # both winners named, not one silently standing in for the other
+    assert "superseded rule" in md.lower()

@@ -83,10 +83,17 @@ def known_detector_registry() -> dict[str, str]:
     try:
         from app.detection.ml import detect as ml_detect
 
-        for name in ("ML_IFOREST", "ML_MAHALANOBIS", "ML_ECOD", "ML_PEER_GROUP"):
-            key = getattr(ml_detect, name, None)
-            if key:
-                registry[key] = "ml"
+        # `ML_MODEL_FIELDS` (all six benchmarked models -- detect.py's own single source of
+        # truth, "adding a model to the bundle without adding it here is the bug this mapping
+        # exists to prevent"), not a hand-typed subset. This registry used to name only four of
+        # the six ("ML_IFOREST", "ML_MAHALANOBIS", "ML_ECOD", "ML_PEER_GROUP"), silently dropping
+        # `ml.eif`/`ml.kth_nn` from every zero-row this harness reports for them -- the same class
+        # of bug `app.detection.calibration._model_pairs` had (see that module and detect.py's own
+        # docstring). Reading the dict dynamically means a seventh model added to the bundle is
+        # picked up here without a second edit, matching every other "read live" registry section
+        # of this function.
+        for key in ml_detect.ML_MODEL_FIELDS:
+            registry[key] = "ml"
     except Exception:
         log.warning("detection.registry.ml_unavailable", exc_info=True)
 
@@ -189,7 +196,27 @@ class DetectionReport:
     fp_rate_benign_pure_total: float
 
 
-def build_report(runs: dict[str, ScenarioRun], benign_pure: BenignPureRun) -> DetectionReport:
+def build_report(
+    runs: dict[str, ScenarioRun],
+    benign_pure: BenignPureRun,
+    *,
+    ml_fp_counts_scenario8: dict[str, int] | None = None,
+    ml_fp_counts_benign_pure: dict[str, int] | None = None,
+) -> DetectionReport:
+    """`ml_fp_counts_scenario8`/`ml_fp_counts_benign_pure` (docs/12 change: "Measure the missing
+    false-positive rates"): `{detector_key: n_flagged_entity_windows}` for every model in
+    `app.detection.ml.detect.ML_MODEL_FIELDS` (all six, not just the three
+    `SHIPPED_MODEL_FIELDS` that ever produce a persisted `Signal` row in this harness's live-
+    pipeline run — `evals.pipeline.ml_fp_counts_for_file`, a dedicated benchmark-style scoring
+    pass over the two FP-control files, computed independently of `run_scenario`'s persisted-
+    Signal/fusion path so measuring it can never perturb that path's fidelity to production,
+    which stays scoped to the three shipped models per migration change 19). When provided, this
+    is the authoritative source for every `ml.*` row below (replacing the persisted-signal-count
+    derivation for the `ml` layer only, which was structurally incapable of a nonzero count for
+    `ml.eif`/`ml.kth_nn` — they were never scored into signals at all — and silently dropped a
+    genuine zero for `ml.ecod` into "not measured"). `None` (the default) preserves this
+    function's original, persisted-signal-only behavior exactly, for callers that have not run
+    the dedicated scoring pass (e.g. this module's own unit tests)."""
     registry = known_detector_registry()
     per_scenario_detector: list[DetectorScenarioRow] = []
     for key in SCENARIO_KEYS:
@@ -237,24 +264,54 @@ def build_report(runs: dict[str, ScenarioRun], benign_pure: BenignPureRun) -> De
     # malicious lines in both files) — fp_rate = n_signals(detector) / n_events(file).
     fp_rate_scenario8: dict[str, float] = {}
     scenario8_rows = [r for r in per_scenario_detector if r.scenario == FP_CONTROL_SCENARIO]
+    non_ml_scenario8_rows = [r for r in scenario8_rows if r.detector_layer != "ml"]
     n_events_scenario8 = (
         runs[FP_CONTROL_SCENARIO].result.ingest.n_events if FP_CONTROL_SCENARIO in runs else 0
     )
-    for r in scenario8_rows:
+    for r in non_ml_scenario8_rows:
         if r.n_signals:
             fp_rate_scenario8[r.detector_key] = (
                 r.n_signals / n_events_scenario8 if n_events_scenario8 else 0.0
             )
-    total_signals_scenario8 = sum(r.n_signals for r in scenario8_rows)
+    if ml_fp_counts_scenario8 is not None:
+        # Every model in ML_MODEL_FIELDS gets a row, including an explicit 0.0 for one that never
+        # fired on the control (a real, reportable measurement — not "not measured").
+        for key, n_flagged in ml_fp_counts_scenario8.items():
+            fp_rate_scenario8[key] = n_flagged / n_events_scenario8 if n_events_scenario8 else 0.0
+        ml_signals_scenario8 = sum(ml_fp_counts_scenario8.values())
+    else:
+        ml_rows = [r for r in scenario8_rows if r.detector_layer == "ml"]
+        for r in ml_rows:
+            if r.n_signals:
+                fp_rate_scenario8[r.detector_key] = (
+                    r.n_signals / n_events_scenario8 if n_events_scenario8 else 0.0
+                )
+        ml_signals_scenario8 = sum(r.n_signals for r in ml_rows)
+    total_signals_scenario8 = sum(r.n_signals for r in non_ml_scenario8_rows) + ml_signals_scenario8
     fp_rate_scenario8_total = (
         total_signals_scenario8 / n_events_scenario8 if n_events_scenario8 else 0.0
     )
 
     fp_rate_benign_pure: dict[str, float] = {}
     n_events_benign_pure = benign_pure.ingest.n_events
-    for key, n_signals in benign_pure.signals_by_detector.items():
+    non_ml_benign_pure_counts = {
+        k: v
+        for k, v in benign_pure.signals_by_detector.items()
+        # Exclude ml.* keys only once the dedicated all-six-model scorer has data to replace them
+        # with; `ml_fp_counts_benign_pure is None` (no caller passed it) preserves this function's
+        # original, unfiltered behavior exactly.
+        if not (k.startswith("ml.") and ml_fp_counts_benign_pure is not None)
+    }
+    for key, n_signals in non_ml_benign_pure_counts.items():
         fp_rate_benign_pure[key] = n_signals / n_events_benign_pure if n_events_benign_pure else 0.0
-    total_signals_benign_pure = sum(benign_pure.signals_by_detector.values())
+    if ml_fp_counts_benign_pure is not None:
+        for key, n_flagged in ml_fp_counts_benign_pure.items():
+            fp_rate_benign_pure[key] = (
+                n_flagged / n_events_benign_pure if n_events_benign_pure else 0.0
+            )
+    total_signals_benign_pure = sum(non_ml_benign_pure_counts.values()) + (
+        sum(ml_fp_counts_benign_pure.values()) if ml_fp_counts_benign_pure is not None else 0
+    )
     fp_rate_benign_pure_total = (
         total_signals_benign_pure / n_events_benign_pure if n_events_benign_pure else 0.0
     )

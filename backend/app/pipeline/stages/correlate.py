@@ -38,6 +38,7 @@ from app.graph.builder import (
 from app.graph.incidents import IncidentCandidate, SignalRef, form_incidents
 from app.graph.recurrence import canonical_text, embed_text, link_recurrence
 from app.graph.titling import title_for_incident
+from app.learning.initial_weights import load_initial_fusion_weights
 from app.models.base import tenant_scope
 from app.models.detector_stats import DetectorStats
 from app.models.event import Event
@@ -51,13 +52,25 @@ from app.pipeline.redis_client import get_redis
 
 log = get_logger(__name__)
 
+# docs/12 change 4 ("Audit and set initial fusion weights"): loaded once per process, not once per
+# signal -- every detector started at a uniform 1.0 fusion weight until an analyst had confirmed
+# or dismissed enough alerts for mechanism 2 (`app.learning.weights.retune_detector_weights`) to
+# run, which fused LOF's ~0.003 measured precision with the same authority as EIF's ~0.2 before a
+# single analyst click. `load_initial_fusion_weights` never raises and returns `{}` (falling
+# through to the pre-existing 1.0 below, unchanged) on a fresh checkout that has not run
+# `make eval` yet -- see `app.learning.initial_weights`'s own module docstring for the full
+# derivation and why this is a file read, not a live benchmark call.
+_INITIAL_FUSION_WEIGHTS = load_initial_fusion_weights()
+
 
 def _fusion_weight(session: Any, tenant_id: uuid.UUID, detector_key: str) -> float:
     with tenant_scope(session, tenant_id):
         row = session.execute(
             select(DetectorStats.fusion_weight).where(DetectorStats.detector_key == detector_key)
         ).scalar_one_or_none()
-    return float(row) if row is not None else 1.0
+    if row is not None:
+        return float(row)
+    return _INITIAL_FUSION_WEIGHTS.get(detector_key, 1.0)
 
 
 def _pick_primary_entity(candidate: IncidentCandidate) -> EntityKey:

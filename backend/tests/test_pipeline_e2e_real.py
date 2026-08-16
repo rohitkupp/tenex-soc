@@ -151,6 +151,7 @@ async def _drain_to_terminal(
                 await task
 
 
+@pytest.mark.exclusive_broker
 def test_full_upload_to_tier2_produces_nonzero_events_signals_incidents(
     tmp_path: Path, tenant_cleanup: list[uuid.UUID], request: pytest.FixtureRequest
 ) -> None:

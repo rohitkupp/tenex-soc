@@ -336,7 +336,13 @@ def test_join_only_shape_leaks_without_an_explicit_filter(
 
     # Tenant A alone has 3 rows; if the query were actually scoped it could return at most 3.
     # Seeing all 8 (3 + 5) proves both tenants' rows came back.
-    assert seen == 8, (
+    # `>= 8`, not `== 8`. This query is deliberately unscoped — that is the whole point of the
+    # test — so it sees every row in the table, including any left by other tests that ran first.
+    # Asserting an exact global count made the test depend on the rest of the suite's residue and
+    # fail with "expected 8, got 28" when nothing about isolation had changed. What actually
+    # demonstrates the gap is that the unscoped query returns *more than one tenant's worth*: the
+    # scoped equivalent below can return at most tenant A's 3.
+    assert seen >= 8, (
         f"expected the unfiltered join-only query to leak both tenants' rows (8 total), got "
         f"{seen} — either the fixture changed or SQLAlchemy's all_mappers semantics did"
     )

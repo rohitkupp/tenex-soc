@@ -8,6 +8,7 @@ duplicated here.
 
 from __future__ import annotations
 
+from app.detection.ml.detect import ML_MODEL_FIELDS
 from app.models.signal import Signal
 from evals.metrics import detection
 from evals.pipeline import BenignPureRun, ScenarioRun
@@ -127,6 +128,51 @@ def test_known_detector_registry_spans_all_four_layers() -> None:
     # registries this codebase ships -- a healthy checkout should surface all four.
     assert layers, "expected at least one detector layer to be discoverable"
     assert layers <= {"rule", "signal", "ml", "graph"}
+
+
+def test_known_detector_registry_includes_every_ml_model_field() -> None:
+    """docs/12 change 1 ("Measure the missing false-positive rates"): the registry used to
+    hardcode four of the six `ML_MODEL_FIELDS` keys, silently dropping `ml.eif`/`ml.kth_nn` (and,
+    downstream, their FP-rate rows) from every table this harness renders -- "the same class of
+    bug as the calibration roster." Reading `ML_MODEL_FIELDS` live means a model missing here
+    fails this test, not silently drops out of `evals/results.md`."""
+    registry = detection.known_detector_registry()
+    for key in ML_MODEL_FIELDS:
+        assert key in registry, (
+            f"{key} missing from known_detector_registry() -- FP rate unmeasurable"
+        )
+        assert registry[key] == "ml"
+
+
+def test_build_report_ml_fp_counts_cover_every_model_field_including_zero() -> None:
+    """When the dedicated all-six-model scorer (`evals.pipeline.ml_fp_counts_for_file`) supplies
+    counts, every `ML_MODEL_FIELDS` key gets a real FP-rate entry in both `fp_rate_scenario8` and
+    `fp_rate_benign_pure` -- including an explicit 0.0 for a model that never fired on the
+    control, which used to be indistinguishable from "not measured" (docs/12 change 1)."""
+    ingest = _fake_ingest(n_events=1000)
+    runs = {
+        "benign_but_weird": _scenario_run(
+            "benign_but_weird", [], frozenset(), n_events=ingest.n_events
+        ),
+    }
+    benign_pure = BenignPureRun(ingest=ingest, signals_by_detector={})
+
+    # ml.ecod deliberately given a *zero* count -- the exact case that used to vanish from the
+    # table instead of reading as a measured 0.0.
+    ml_fp_counts = {key: (0 if key == "ml.ecod" else 3) for key in ML_MODEL_FIELDS}
+
+    report = detection.build_report(
+        runs,
+        benign_pure,
+        ml_fp_counts_scenario8=ml_fp_counts,
+        ml_fp_counts_benign_pure=ml_fp_counts,
+    )
+    for key in ML_MODEL_FIELDS:
+        assert key in report.fp_rate_scenario8, f"{key} missing from fp_rate_scenario8"
+        assert key in report.fp_rate_benign_pure, f"{key} missing from fp_rate_benign_pure"
+    assert report.fp_rate_scenario8["ml.ecod"] == 0.0
+    assert report.fp_rate_scenario8["ml.eif"] == 3 / 1000
+    assert report.fp_rate_benign_pure["ml.kth_nn"] == 3 / 1000
 
 
 def test_build_report_fp_rate_uses_event_normalized_ratio() -> None:

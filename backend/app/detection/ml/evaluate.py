@@ -123,6 +123,27 @@ BASELINE_MODEL = ML_IFOREST
 ML_PEER_GROUP_PCA = "ml.peer_group.pca"
 ML_KTH_NN_PCA = "ml.kth_nn.pca"
 
+# docs/12-EVALUATION.md "Forward changes": the pre-registered winner rule (mean F1, tie-broken by
+# mean AUC-PR) is superseded by mean F2 as of this date. Recorded here, alongside the code that
+# implements it, so the rule and its rationale/date travel together -- `evals/results.md` and
+# docs/12 both cite this same dict rather than a second, hand-typed copy of the date drifting out
+# of sync with it. The OLD rule's result is still computed and reported (`winner_rule_f1_legacy`)
+# every run, never retroactively rewritten (CLAUDE.md rule 2).
+WINNER_RULE_CHANGE = {
+    "date": "2026-08-16",
+    "old_rule": "mean F1 (precision and recall weighted equally), ties broken by mean AUC-PR",
+    "new_rule": "mean F2 (recall weighted 2x precision), ties broken by mean AUC-PR",
+    "rationale": (
+        "F1 weights precision and recall equally, which is the wrong weighting for a SOC: a "
+        "missed breach costs far more than a dismissed alert (CLAUDE.md's own governing "
+        "principle). Under F1, ECOD wins by being perfectly precise about twelve things while "
+        "missing 224 -- silent through most attacks, the profile F1 rewards and a SOC does not "
+        "want. F2 does not chase recall unconditionally either: past some false-positive ratio, "
+        "false positives cause false negatives because the analyst stops reading, which is why "
+        "this is F2 (a bounded 2x recall weighting) rather than recall alone."
+    ),
+}
+
 
 def _run_datagen(args: list[str]) -> None:
     cmd = [sys.executable, "-m", "datagen", *args]
@@ -198,11 +219,25 @@ class ScenarioModelMetrics:
     n_rows: int
     n_positive: int
     n_flagged: int
+    tp: int
+    fp: int
+    fn: int
     precision: float
     recall: float
     f1: float
+    f2: float
     auc_pr: float
     detected: bool  # recall > 0 -- "did this model catch any of the injected campaign"
+
+
+def _f_beta(precision: float, recall: float, beta: float) -> float:
+    """`(1+beta^2) * P * R / (beta^2 * P + R)`, 0.0 when the denominator is 0 (matches sklearn's
+    `zero_division=0` convention the F1 computation below already uses, rather than raising or
+    returning NaN)."""
+    denom = (beta**2) * precision + recall
+    if denom == 0:
+        return 0.0
+    return (1 + beta**2) * precision * recall / denom
 
 
 def _metrics_for_model(
@@ -221,15 +256,27 @@ def _metrics_for_model(
     precision = float(precision_score(y, y_pred, zero_division=0))
     recall = float(recall_score(y, y_pred, zero_division=0))
     f1 = float(f1_score(y, y_pred, zero_division=0))
+    f2 = _f_beta(precision, recall, beta=2.0)
+    # Confusion-matrix counts computed directly from (y, y_pred), never backed out of
+    # precision/recall -- docs/12 change ("Report pooled metrics alongside the means"): a model
+    # that flagged nothing in this scenario has FP=0 by direct count, which precision (0/0,
+    # `zero_division=0` -> 0.0) cannot distinguish from "flagged plenty, all wrong."
+    tp = int(((y == 1) & (y_pred == 1)).sum())
+    fp = int(((y == 0) & (y_pred == 1)).sum())
+    fn = int(((y == 1) & (y_pred == 0)).sum())
     return ScenarioModelMetrics(
         scenario=scenario,
         model=model_key,
         n_rows=len(y),
         n_positive=n_positive,
         n_flagged=int(y_pred.sum()),
+        tp=tp,
+        fp=fp,
+        fn=fn,
         precision=precision,
         recall=recall,
         f1=f1,
+        f2=f2,
         auc_pr=auc_pr,
         detected=recall > 0.0,
     )
@@ -325,7 +372,9 @@ def evaluate(
         for model, (flagged, total) in fp_scenario10.items()
     }
 
-    winner = _pick_winner(aggregate)
+    pooled = _pooled_metrics(per_scenario_metrics)
+    winner_f1_legacy = _pick_winner(aggregate)
+    winner_f2 = _pick_winner_f2(aggregate)
     low_and_slow_detectors = [
         m.model for m in per_scenario_metrics if m.scenario == LOW_AND_SLOW_SCENARIO and m.detected
     ]
@@ -346,9 +395,18 @@ def evaluate(
         "generated_at_seconds_elapsed": total_seconds,
         "per_scenario": [asdict(m) for m in per_scenario_metrics],
         "aggregate": aggregate,
+        "pooled": pooled,
         "fp_rate_background": fp_rates,
         "fp_rate_scenario10": fp_scenario10_rates,
-        "winner": winner,
+        # `winner` is the *current* pick -- the forward-changed F2 rule (see
+        # `WINNER_RULE_CHANGE` below and docs/12-EVALUATION.md's "Forward changes" section).
+        # `winner_rule_f1_legacy`/`winner_rule_f2` are both reported explicitly and permanently so
+        # a reader can see what the superseded pre-registered rule produced alongside the current
+        # one, never one silently standing in for the other (CLAUDE.md rule 2).
+        "winner": winner_f2,
+        "winner_rule_f1_legacy": winner_f1_legacy,
+        "winner_rule_f2": winner_f2,
+        "winner_rule_change": WINNER_RULE_CHANGE,
         "baseline": BASELINE_MODEL,
         "low_and_slow_detectors": low_and_slow_detectors,
         "peer_group_detectors": peer_group_detectors,
@@ -418,27 +476,37 @@ def _pre_registered_predictions(
     }
 
 
+def _attack_scenario_keys() -> set[str]:
+    return {k for k in SCENARIO_KEYS if k not in (FP_CONTROL_SCENARIO, "prompt_injection_canary")}
+
+
 def _aggregate_metrics(
     rows: list[ScenarioModelMetrics], model_keys: Sequence[str] = MODEL_KEYS
 ) -> dict[str, dict[str, float]]:
-    """Per-model aggregate F1/AUC-PR, averaged over the eight *attack* scenarios (excludes the
-    prompt-injection canary and the benign-but-weird FP control, neither of which is a detection
-    target for these models — averaging them in would penalize every model for correctly *not*
-    flagging traffic that is not supposed to fire). `model_keys` defaults to the primary
-    `MODEL_KEYS` six; the full-space-vs-PCA comparison (`evaluate`) calls this a second time with
-    its own four-key subset so those two extra PCA keys never enter the primary aggregate."""
-    attack_scenarios = {
-        k for k in SCENARIO_KEYS if k not in (FP_CONTROL_SCENARIO, "prompt_injection_canary")
-    }
+    """Per-model aggregate (**macro** -- the mean of each scenario's own F1/precision/recall/F2,
+    docs/12 change: "Report pooled metrics alongside the means"), averaged over the eight *attack*
+    scenarios (excludes the prompt-injection canary and the benign-but-weird FP control, neither
+    of which is a detection target for these models — averaging them in would penalize every
+    model for correctly *not* flagging traffic that is not supposed to fire). `model_keys`
+    defaults to the primary `MODEL_KEYS` six; the full-space-vs-PCA comparison (`evaluate`) calls
+    this a second time with its own four-key subset so those two extra PCA keys never enter the
+    primary aggregate.
+
+    This is a **macro** average: a two-positive scenario counts exactly as much as a
+    hundred-positive one. See `_pooled_metrics` for the pooled (micro) figure computed from the
+    same rows -- report both, never one silently in place of the other (docs/12)."""
+    attack_scenarios = _attack_scenario_keys()
     aggregate: dict[str, dict[str, float]] = {}
     for model in model_keys:
         model_rows = [r for r in rows if r.model == model and r.scenario in attack_scenarios]
         f1s = [r.f1 for r in model_rows]
+        f2s = [r.f2 for r in model_rows]
         aucs = [r.auc_pr for r in model_rows if not np.isnan(r.auc_pr)]
         recalls = [r.recall for r in model_rows]
         precisions = [r.precision for r in model_rows]
         aggregate[model] = {
             "mean_f1": float(np.mean(f1s)) if f1s else 0.0,
+            "mean_f2": float(np.mean(f2s)) if f2s else 0.0,
             "mean_auc_pr": float(np.mean(aucs)) if aucs else 0.0,
             "mean_recall": float(np.mean(recalls)) if recalls else 0.0,
             "mean_precision": float(np.mean(precisions)) if precisions else 0.0,
@@ -448,12 +516,65 @@ def _aggregate_metrics(
     return aggregate
 
 
+def _pooled_metrics(
+    rows: list[ScenarioModelMetrics], model_keys: Sequence[str] = MODEL_KEYS
+) -> dict[str, dict[str, float | None]]:
+    """Per-model **pooled** (micro-averaged) TP/FP/FN and the precision/recall/F1/F2 derived from
+    those *summed* counts, across the same attack-scenario set `_aggregate_metrics` uses -- docs/12
+    change ("Report pooled metrics alongside the means"): the macro mean above weights a
+    two-positive scenario the same as a hundred-positive one; pooling first (summing raw counts,
+    then dividing once) is the honest aggregate figure for "how did this model do across every
+    attack event it was ever shown," and is what docs/04's own pooled confusion-matrix table
+    reports. TP/FP/FN come directly from `ScenarioModelMetrics.tp/fp/fn` (computed in
+    `_metrics_for_model` from the actual `(y, y_pred)` arrays) -- never backed out of a precision
+    ratio, so a model that flagged nothing in a scenario still contributes a real FP=0, not an
+    unrepresentable 0/0.
+
+    `fn_per_tp` is `None` when a model never produced a single pooled true positive (nothing to
+    divide by) -- reported as "n/a", not `inf` or `0`.
+    """
+    attack_scenarios = _attack_scenario_keys()
+    pooled: dict[str, dict[str, float | None]] = {}
+    for model in model_keys:
+        model_rows = [r for r in rows if r.model == model and r.scenario in attack_scenarios]
+        tp = sum(r.tp for r in model_rows)
+        fp = sum(r.fp for r in model_rows)
+        fn = sum(r.fn for r in model_rows)
+        precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+        recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+        f1 = _f_beta(precision, recall, beta=1.0)
+        f2 = _f_beta(precision, recall, beta=2.0)
+        pooled[model] = {
+            "tp": float(tp),
+            "fp": float(fp),
+            "fn": float(fn),
+            "precision": precision,
+            "recall": recall,
+            "f1": f1,
+            "f2": f2,
+            "fn_per_tp": (fn / tp) if tp > 0 else None,
+        }
+    return pooled
+
+
 def _pick_winner(aggregate: dict[str, dict[str, float]]) -> str:
-    """Highest mean F1 at the fixed operating point wins; ties broken by mean AUC-PR
-    (threshold-free, so a legitimate tiebreaker rather than a second vote for the same metric).
-    Decided by this rule alone -- never by which model the report "wants" to win (CLAUDE.md).
+    """**Historical/pre-registered rule (docs/12, superseded by `_pick_winner_f2` as of the
+    2026-08-16 forward change -- see docs/12-EVALUATION.md's own "Forward changes" section and
+    CLAUDE.md rule 2 on why the old rule's result is reported, not rewritten).** Highest mean F1
+    at the fixed operating point wins; ties broken by mean AUC-PR (threshold-free, so a legitimate
+    tiebreaker rather than a second vote for the same metric). Decided by this rule alone -- never
+    by which model the report "wants" to win.
     """
     return max(aggregate, key=lambda m: (aggregate[m]["mean_f1"], aggregate[m]["mean_auc_pr"]))
+
+
+def _pick_winner_f2(aggregate: dict[str, dict[str, float]]) -> str:
+    """**Current rule, forward change dated 2026-08-16** (docs/12-EVALUATION.md "Forward
+    changes"): highest mean F2 (recall weighted 2x precision -- CLAUDE.md's own governing
+    principle for this domain, "a missed breach costs far more than a dismissed alert"), ties
+    broken by mean AUC-PR. Same structure as `_pick_winner`, F2 substituted for F1 -- the only
+    change the forward-change record describes."""
+    return max(aggregate, key=lambda m: (aggregate[m]["mean_f2"], aggregate[m]["mean_auc_pr"]))
 
 
 def main(argv: list[str] | None = None) -> int:
