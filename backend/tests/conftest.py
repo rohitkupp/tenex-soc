@@ -29,6 +29,7 @@ from app.models.base import tenant_scope
 from app.models.tenant import Tenant
 from app.models.upload import Upload
 from app.models.user import User
+from app.pipeline.redis_client import get_redis
 
 # The default (and, in these tests, only) entry in Settings.cors_origins — see
 # backend/app/core/config.py and backend/.env. Requests from the shared `client`
@@ -46,6 +47,22 @@ def _reset_rate_limits() -> None:
     reports the same source address — without this, an earlier test's login/upload
     calls would trip a later test's rate-limit assertions."""
     limiter.reset()
+
+
+@pytest.fixture(autouse=True)
+def _fresh_redis_client_per_test() -> Iterator[None]:
+    """`app.pipeline.redis_client.get_redis` is `lru_cache`d — a real, correct optimization for
+    a long-lived worker process, but wrong across pytest's many independent `asyncio.run(...)`
+    calls (each one spins up and tears down its own event loop): a Redis client created inside
+    one loop and reused after that loop closes fails with "Future attached to a different loop"
+    or "Event loop is closed" the moment a later test's stage handler tries to publish progress.
+    Originally a local fixture in `tests/test_pipeline_fanout.py`/`tests/test_pipeline_e2e_real.py`
+    only; promoted here once real (non-skeleton) stage handlers — which all publish real progress
+    events — started being called directly, one `asyncio.run()` per test, from several more test
+    modules than those two."""
+    get_redis.cache_clear()
+    yield
+    get_redis.cache_clear()
 
 
 @pytest.fixture(autouse=True)

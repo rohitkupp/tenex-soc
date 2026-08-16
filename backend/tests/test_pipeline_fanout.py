@@ -15,9 +15,12 @@ before the single `q.enrich` message is published. What a single registered sour
 is the *race* between concurrent parsers; that regression coverage went with the sources that
 made it exercisable, not because it stopped mattering, but because there is no second parser left
 to race against. Everything else this test proves — real MinIO upload, the real orchestrator, the
-real parse stage, every skeleton stage through to `tier2`, one asyncio task per docs/01 worker,
-all against the live broker/DB/Redis — is otherwise identical to before, co-located in one test
-process instead of twelve containers.
+real parse stage, and (M5-M14) every *real* downstream stage through to `tier2`, one asyncio task
+per docs/01 worker, all against the live broker/DB/Redis — is otherwise identical to before,
+co-located in one test process instead of twelve containers. `triage` uses `tests.fixtures.agent.
+SafeFallbackCaller` rather than a live `ANTHROPIC_API_KEY` — this benign, unlabeled corpus is not
+expected to produce any signals/incidents to triage in the first place, so the real point here
+stays fan-out/race safety, not detection depth (`tests/test_pipeline_e2e_real.py` covers that).
 """
 
 from __future__ import annotations
@@ -27,7 +30,7 @@ import contextlib
 import json
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 
 import pytest
@@ -40,9 +43,14 @@ from app.pipeline import dead_letter_sink, state
 from app.pipeline.base_worker import StageWorker
 from app.pipeline.messages import StageMessage
 from app.pipeline.redis_client import get_redis
+from app.pipeline.stages import correlate as correlate_stage
+from app.pipeline.stages import detect as detect_stage
+from app.pipeline.stages import enrich as enrich_stage
 from app.pipeline.stages import orchestrator as orchestrator_stage
 from app.pipeline.stages import parse as parse_stage
-from app.pipeline.stages.skeleton import make_skeleton_handler
+from app.pipeline.stages import tier2 as tier2_stage
+from app.pipeline.stages import triage as triage_stage
+from app.pipeline.stages.anonymize import handle as anonymize_handle
 from app.queue.dispatch import kickoff_pipeline
 from app.queue.topology import (
     QUEUE_NAMES,
@@ -57,6 +65,7 @@ from datagen import corpus
 from datagen.rng import SeededRandom
 from datagen.types import TimeWindow
 from tests.conftest import make_analysis, make_tenant, make_user
+from tests.fixtures.agent import SafeFallbackCaller
 
 _ORG_SPEC = corpus.OrgSpec(n_users=15, n_departments=2, offices=("US-CA",), n_service_accounts=2)
 
@@ -68,15 +77,12 @@ def _build_zscaler_upload(tmp_path: Path, *, seed: int) -> bytes:
     org = corpus.build_org(seed, corpus.ROLE_BENIGN, _ORG_SPEC)
     root = SeededRandom(corpus.role_seed(seed, corpus.ROLE_BENIGN))
     window = TimeWindow.of_days(1)
-    corpus.write_benign_corpus(org, root, window, tmp_path, proxy_events=120)
+    # Large enough that L3's entity-window feature vectors are not degenerate (a handful of
+    # events over a couple of hours produces extreme per-window ratios that can overflow a
+    # model fit on a much larger, differently-distributed training corpus — a real
+    # `app/detection/ml` numeric edge case, not something this test exists to exercise).
+    corpus.write_benign_corpus(org, root, window, tmp_path, proxy_events=3000)
     return (tmp_path / "benign_zscaler.log").read_bytes()
-
-
-@pytest.fixture(autouse=True)
-def _fresh_redis_client() -> Iterator[None]:
-    get_redis.cache_clear()
-    yield
-    get_redis.cache_clear()
 
 
 @pytest.fixture(autouse=True)
@@ -94,26 +100,45 @@ async def _clean_all_queues() -> AsyncIterator[None]:
         await connection.close()
 
 
-def _all_workers(enrich_handler: _STAGE_HANDLER) -> list[StageWorker]:
+def _all_workers(
+    enrich_handler: _STAGE_HANDLER, *, caller: SafeFallbackCaller
+) -> list[StageWorker]:
     handlers: dict[str, _STAGE_HANDLER] = {
         "orchestrator": orchestrator_stage.handle,
         "parse.zscaler": parse_stage.handle,
         "enrich": enrich_handler,
-        "anonymize": make_skeleton_handler("anonymize"),
-        "detect": make_skeleton_handler("detect"),
-        "correlate": make_skeleton_handler("correlate"),
-        "triage": make_skeleton_handler("triage"),
-        "tier2": make_skeleton_handler("tier2"),
+        "anonymize": anonymize_handle,
+        "detect": detect_stage.handle,
+        "correlate": correlate_stage.handle,
+        "triage": triage_stage.make_handler(caller=caller),
+        "tier2": tier2_stage.handle,
     }
     return [StageWorker(name, handler) for name, handler in handlers.items()]
 
 
 async def test_upload_flows_through_every_stage_with_parser_fanout(
-    tmp_path: Path, tenant_cleanup: list[uuid.UUID]
+    tmp_path: Path, tenant_cleanup: list[uuid.UUID], request: pytest.FixtureRequest
 ) -> None:
     tenant = make_tenant(name="Fanout E2E Test Tenant")
     tenant_cleanup.append(tenant.id)
     user = make_user(tenant_id=tenant.id, email=f"fanout-{uuid.uuid4()}@test.local")
+
+    # This benign corpus is not expected to form incidents, but a stray Sigma false-positive
+    # could still reach `tier2` — `tier2_signatures` carries no tenant_id (see
+    # `app.tier2`'s own module docstring), so `tenant_cleanup` above cannot reach it. Same
+    # `tenant_hash`-keyed cleanup `tests/test_pipeline_e2e_real.py` uses.
+    from app.tier2.hashing import tenant_hash as _tenant_hash
+
+    tenant_signature_hash = _tenant_hash(tenant.id, bytes(tenant.pseudonym_salt))
+
+    def _cleanup_tier2_signatures() -> None:
+        with get_engine().begin() as conn:
+            conn.execute(
+                text("DELETE FROM tier2_signatures WHERE tenant_hash = :h"),
+                {"h": tenant_signature_hash},
+            )
+
+    request.addfinalizer(_cleanup_tier2_signatures)
 
     zscaler_bytes = _build_zscaler_upload(tmp_path, seed=777)
     sample_text = zscaler_bytes[:65536].decode("utf-8", errors="replace")
@@ -130,13 +155,13 @@ async def test_upload_flows_through_every_stage_with_parser_fanout(
     )
 
     enrich_calls: list[uuid.UUID] = []
-    real_enrich_handler = make_skeleton_handler("enrich")
 
     async def counting_enrich_handler(message: StageMessage) -> list[tuple[str, StageMessage]]:
         enrich_calls.append(message.analysis_id)
-        return await real_enrich_handler(message)
+        return await enrich_stage.handle(message)
 
-    workers = _all_workers(counting_enrich_handler)
+    caller = SafeFallbackCaller()
+    workers = _all_workers(counting_enrich_handler, caller=caller)
     worker_tasks = [asyncio.create_task(w.run()) for w in workers]
     sink_task = asyncio.create_task(dead_letter_sink.run())
 
@@ -160,7 +185,9 @@ async def test_upload_flows_through_every_stage_with_parser_fanout(
     try:
         await kickoff_pipeline(analysis_id=analysis.id, tenant_id=tenant.id)
 
-        deadline = time.monotonic() + 30
+        # Longer than the old skeleton-only deadline: every stage from `enrich` on now does
+        # real work (model artifact loads, a second MinIO fetch for L3, real graph/LLM calls).
+        deadline = time.monotonic() + 90
         status: str | None = None
         while time.monotonic() < deadline:
             with get_engine().begin() as conn:

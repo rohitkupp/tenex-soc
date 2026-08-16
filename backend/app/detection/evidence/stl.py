@@ -82,7 +82,7 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 import numpy as np
@@ -203,7 +203,17 @@ def _stl_findings(
     hours = sorted(buckets)
     first, last = hours[0], hours[-1]
 
-    index = pd.date_range(start=first, end=last, freq="h", tz=UTC)
+    # `first`/`last` are already tz-aware (`EventRow.ts` off a live Postgres `timestamptz`
+    # column) -- deliberately *not* passed an explicit `tz=UTC` on top of that. Real
+    # `timestamptz` values come back with whatever tzinfo the driver/session reports (in this
+    # stack's docker-compose Postgres, that is a fixed-offset object *named* "Etc/UTC", not
+    # `datetime.timezone.utc`'s own "UTC" name) -- pandas' `date_range` requires an explicit
+    # `tz=` to name-match its own inference from the endpoints, and a same-offset,
+    # differently-named zone fails that assertion even though the instants are identical. Since
+    # `first`/`last` are already tz-aware and mutually consistent (both sourced from the same
+    # column), letting `date_range` infer the zone from them avoids the mismatch entirely
+    # without changing what hours the resulting grid actually covers.
+    index = pd.date_range(start=first, end=last, freq="h")
     counts = np.array([len(buckets.get(h.to_pydatetime(), ())) for h in index], dtype=np.float64)
 
     if np.std(counts) == 0.0:

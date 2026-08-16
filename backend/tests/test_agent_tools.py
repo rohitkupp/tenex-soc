@@ -1,7 +1,7 @@
 """`app.agent.tools` — the five read-only tools against a real Postgres. Proves the tool layer
 pseudonymizes/redacts/caps on every path, since (per `app.agent.context`'s module docstring) the
-real anonymizer worker is still a skeleton and this package cannot assume upstream data is
-already safe to hand to an LLM.
+real `anonymize` stage deliberately never rewrites `events` rows in place, so this package
+cannot assume upstream data is already safe to hand to an LLM.
 """
 
 from __future__ import annotations

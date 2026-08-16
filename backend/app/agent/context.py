@@ -5,16 +5,15 @@ the pseudonym<->raw lookup cache are assembled, so `tools.py`, `verifier.py`, an
 ## Why events need on-the-fly pseudonymization here at all
 
 docs/07's `query_events` docstring is explicit: it "returns pseudonymized, redacted events". The
-real production pipeline's anonymizer *worker* is still a skeleton
-(`app.workers.anonymizer` — "pass-through only, real redaction/pseudonymization lands at M5" —
-M5 built the `app.privacy` library but nothing in this checkout has wired it into that worker
-yet), and this milestone's own verification data (`app.graph.pipeline_demo`) does not call it
-either. So `events` rows reaching this package are, today, raw. Rather than assume upstream
-anonymization has happened (a assumption that would silently leak PII the moment it's wrong),
-every tool in this package pseudonymizes and redacts defensively, every time, using
-`app.privacy`'s public API directly — CLAUDE.md rule 4 ("Pseudonymize before any external
-call") applies at the boundary of *this* package, not at the boundary of the pipeline stage that
-was supposed to do it upstream.
+real `anonymize` worker (`app.pipeline.stages.anonymize`) *does* run — but by design it never
+rewrites `events` rows in place; its own module docstring explains why a redacted-copy-at-rest
+would be actively wrong (every downstream detector and the graph need the real values to
+correlate correctly), and reports a genuine per-analysis pseudonymization/redaction *audit*
+instead. So `events` rows reaching this package are, deliberately, still raw — the actual
+enforcement point for CLAUDE.md rule 4 ("Pseudonymize before any external call") is the boundary
+of *this* package, the one place data is about to leave the tenant for an LLM call, not the
+pipeline stage upstream of it. Every tool here pseudonymizes and redacts defensively, every
+time, using `app.privacy`'s public API directly.
 
 ## Why pseudonyms need a reverse cache
 

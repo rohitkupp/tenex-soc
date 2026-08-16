@@ -1,15 +1,15 @@
-"""`python -m app.workers.correlator` — consumes `q.correlate` (docs/01's `correlator`
-service). **Skeleton at M4** — pass-through only, real graph correlation lands at M10.
-See `app.pipeline.stages.skeleton` for exactly what "skeleton" means here."""
+"""`python -m app.workers.correlator` — consumes `q.correlate` (docs/01's `correlator` service).
+Real graph correlation — entity graph, Louvain communities, incident formation, fusion,
+titling, timeline, recurrence — see `app.pipeline.stages.correlate`."""
 
 from __future__ import annotations
 
-from app.pipeline.stages.skeleton import make_skeleton_handler
+from app.pipeline.stages import correlate
 from app.workers._entrypoint import run_worker
 
 
 def main() -> None:
-    run_worker("correlate", make_skeleton_handler("correlate"))
+    run_worker("correlate", correlate.handle)
 
 
 if __name__ == "__main__":

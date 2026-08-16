@@ -1,24 +1,31 @@
-"""Stage contracts — docs/01-ARCHITECTURE.md "Stage contracts" table, matched exactly:
+"""Stage contracts — docs/01-ARCHITECTURE.md "Stage contracts" table:
 
 | Stage | Precondition | Postcondition |
 |---|---|---|
 | ingest | file in MinIO | `analyses` row, source types detected, `pending_parsers` set |
 | parse | raw artifact exists | `events` rows written, `parse_failure_rate` recorded |
 | enrich | events exist | `events.enrichment` populated, `entities` seeded |
-| anonymize | events enriched | `pseudonym_map` written, `events.redacted` populated |
+| anonymize | events enriched | privacy audit counted (see below) |
 | detect | events anonymized | `signals` rows with calibrated confidence |
 | correlate | signals exist | `entities`, `entity_edges`, `incidents` |
 | triage | incidents exist | `triage_verdicts` for top-N, citations verified |
 | tier2 | verdicts exist | `tier2_signatures` rows |
 
-`ingest` and `parse` are real as of this milestone (M4's "the real parse stage"); every
-stage from `enrich` on is a **documented skeleton** until its own milestone (M5 through
-M14 per docs/13) — each one honestly advances `analyses.stage`/`progress`, forwards the
-`StageMessage`, and says in its progress `message` that it is a pass-through, rather
-than claiming a postcondition it did not actually produce.
+Every stage is real, wired to a live queue worker (`app/pipeline/stages/*.py`, one module per
+row above — `enrich`, `anonymize`, `detect`, `correlate`, and `triage`/`tier2` were skeletons
+through M4; the post-skeleton wiring made every one of them do the real work its own module
+docstring describes).
+
+`anonymize`'s postcondition is *not* docs/01's literal original wording ("`pseudonym_map`
+written, `events.redacted` populated") — that names two structures docs/02 never actually
+specified and no migration ever added. `app.pipeline.stages.anonymize`'s own module docstring
+explains why the real, honest postcondition here is a privacy *audit* (genuine pseudonymization/
+redaction counts, computed for real) rather than a redacted copy of every event at rest — the
+per-call enforcement point (`app.agent.context`, CLAUDE.md rule 4) already exists and does not
+depend on this stage having run.
 
 The `respond` stage (response action graph / enforcement plane) was removed in
-docs/v2_migration change 20. `triage` now forwards directly to `tier2` — see `NEXT_QUEUE`.
+docs/v2_migration change 20. `triage` forwards directly to `tier2` — see `NEXT_QUEUE`.
 """
 
 from __future__ import annotations
@@ -62,18 +69,6 @@ NEXT_QUEUE: dict[str, str | None] = {
     "correlate": "triage",
     "triage": "tier2",
     "tier2": None,  # terminal — docs/01's `tier2-sync` "Produces" column is "—"
-}
-
-# Skeleton stages' honest description of what they do at M4, surfaced verbatim in the
-# progress `message` sent to Redis/SSE so the UI (and this report) never implies work
-# that has not shipped yet.
-SKELETON_MESSAGE: dict[str, str] = {
-    "enrich": "Enrichment stage — pass-through skeleton, real enrichment lands at M5.",
-    "anonymize": "Anonymization stage — pass-through skeleton, real redaction lands at M5.",
-    "detect": "Detection stage — pass-through skeleton, real detectors land M6-M9.",
-    "correlate": "Correlation stage — pass-through skeleton, real graph correlation lands at M10.",
-    "triage": "Triage stage — pass-through skeleton, the real agent lands at M11.",
-    "tier2": "Tier 2 sync — pass-through skeleton, real signature sync lands at M14.",
 }
 
 # The `analyses.stage` value each queue's traffic represents. The parser queue(s) all collapse to

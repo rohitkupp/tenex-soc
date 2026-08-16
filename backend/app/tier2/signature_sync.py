@@ -7,14 +7,11 @@ thin, DB-touching wrapper most callers actually want: it derives the two inputs
 `build_signature` can't derive itself (which entities on the incident are indicators, and
 which source types the analysis came from) and persists the result.
 
-**Where this is called from.** The live pipeline hook is `app.pipeline`'s `tier2` stage
-(currently a documented pass-through skeleton, `app.pipeline.stages.skeleton` --
-"real signature sync lands at M14", i.e. here). This package does not itself modify
-`app/pipeline/**` or `app/workers/tier2_sync.py` -- wiring `sync_incident_to_tier2` into
-that worker as its real handler is that stage's owner's job, not this package's; what this
-module guarantees is a self-contained, fully tested function with exactly the signature a
-future handler needs: an `Incident`, a `TriageVerdict`, a `Tenant`, and nothing else that
-isn't already sitting in the database by the time triage (M11) has produced a verdict.
+**Where this is called from.** The live pipeline hook is `app.pipeline.stages.tier2`, which
+calls `sync_incident_to_tier2` once per incident that has a verdict — see that module's own
+docstring. This package guarantees a self-contained, fully tested function with exactly the
+signature that stage needs: an `Incident`, a `TriageVerdict`, a `Tenant`, and nothing else that
+isn't already sitting in the database by the time triage has produced a verdict.
 
 **What gets synced, and what deliberately doesn't.** Only dispositions worth cross-tenant
 correlation are synced (`should_sync_to_tier2`) -- `benign` and `false_positive` incidents

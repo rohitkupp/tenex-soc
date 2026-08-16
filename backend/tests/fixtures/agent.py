@@ -18,6 +18,8 @@ import uuid
 from datetime import datetime
 from typing import Any
 
+from anthropic.types import Message
+
 from app.core.db import get_session_factory
 from app.models.base import tenant_scope
 from app.models.event import Event
@@ -77,3 +79,73 @@ def make_event(
         return event
     finally:
         session.close()
+
+
+_MAX_TOKENS_MESSAGE = Message.model_validate(
+    {
+        "id": "msg_max_tokens",
+        "content": [],
+        "model": "claude-opus-5",
+        "role": "assistant",
+        "stop_reason": "max_tokens",
+        "stop_sequence": None,
+        "type": "message",
+        "usage": {"input_tokens": 100, "output_tokens": 10},
+    }
+)
+
+
+def _narrate_message(*, executive_summary: str) -> Message:
+    return Message.model_validate(
+        {
+            "id": "msg_narrate",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_narrate",
+                    "name": "narrate_analysis",
+                    "input": {"executive_summary": executive_summary, "phase_narratives": []},
+                }
+            ],
+            "model": "claude-opus-5",
+            "role": "assistant",
+            "stop_reason": "tool_use",
+            "stop_sequence": None,
+            "type": "message",
+            "usage": {"input_tokens": 200, "output_tokens": 40},
+        }
+    )
+
+
+class SafeFallbackCaller:
+    """The one `LLMCaller` test double `app.pipeline.stages.triage` tests need — used wherever a
+    test must drive the *real* triage stage to completion without a live `ANTHROPIC_API_KEY`
+    (CLAUDE.md: "recorded fixtures ... CI must never need an API key"), for an incident whose
+    specific evidence/entities the test does not want to hand-script citations against.
+
+    Every Path B (Analyst/Judge/Presenter) turn gets `stop_reason="max_tokens"` back, which
+    `app.agent.orchestrator._run_tool_role` turns into a `SchemaValidationError` on the very first
+    call — `triage_incident` already catches exactly that (and `AgentTimeoutError`/
+    `AgentRefusalError`/...) and persists a `needs_review` `TriageVerdict` instead of crashing
+    (see that function's own docstring: this is a *real*, tested fallback path, not a shortcut
+    invented for tests). That makes this caller correct for *any* incident, regardless of its
+    real evidence ids, entities, or anomaly_confidence — nothing about the response depends on
+    what was actually asked.
+
+    Path A (`narrate_analysis`) has no such fallback (`app.pipeline.stages.triage`'s own module
+    docstring: it does not catch its own schema/citation failures), so this caller answers that
+    one call for real, with a citation-free, number-free executive summary that trivially passes
+    `app.agent.verifier.verify_narrator_output` regardless of the real overview/incident/timeline
+    data it was given.
+    """
+
+    def __init__(self, *, executive_summary: str = "Analysis complete.") -> None:
+        self.calls: list[dict[str, Any]] = []
+        self._executive_summary = executive_summary
+
+    def create(self, **kwargs: Any) -> Message:
+        self.calls.append(kwargs)
+        tool_choice = kwargs.get("tool_choice") or {}
+        if tool_choice.get("name") == "narrate_analysis":
+            return _narrate_message(executive_summary=self._executive_summary)
+        return _MAX_TOKENS_MESSAGE
