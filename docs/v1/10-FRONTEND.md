@@ -63,22 +63,44 @@ log file to start." Errors say what broke and what to do.
 
 ## Routes
 
+Reduced from twelve by `docs/v2_migration` change 27. `/upload`, `/models` and `/ops` were
+deleted; two of the three carried content that **moved rather than vanished**.
+
 | Route | Purpose |
 |---|---|
-| `/login` | Credentials, a link to `/signup`, and the post-verification banner Supabase's email link redirects to (`?verified=1`). Nothing else. |
-| `/signup` | Self-serve account creation: org name, email, password. Added after the original scope — see docs/06 "Self-serve signup and email verification". |
-| `/` | Analysis list + aggregate funnel |
-| `/upload` | Drop zone, format detection preview, live SSE stage progress |
-| `/analyses/[id]` | Overview: funnel, event volume over time with anomaly overlay, top entities, severity distribution, parse quality |
+| `/login` | Credentials, link to `/signup`, post-verification banner |
+| `/signup` | Self-serve account creation (joins the single live tenant, docs/06) |
+| `/` | Analysis list + **upload drop zone in the header** + aggregate funnel |
+| `/analyses/[id]` | Live SSE funnel while running or failed; overview once complete |
 | `/analyses/[id]/incidents` | The queue. Primary working view. |
-| `/analyses/[id]/incidents/[iid]` | The case file. The most important screen in the product. |
-| `/analyses/[id]/events` | Raw event explorer, filterable, signal-bearing rows marked |
-| `/models` | Benchmark tables, calibration diagram, version history |
-| `/learning` | Alignment trend, per-detector precision, containment rate, pending suppressions |
-| `/tier2` | Cross-tenant analytics + NL query |
-| `/ops` | Queue depths, dead letters with retry |
+| `/analyses/[id]/incidents/[iid]` | The case file, including the per-incident Evidence section |
+| `/analyses/[id]/evidence` | Analysis-wide evidence browser (change 16) |
+| `/analyses/[id]/events` | Raw event explorer, anomalous rows marked and explained |
+| `/learning` | Model performance **and** the learning loop, merged from `/models` |
+| `/tier2` | Cross-tenant analytics + NL→SQL |
 
-## Key screens
+### Why `/upload` went away
+
+Upload is a drop zone in the header of `/`; submitting routes straight to `/analyses/[id]`.
+Format sniffing and the 5-line parse preview became an inline confirmation step inside the drop
+zone rather than a separate page.
+
+The funnel did not disappear — it moved somewhere better. `/analyses/[id]` renders the live stage
+funnel while `analyses.status` is `queued` or `running`, and becomes the overview when the
+pipeline completes. Same page, no navigation, and the funnel now lives on the page the analyst
+actually stays on. `POST /api/uploads` is unchanged.
+
+### Why `/ops` went away
+
+Queue-depth monitoring belongs in Cloud Monitoring, not in the product. But failures still need a
+UI surface, so per-analysis error state replaces it: a stage that exhausts retries sets
+`analyses.status = 'failed'`, `analyses.stage`, and `analyses.error`; `/analyses/[id]` renders the
+failure **at the point in the funnel where it occurred** so the analyst sees which stage died; the
+list shows a failed badge; and `POST /api/analyses/{id}/retry` republishes from the failed stage
+using the dead-lettered payload.
+
+`/api/health` stays — Cloud Run needs it. The `dead_letters` table stays — it is the retry source
+and the debugging record. Only the console is gone.
 
 ### `/upload`
 Drop zone → immediate format sniff confirming the file is recognized as ZScaler NSS Web, with a

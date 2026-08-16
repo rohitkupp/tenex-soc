@@ -5,9 +5,13 @@ import { useCallback, useRef, useState, type DragEvent, type KeyboardEvent } fro
 interface DropZoneProps {
   onFileSelected: (file: File) => void;
   disabled?: boolean;
+  /** docs/v2_migration change 27: "Upload becomes a drop zone in the header of `/`,
+   * alongside the analysis list" — a compact, inline-sized target rather than the tall
+   * full-page one the deleted `/upload` route used. */
+  compact?: boolean;
 }
 
-export function DropZone({ onFileSelected, disabled = false }: DropZoneProps) {
+export function DropZone({ onFileSelected, disabled = false, compact = false }: DropZoneProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
 
@@ -44,19 +48,19 @@ export function DropZone({ onFileSelected, disabled = false }: DropZoneProps) {
       }}
       onDragLeave={() => setIsDragging(false)}
       onDrop={handleDrop}
-      className={`flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed px-6 py-16 text-center transition-colors ${
-        disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"
-      } ${
+      className={`flex items-center justify-center gap-2 rounded-lg border border-dashed text-center transition-colors ${
+        compact ? "flex-row px-4 py-3" : "flex-col px-6 py-16"
+      } ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"} ${
         isDragging
           ? "border-[var(--color-text-mid)] bg-[var(--color-surface-2)]"
           : "border-[var(--color-border)] bg-[var(--color-surface-1)]"
       }`}
     >
-      <p className="text-sm font-medium text-[var(--color-text-hi)]">
+      <p className={`font-medium text-[var(--color-text-hi)] ${compact ? "text-xs" : "text-sm"}`}>
         Drop a log file here, or click to browse
       </p>
-      <p className="text-xs text-[var(--color-text-lo)]">
-        ZScaler, Okta, or CloudTrail. Up to 200 MB.
+      <p className={`text-[var(--color-text-lo)] ${compact ? "text-xs" : "text-xs"}`}>
+        ZScaler web proxy. Up to 200 MB.
       </p>
       <input
         ref={inputRef}

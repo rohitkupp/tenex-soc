@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 import { AppNav } from "@/components/nav/AppNav";
 
-// Shell for the authenticated routes (`/`, `/upload`). `/login` sits outside
-// this route group and gets no nav — "nothing else on the page".
+// Shell for the authenticated routes (`/`, `/analyses/[id]`, `/learning`, `/tier2`).
+// `/login` and `/signup` sit outside this route group and get no nav — "nothing else
+// on the page".
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <div className="flex min-h-dvh flex-col">

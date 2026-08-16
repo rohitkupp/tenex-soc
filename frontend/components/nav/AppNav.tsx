@@ -25,18 +25,6 @@ export async function AppNav() {
             Analyses
           </Link>
           <Link
-            href="/upload"
-            className="text-[var(--color-text-mid)] transition-colors hover:text-[var(--color-text-hi)]"
-          >
-            Upload
-          </Link>
-          <Link
-            href="/models"
-            className="text-[var(--color-text-mid)] transition-colors hover:text-[var(--color-text-hi)]"
-          >
-            Models
-          </Link>
-          <Link
             href="/learning"
             className="text-[var(--color-text-mid)] transition-colors hover:text-[var(--color-text-hi)]"
           >
@@ -47,12 +35,6 @@ export async function AppNav() {
             className="text-[var(--color-text-mid)] transition-colors hover:text-[var(--color-text-hi)]"
           >
             Tier 2
-          </Link>
-          <Link
-            href="/ops"
-            className="text-[var(--color-text-mid)] transition-colors hover:text-[var(--color-text-hi)]"
-          >
-            Ops
           </Link>
           {me && (
             <span className="hidden font-mono text-xs text-[var(--color-text-lo)] sm:inline">

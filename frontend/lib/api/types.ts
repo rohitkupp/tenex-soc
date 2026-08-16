@@ -134,15 +134,21 @@ export interface AnalysisDetail {
 }
 
 /**
- * SSE payload from `GET /api/analyses/{id}/stream` — docs/01-ARCHITECTURE.md
- * and docs/09-API-CONTRACT.md give this shape verbatim (docs/09 additionally
- * documents `needs_attention` inside `counters`). There is no explicit
- * "done"/terminal flag on the wire; see `lib/api/stream.ts` for how terminal
- * state is inferred from `stage` + `progress` instead.
+ * SSE payload from `GET /api/analyses/{id}/stream` — docs/01-ARCHITECTURE.md's
+ * "Terminal contract" (added alongside M4): every event carries `status`, one of
+ * `queued | running | complete | failed`, mirroring `analyses.status` — specified
+ * precisely so a client never has to *infer* terminality by guessing which `stage`
+ * name is last (see `backend/app/pipeline/progress.py`'s docstring for the exact wire
+ * example this type matches). `status` is also how a client tells a normal finish
+ * (`complete`) apart from a dead-lettered one (`failed`) — see `lib/api/stream.ts` and
+ * `FunnelProgress`, docs/v2_migration change 27's "failures surface on the analysis."
  */
+export type AnalysisStatus = "queued" | "running" | "complete" | "failed";
+
 export interface AnalysisStreamEvent {
   stage: string;
   progress: number;
+  status: AnalysisStatus;
   message: string;
   counters: Record<string, unknown>;
 }
@@ -153,6 +159,7 @@ export function isAnalysisStreamEvent(value: unknown): value is AnalysisStreamEv
   return (
     typeof v.stage === "string" &&
     typeof v.progress === "number" &&
+    typeof v.status === "string" &&
     typeof v.message === "string" &&
     typeof v.counters === "object" &&
     v.counters !== null
@@ -173,53 +180,17 @@ export function numericCounters(counters: Record<string, unknown>): Record<strin
   return out;
 }
 
-// ---- Ops (M4) ----
+// ---- Analysis retry (docs/v2_migration change 27) ----
+//
+// `/api/ops/*` (queue depth, dead-letter console) was deleted whole — "queue depth
+// monitoring belongs in Cloud Monitoring, not in the product" — except for retry,
+// which moved to the analysis itself: `POST /api/analyses/{id}/retry`, matching
+// `backend/app/schemas/uploads.py::AnalysisRetryResponse` verbatim.
 
-/**
- * PLACEHOLDER — best-effort, hand-derived, like the rest of this file.
- *
- * docs/09-API-CONTRACT.md documents `/api/ops/queues`, `/api/ops/dead-letters`,
- * and `/api/ops/dead-letters/{id}/retry` by one-line description only
- * ("Depth per queue", "Failed messages", "Republish") — it does not specify a
- * JSON shape. These are inferred from docs/01's queue topology (one durable
- * queue per worker, one paired `dlq.<name>`) and docs/09's generic
- * list-endpoint convention (`{items, next_cursor}`). Re-check against the
- * generated schema once `/api/ops/*` exists on the backend.
- */
-export interface QueueDepth {
-  name: string;
-  depth: number;
-  consumers?: number;
-}
-
-export interface QueuesResponse {
-  queues: QueueDepth[];
-}
-
-/** Mirrors docs/01's `StageMessage` envelope — the payload a dead-lettered
- * message actually carries, for context alongside the failure. */
-export interface DeadLetterMessage {
-  analysis_id?: string;
-  tenant_id?: string;
-  stage?: string;
-  storage_ref?: string | null;
-  source_type?: string | null;
-  attempt?: number;
-  emitted_at?: string;
-}
-
-export interface DeadLetter {
-  id: string;
-  queue: string;
-  error: string;
-  attempts: number;
-  failed_at: string;
-  message?: DeadLetterMessage;
-}
-
-export interface DeadLettersResponse {
-  items: DeadLetter[];
-  next_cursor: string | null;
+export interface AnalysisRetryResponse {
+  analysis_id: string;
+  republished_to: string;
+  retried_at: string;
 }
 
 // ---- Incidents & signals (M15) ----

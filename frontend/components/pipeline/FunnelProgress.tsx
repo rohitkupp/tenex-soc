@@ -1,14 +1,18 @@
 "use client";
 
 /**
- * The pipeline funnel — docs/10-FRONTEND.md: "the pipeline funnel on the
- * upload page, where counters count up per stage as SSE events arrive...
- * The funnel is the thesis of the architecture, so make it the hero." Also
- * used (in its static, already-finished form) on `/analyses/[id]`.
+ * The pipeline funnel — docs/10-FRONTEND.md: "counters count up per stage as SSE
+ * events arrive... The funnel is the thesis of the architecture, so make it the hero."
  *
- * Stage list and scope (ingest..triage, excluding respond/tier2) carried
- * over unchanged from the inert M1 placeholder this replaces — see
- * `lib/api/stream.ts` for why triage is the funnel's terminal stage.
+ * docs/v2_migration change 27 moved this from a dedicated `/upload` page onto
+ * `/analyses/[id]` itself: that page renders it live while `status` is `queued` or
+ * `running`, statically once `complete`, and with the failing stage marked once
+ * `failed` — "no separate page, no navigation," and the funnel is now on the page the
+ * analyst actually stays on.
+ *
+ * Stage list and scope (ingest..triage, excluding respond/tier2) carried over
+ * unchanged from the inert M1 placeholder this originally replaced — see
+ * `lib/api/stream.ts` for the terminal-status contract this reads.
  */
 import { useAnalysisStream } from "@/lib/api/stream";
 import { numericCounters, type AnalysisDetail } from "@/lib/api/types";
@@ -45,7 +49,7 @@ function orderCounters(counters: Record<string, number>): Array<[string, number]
   return orderedKeys.map((key): [string, number] => [key, entries.get(key) ?? 0]);
 }
 
-type StageState = "done" | "active" | "pending";
+type StageState = "done" | "active" | "pending" | "failed";
 
 const STAGE_BADGE_CLASS: Record<StageState, string> = {
   pending:
@@ -53,65 +57,91 @@ const STAGE_BADGE_CLASS: Record<StageState, string> = {
   active:
     "rounded-full border border-[var(--color-text-hi)] bg-[var(--color-surface-2)] px-3 py-1 text-xs font-medium text-[var(--color-text-hi)]",
   done: "rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] px-3 py-1 text-xs text-[var(--color-text-mid)]",
+  // docs/v2_migration change 27: "`/analyses/[id]` renders the failure at the point in
+  // the funnel where it occurred, so the analyst sees *which* stage died rather than a
+  // generic error" — the one stage badge that gets severity-critical styling.
+  failed:
+    "rounded-full border border-[var(--color-severity-critical)] bg-[var(--color-surface-2)] px-3 py-1 text-xs font-medium text-[var(--color-severity-critical)]",
 };
 
 interface FunnelProgressProps {
   analysisId: string;
   /**
-   * Server-fetched snapshot (`GET /api/analyses/{id}`) to render before, or
-   * instead of, a live connection. `/upload` has no snapshot — the analysis
-   * was just created, so the funnel connects immediately. `/analyses/[id]`
-   * always has one; when it reports the run as finished, the funnel renders
-   * it statically and never opens a stream that will never emit again.
+   * Server-fetched snapshot (`GET /api/analyses/{id}`) to render before, or instead of,
+   * a live connection. The header drop zone on `/` has no snapshot — the analysis was
+   * just created, so the funnel connects immediately once the analyst lands on
+   * `/analyses/[id]`. That page always has one; when it reports the run as finished (or
+   * failed), the funnel renders statically and never opens a stream that will never
+   * emit again.
    */
-  initial?: Pick<AnalysisDetail, "stage" | "progress" | "counters" | "finished_at"> | null;
+  initial?: Pick<
+    AnalysisDetail,
+    "status" | "stage" | "progress" | "counters" | "error" | "finished_at"
+  > | null;
 }
 
 export function FunnelProgress({ analysisId, initial = null }: FunnelProgressProps) {
   const isFinished = initial !== null && initial.finished_at !== null;
   const { event, connection, done } = useAnalysisStream(isFinished ? null : analysisId);
 
+  const status = event?.status ?? initial?.status ?? null;
   const stage = event?.stage ?? initial?.stage ?? null;
   const progress = event?.progress ?? initial?.progress ?? 0;
   const rawCounters = event?.counters ?? initial?.counters ?? {};
   const counters = numericCounters(rawCounters);
   const currentIndex = stage ? STAGES.findIndex((s) => s.key === stage) : -1;
-  const complete = isFinished || done;
+  const failed = status === "failed";
+  const complete = (isFinished && !failed) || (done && status === "complete");
+  const errorMessage = event?.message ?? initial?.error ?? null;
 
-  const statusLabel = complete
-    ? "Complete"
-    : connection === "connecting"
-      ? "Connecting…"
-      : connection === "reconnecting"
-        ? "Reconnecting…"
-        : "Live";
+  const statusLabel = failed
+    ? "Failed"
+    : complete
+      ? "Complete"
+      : connection === "connecting"
+        ? "Connecting…"
+        : connection === "reconnecting"
+          ? "Reconnecting…"
+          : "Live";
 
-  // Nothing to show yet at all — true only in the earliest moment on
-  // `/upload`, before the pipeline has reported anything and no snapshot
-  // exists to fall back on. `/analyses/[id]` always has a snapshot, so this
-  // never applies there.
-  const showSkeleton = currentIndex < 0 && Object.keys(counters).length === 0 && !complete;
+  // Nothing to show yet at all — true only in the earliest moment right after upload,
+  // before the pipeline has reported anything and no snapshot exists to fall back on.
+  // `/analyses/[id]`'s server-fetched snapshot means this essentially never applies
+  // there once the row exists.
+  const showSkeleton = currentIndex < 0 && Object.keys(counters).length === 0 && !complete && !failed;
 
   return (
     <div className="rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-sm font-medium text-[var(--color-text-hi)]">Pipeline</h2>
-        <span className="text-xs text-[var(--color-text-lo)]">{statusLabel}</span>
+        <span
+          className={
+            failed
+              ? "text-xs font-medium text-[var(--color-severity-critical)]"
+              : "text-xs text-[var(--color-text-lo)]"
+          }
+        >
+          {statusLabel}
+        </span>
       </div>
 
       <ol className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-3">
         {STAGES.map((stageDef, index) => {
-          const state: StageState = complete
-            ? "done"
-            : index < currentIndex
-              ? "done"
-              : index === currentIndex
-                ? "active"
-                : "pending";
+          const state: StageState =
+            failed && index === currentIndex
+              ? "failed"
+              : complete
+                ? "done"
+                : index < currentIndex
+                  ? "done"
+                  : index === currentIndex
+                    ? "active"
+                    : "pending";
           return (
             <li key={stageDef.key} className="flex items-center gap-2">
-              <span className={STAGE_BADGE_CLASS[state]}>
+              <span className={STAGE_BADGE_CLASS[state]} title={state === "failed" ? "This stage failed" : undefined}>
                 {state === "done" ? "✓ " : ""}
+                {state === "failed" ? "✕ " : ""}
                 {stageDef.label}
                 {state === "active" ? ` — ${Math.round(progress * 100)}%` : ""}
               </span>
@@ -125,7 +155,12 @@ export function FunnelProgress({ analysisId, initial = null }: FunnelProgressPro
         })}
       </ol>
 
-      {event?.message && (
+      {failed && errorMessage && (
+        <p role="alert" className="mt-3 text-xs text-[var(--color-severity-critical)]">
+          {errorMessage}
+        </p>
+      )}
+      {!failed && event?.message && (
         <p className="mt-3 text-xs text-[var(--color-text-mid)]">{event.message}</p>
       )}
 

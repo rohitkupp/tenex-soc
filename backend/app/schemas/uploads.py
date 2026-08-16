@@ -53,3 +53,15 @@ class AnalysisOut(BaseModel):
 class AnalysisListResponse(BaseModel):
     items: list[AnalysisOut]
     next_cursor: str | None
+
+
+class AnalysisRetryResponse(BaseModel):
+    """`POST /api/analyses/{id}/retry` — docs/v2_migration change 27's replacement for
+    `POST /api/ops/dead-letters/{id}/retry` (deleted along with the rest of `/ops`).
+    Same republish semantics, just addressed by `analysis_id` instead of a dead-letter
+    id, since the analyst-facing retry action starts from the failed analysis, not from
+    an ops console the analyst never sees."""
+
+    analysis_id: uuid.UUID
+    republished_to: str
+    retried_at: datetime

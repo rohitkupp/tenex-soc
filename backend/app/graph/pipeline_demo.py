@@ -9,7 +9,7 @@ recurrence -> persist.
 This module is the orchestration glue docs/13 M10's verification bar asks for ("load a real
 generated scenario end to end ... show the incidents formed, their fused scores and
 severities"). It reuses, read-only, every layer this milestone does not own
-(`app.detection.sigma.runner`, `app.detection.signal.*`, `app.detection.ml.*`) exactly as a
+(`app.detection.sigma.runner`, `app.detection.evidence.*`, `app.detection.ml.*`) exactly as a
 future `app/pipeline` orchestrator would, and owns only the M10-specific glue: turning each
 layer's raw output into one common `RawSignal` shape, calibrating it
 (`app.detection.calibration`), building the graph (`app.graph.builder`), forming incidents
@@ -52,14 +52,14 @@ from app.detection.calibration import (
     fit_calibrators,
     reliability_diagram,
 )
+from app.detection.evidence.beaconing import detect_beaconing
+from app.detection.evidence.burst import detect_burst
+from app.detection.evidence.dga import detect_dga
+from app.detection.evidence.dga import load_artifact as load_dga_artifact
+from app.detection.evidence.events_dao import fetch_event_rows
+from app.detection.evidence.rarity import detect_rarity
 from app.detection.fusion import FusionInput, score_incident
 from app.detection.sigma.runner import run_rules as sigma_run_rules
-from app.detection.signal.beaconing import detect_beaconing
-from app.detection.signal.burst import detect_burst
-from app.detection.signal.dga import detect_dga
-from app.detection.signal.dga import load_artifact as load_dga_artifact
-from app.detection.signal.events_dao import fetch_event_rows
-from app.detection.signal.rarity import detect_rarity
 from app.graph.builder import (
     EntityKey,
     GraphEvent,

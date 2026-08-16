@@ -103,6 +103,17 @@ ignore_missing_imports = true
 module = ["app.detection.*", "app.agent.*", "app.graph.*"]
 strict = true
 
+# `datagen` is the delivered corpus generator (docs/v2_migration), not application code we
+# author or type. It became reachable from the strict scope in migration change 2: the evidence
+# extractors call app.baseline.resolve, which reaches datagen.generate_corpus.Org through
+# app.baseline.org_directory to reconstruct the seeded org deterministically. That transitive
+# edge dragged 46 pre-existing errors into a gate that had nothing to do with them and would
+# have silently blocked every future strict run. Excluded rather than retyped: the alternative
+# is annotating 785 lines of delivered generator we did not write and do not maintain.
+[[tool.mypy.overrides]]
+module = ["datagen.*"]
+ignore_errors = true
+
 # ---------------------------------------------------------------- pytest
 
 [tool.pytest.ini_options]

@@ -116,3 +116,21 @@ results. See `docs/06` for the validation pipeline.
 | GET | `/api/ops/dead-letters` | Failed messages |
 | POST | `/api/ops/dead-letters/{id}/retry` | Republish |
 | GET | `/api/health` | Unauthenticated. Dependency checks. |
+
+
+## Endpoints removed by `docs/v2_migration`
+
+| Endpoint | Removed by | Note |
+|---|---|---|
+| `GET /api/ops/queues` | change 27 | queue depth belongs in Cloud Monitoring |
+| `GET /api/ops/dead-letters` | change 27 | the table stays; only the console is gone |
+| `POST /api/ops/dead-letters/{id}/retry` | change 27 | replaced by `POST /api/analyses/{id}/retry` |
+| `GET /api/incidents/{id}/plan` | change 20 | response action graph deleted |
+| `POST /api/plans/{id}/approve` | change 20 | |
+| `POST /api/plans/{id}/rollback` | change 20 | |
+| `GET /api/plans/{id}/state-diff` | change 20 | |
+
+Added: `POST /api/analyses/{id}/retry` — republishes the dead-lettered `StageMessage` from the
+failed stage with a fresh attempt budget and reopens the analysis. `GET /api/health` and the
+`/api/models/*` endpoints are explicitly retained; change 27 removed the `/models` *route*, not
+its API.

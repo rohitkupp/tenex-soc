@@ -1,16 +1,16 @@
-import Link from "next/link";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { fetchServer } from "@/lib/api/server";
 import type { AnalysesListResponse } from "@/lib/api/types";
 import { formatDate } from "@/lib/format";
+import { UploadFlow } from "@/components/upload/UploadFlow";
 
 export const metadata: Metadata = { title: "Analyses — Tenex SOC Analyst" };
 
-const primaryButton =
-  "rounded-md bg-[var(--color-text-hi)] px-4 py-2 text-sm font-medium text-[var(--color-surface-0)] transition-opacity hover:opacity-90";
-
-// The aggregate funnel (docs/10) needs pipeline data that doesn't exist
-// until M4 — this milestone renders the list itself plus the empty state.
+// docs/v2_migration change 27: "/upload" is deleted — upload becomes a drop zone here,
+// in the header, alongside the analysis list, rather than a page of its own. The
+// aggregate funnel across every running analysis is still M15+ scope beyond this
+// milestone; this renders the list itself, the upload entry point, and the empty state.
 export default async function AnalysesPage() {
   const data = await fetchServer<AnalysesListResponse>("/api/analyses");
   const analyses = data?.items ?? [];
@@ -22,13 +22,11 @@ export default async function AnalysesPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
+      <div className="flex flex-wrap items-start justify-between gap-4">
         <h1 className="text-xl font-semibold tracking-tight text-[var(--color-text-hi)]">
           Analyses
         </h1>
-        <Link href="/upload" className={primaryButton}>
-          Upload a log file
-        </Link>
+        <UploadFlow />
       </div>
 
       {unreachable ? (
@@ -39,13 +37,10 @@ export default async function AnalysesPage() {
           <p className="text-xs text-[var(--color-text-lo)]">Reload the page once it is back.</p>
         </div>
       ) : analyses.length === 0 ? (
-        <div className="flex flex-col items-center gap-4 rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-6 py-16 text-center">
+        <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-[var(--color-border)] bg-[var(--color-surface-1)] px-6 py-16 text-center">
           <p className="text-sm text-[var(--color-text-mid)]">
-            No incidents yet — upload a log file to start.
+            No analyses yet — drop a ZScaler log file above to start.
           </p>
-          <Link href="/upload" className={primaryButton}>
-            Upload a log file
-          </Link>
         </div>
       ) : (
         <ul className="divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)]">
@@ -72,9 +67,7 @@ export default async function AnalysesPage() {
                       {source}
                     </span>
                   ))}
-                  <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-1 text-xs text-[var(--color-text-mid)]">
-                    {analysis.status ?? "queued"}
-                  </span>
+                  <StatusBadge status={analysis.status} />
                 </div>
               </Link>
             </li>
@@ -82,5 +75,24 @@ export default async function AnalysesPage() {
         </ul>
       )}
     </div>
+  );
+}
+
+// docs/v2_migration change 27: "The analysis list shows a failed badge" — the one
+// status value that gets distinct (not neutral) styling, matching the severity-critical
+// treatment `/analyses/[id]` itself uses for the same status.
+function StatusBadge({ status }: { status?: string }) {
+  const value = status ?? "queued";
+  const failed = value === "failed";
+  return (
+    <span
+      className={
+        failed
+          ? "rounded-full border border-[var(--color-severity-critical)] bg-[var(--color-surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--color-severity-critical)]"
+          : "rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-1 text-xs text-[var(--color-text-mid)]"
+      }
+    >
+      {value}
+    </span>
   );
 }

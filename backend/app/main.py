@@ -22,7 +22,6 @@ from app.api import (
     incidents,
     learning,
     models,
-    ops,
     stream,
     tier2,
     uploads,
@@ -117,5 +116,4 @@ app.include_router(incident_detail.router, prefix="/api", tags=["incidents"])
 app.include_router(incidents.router, prefix="/api", tags=["incidents"])
 app.include_router(learning.router, prefix="/api", tags=["learning"])
 app.include_router(models.router, prefix="/api", tags=["models"])
-app.include_router(ops.router, prefix="/api", tags=["ops"])
 app.include_router(tier2.router, prefix="/api", tags=["tier2"])

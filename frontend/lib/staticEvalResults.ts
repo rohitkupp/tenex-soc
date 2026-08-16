@@ -77,3 +77,53 @@ export const L4_RETROSPECTIVE = {
     { model_key: "logbert", pooled_f1: 0.097, winner: false },
   ],
 };
+
+/**
+ * docs/v2_migration change 27, `/learning` section 2: "Hypothesis outcomes — the table
+ * from `docs/12`, with predictions recorded before the run." Transcribed verbatim from
+ * `backend/evals/results.md`'s "Pre-registered predictions — measured against real
+ * numbers" section, same static/checked-in treatment as `L3_COMPARISON` above (real
+ * data, not fabricated — CLAUDE.md's "losing is a valid, reportable outcome" applies
+ * here as much as to the comparison table: two of the three predictions came back
+ * FALSIFIED, and that is reported plainly, not smoothed over).
+ *
+ * The models these predictions name (`ml.autoencoder` in particular) predate
+ * docs/v2_migration change 19's autoencoder removal — this table is the historical
+ * record of what was predicted and measured *at the time*, not a claim about the
+ * current model roster. `/learning`'s Model performance section carries the same
+ * caveat about the live roster having moved on since this run.
+ */
+export interface HypothesisOutcome {
+  n: number;
+  prediction: string;
+  outcome: "confirmed" | "falsified";
+  measured: string;
+}
+
+export const HYPOTHESIS_OUTCOMES: HypothesisOutcome[] = [
+  {
+    n: 1,
+    prediction: "Scenario 4 (low-and-slow exfil): autoencoder detects it, ECOD does not",
+    outcome: "confirmed",
+    measured:
+      "ml.autoencoder recall 0.048 (detected); ml.ecod recall 0.000 (not detected). Only " +
+      "ml.mahalanobis and ml.autoencoder detected it at all.",
+  },
+  {
+    n: 2,
+    prediction: "Scenario 5 (peer-group deviation): LOF detects it, the four global models do not",
+    outcome: "falsified",
+    measured:
+      "LOF (ml.peer_group) detected it (recall 0.026) — but so did ml.mahalanobis (0.453), " +
+      "ml.ecod (0.009), and ml.autoencoder (0.043). Only ml.iforest stayed silent.",
+  },
+  {
+    n: 3,
+    prediction: "Scenario 6 (seasonal deviation): STL detects it, none of the five L3 models do",
+    outcome: "falsified",
+    measured:
+      "STL (signal.stl_residual) did not detect it — 0 of 36 malicious lines recovered when " +
+      "scored in isolation. Two L3 models (ml.mahalanobis 0.778 recall, ml.peer_group 0.028) " +
+      "did detect it via the entity-window snapshot.",
+  },
+];

@@ -5,16 +5,19 @@ import type { AnalysisDetail, AnalysisTimelineResponse } from "@/lib/api/types";
 import { formatDate, formatPercent, formatUsd } from "@/lib/format";
 import { FunnelProgress } from "@/components/pipeline/FunnelProgress";
 import { AnalysisTimeline } from "@/components/analyses/AnalysisTimeline";
+import { RetryButton } from "@/components/analyses/RetryButton";
 
 export const metadata: Metadata = { title: "Analysis — Tenex SOC Analyst" };
 
-// docs/10-FRONTEND.md scopes this route to funnel state + counters for a
-// completed or running analysis; the rest of the rich overview (event volume
-// chart, top entities, severity distribution) is still M15+ scope beyond
-// this milestone. The summarized timeline below is this milestone's piece of
-// it — the brief's headline "human-consumable ... summarized timeline of
-// events" deliverable, so it renders high on the page rather than waiting
-// for the rest of the overview to land.
+// docs/v2_migration change 27: this page now covers three states of one analysis, not
+// just "the overview" — "while `analyses.status` is `queued` or `running`, the page
+// renders the live SSE stage funnel... When the pipeline completes, the same page
+// becomes the overview. No separate page, no navigation." A failed analysis is a third
+// state layered on top: the funnel renders with the failing stage marked (`FunnelProgress`
+// itself does this), and a retry action sits right next to the error rather than on a
+// deleted `/ops` console. Section order below follows what the analyst most needs to see
+// first for each state — funnel first while there's nothing else yet, overview first once
+// there is.
 export default async function AnalysisDetailPage({
   params,
 }: {
@@ -45,40 +48,13 @@ export default async function AnalysisDetailPage({
     );
   }
 
-  return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <Link
-            href="/"
-            className="text-xs text-[var(--color-text-lo)] transition-colors hover:text-[var(--color-text-mid)]"
-          >
-            ← Analyses
-          </Link>
-          <h1 className="mt-1 font-mono text-lg font-semibold tracking-tight text-[var(--color-text-hi)]">
-            {analysis.id}
-          </h1>
-        </div>
-        <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-1 text-xs text-[var(--color-text-mid)]">
-          {analysis.status}
-        </span>
-      </div>
+  const isFailed = analysis.status === "failed";
+  const isRunning = analysis.status === "queued" || analysis.status === "running";
 
-      <nav className="flex items-center gap-4 border-b border-[var(--color-border)] text-sm">
-        <Link
-          href={`/analyses/${analysis.id}/incidents`}
-          className="border-b-2 border-transparent pb-2 text-[var(--color-text-mid)] transition-colors hover:border-[var(--color-text-hi)] hover:text-[var(--color-text-hi)]"
-        >
-          Incidents
-        </Link>
-        <Link
-          href={`/analyses/${analysis.id}/events`}
-          className="border-b-2 border-transparent pb-2 text-[var(--color-text-mid)] transition-colors hover:border-[var(--color-text-hi)] hover:text-[var(--color-text-hi)]"
-        >
-          Events
-        </Link>
-      </nav>
+  const funnel = <FunnelProgress analysisId={analysis.id} initial={analysis} />;
 
+  const overview = (
+    <>
       <AnalysisTimeline data={timeline} />
 
       <dl className="grid grid-cols-2 gap-x-6 gap-y-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-5 text-sm sm:grid-cols-4">
@@ -107,14 +83,74 @@ export default async function AnalysisDetailPage({
           </dd>
         </div>
       </dl>
+    </>
+  );
 
-      {analysis.error && (
-        <p role="alert" className="text-sm text-[var(--color-severity-critical)]">
-          {analysis.error}
-        </p>
+  return (
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <Link
+            href="/"
+            className="text-xs text-[var(--color-text-lo)] transition-colors hover:text-[var(--color-text-mid)]"
+          >
+            ← Analyses
+          </Link>
+          <h1 className="mt-1 font-mono text-lg font-semibold tracking-tight text-[var(--color-text-hi)]">
+            {analysis.id}
+          </h1>
+        </div>
+        <span
+          className={
+            isFailed
+              ? "rounded-full border border-[var(--color-severity-critical)] bg-[var(--color-surface-2)] px-2.5 py-1 text-xs font-medium text-[var(--color-severity-critical)]"
+              : "rounded-full border border-[var(--color-border)] bg-[var(--color-surface-2)] px-2.5 py-1 text-xs text-[var(--color-text-mid)]"
+          }
+        >
+          {analysis.status}
+        </span>
+      </div>
+
+      <nav className="flex items-center gap-4 border-b border-[var(--color-border)] text-sm">
+        <Link
+          href={`/analyses/${analysis.id}/incidents`}
+          className="border-b-2 border-transparent pb-2 text-[var(--color-text-mid)] transition-colors hover:border-[var(--color-text-hi)] hover:text-[var(--color-text-hi)]"
+        >
+          Incidents
+        </Link>
+        <Link
+          href={`/analyses/${analysis.id}/events`}
+          className="border-b-2 border-transparent pb-2 text-[var(--color-text-mid)] transition-colors hover:border-[var(--color-text-hi)] hover:text-[var(--color-text-hi)]"
+        >
+          Events
+        </Link>
+      </nav>
+
+      {isFailed && (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--color-severity-critical)] bg-[var(--color-surface-1)] px-5 py-4">
+          <div>
+            <p className="text-sm font-medium text-[var(--color-severity-critical)]">
+              Analysis failed{analysis.stage ? ` at the ${analysis.stage} stage` : ""}
+            </p>
+            {analysis.error && (
+              <p className="mt-1 text-xs text-[var(--color-text-mid)]">{analysis.error}</p>
+            )}
+          </div>
+          <RetryButton analysisId={analysis.id} />
+        </div>
       )}
 
-      <FunnelProgress analysisId={analysis.id} initial={analysis} />
+      {isRunning || isFailed ? (
+        <>
+          {funnel}
+          {overview}
+        </>
+      ) : (
+        <>
+          {overview}
+          {funnel}
+        </>
+      )}
     </div>
   );
 }
