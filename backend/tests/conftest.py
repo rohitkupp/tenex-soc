@@ -102,6 +102,36 @@ def tenant_cleanup() -> Iterator[list[uuid.UUID]]:
     if not created:
         return
     with get_engine().begin() as conn:
+        # Order matters: children before parents, and every table the *wired* pipeline writes
+        # before `analyses`, whose cascade does not reach them.
+        #
+        # This list grew when the six skeleton pipeline stages were made real. Until then a test
+        # upload produced events and nothing else, so cleaning analyses/uploads/users/tenants was
+        # genuinely sufficient. Now `detect` writes signals, `correlate` writes entities, edges
+        # and incidents, `triage` writes verdicts, `tier2` writes signatures, and the learning
+        # consumers write events and proposals — none of which were ever this fixture's problem
+        # before. Leaving them behind is not a leak of disk space, it is a leak of *state*: a
+        # later test that counts rows or asserts cross-tenant overlap sees a previous test's
+        # pipeline output and fails in a way that reads like flakiness.
+        for table, column in (
+            ("learning_events", "tenant_id"),
+            ("tier2_signatures", "tenant_id"),
+            ("signals", "tenant_id"),
+            ("incidents", "tenant_id"),
+            ("baseline_windows", "tenant_id"),
+            ("baseline_profiles", "tenant_id"),
+            ("baseline_contacts", "tenant_id"),
+        ):
+            # Tolerated individually: this fixture is used by tests written across many
+            # milestones, and a table that does not exist yet (or has already been cascaded away)
+            # must not abort the rest of the cleanup and strand the tenant rows below.
+            try:
+                with conn.begin_nested():
+                    conn.execute(
+                        text(f"DELETE FROM {table} WHERE {column} = ANY(:ids)"), {"ids": created}
+                    )
+            except Exception:
+                pass
         conn.execute(text("DELETE FROM analyses WHERE tenant_id = ANY(:ids)"), {"ids": created})
         conn.execute(text("DELETE FROM uploads WHERE tenant_id = ANY(:ids)"), {"ids": created})
         conn.execute(text("DELETE FROM users WHERE tenant_id = ANY(:ids)"), {"ids": created})

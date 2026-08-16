@@ -18,16 +18,22 @@ starves `tests/test_tier2_indicator_overlap.py`'s own from-a-clean-slate `LIMIT 
 room. An insider-threat scenario carries no such shared external indicator, so this test's own
 real `tier2` sync still exercises the stage fully without contending for that ranking.
 
-**Excluded from the default suite run** (`-m "not exclusive_broker"`) and run explicitly:
-`pytest tests/test_pipeline_e2e_real.py`.
+**Excluded from the default suite** (`-m "not exclusive_broker"`); run explicitly with
+`pytest tests/test_pipeline_e2e_real.py --override-ini="addopts="`.
 
-It passes reliably on its own (~90s) and fails when it runs after `test_tier2_indicator_overlap`,
-which manipulates tier2 signature and tenant state this test's terminal stage also touches. The
-interference is real and reproducible in that order; I did not isolate the exact shared row, and
-marking it is an honest stopgap rather than a diagnosis. Running it in a dirty database is what
-fails — not the pipeline, which is the thing this test exists to prove.
+The exclusion is a stopgap and is documented as one. Extending `tenant_cleanup` to cover the
+tables the newly-real pipeline writes (signals, incidents, tier2 signatures, learning events,
+baselines) fixed the specific `test_tier2_indicator_overlap` ordering failure — verified — but the
+suite still shows two or three state-dependent failures per full run, landing in a different file
+each time. Each passes in isolation.
 
-That proof matters more than the marker: before the stages were wired, six of eight were
+What is established: this test does real work through every stage and each individual failure is
+an isolation problem, not a pipeline defect. What is not established: the precise shared row. The
+honest summary is that the suite's isolation was designed when six of eight stages did nothing,
+and making them real outgrew it. That is a fixture audit against every table the pipeline now
+writes — real work, deliberately not bodged from inside this test.
+
+What this proves: before the stages were wired, six of eight were
 pass-through skeletons, so an upload produced events and nothing else. This test asserts the full
 chain now yields non-zero events, signals, incidents and needs_attention.
 """
