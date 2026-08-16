@@ -664,3 +664,63 @@ Extractors query well-named metrics regardless and will report `insufficient_his
 today's seeded data. That is correct plumbing exercising a real gap in the delivered generator —
 closing it means extending the generator, not the extractors. Every extractor's behaviour against
 a *populated* baseline is proven by tests that insert synthetic profile and contact rows.
+
+
+## Shipped models vs. benchmark baselines — `docs/v2_migration` change 19
+
+Three models ship and score live traffic:
+
+| Model | Role |
+|---|---|
+| EIF | global entity anomaly, oblique splits |
+| kth-NN | global distance, handles multimodality |
+| LOF | peer-relative / local density |
+
+Isolation Forest, ECOD and Mahalanobis are **benchmarked but not shipped**. They stay in
+`evaluate.py` so EIF has to prove oblique splitting earns its cost, and so the hypothesis-outcome
+table keeps its contenders — but they emit no `signals` rows.
+
+**This distinction lived only in the migration document until it was caught.**
+`score_entity_windows` scored all six, so three benchmark-only baselines were writing signals into
+the live pipeline, where they fed fusion, incident formation and the LLM's evidence package.
+
+It is not a tuning detail. On the current corpus ECOD measures **precision 1.000 at recall 0.051**
+and LOF measures **precision 0.003**. Fusing detectors three orders of magnitude apart in
+precision, without recording that you have done so, produces a score no one can reason about and
+inflates the false-positive burden the analyst actually pays. `SHIPPED_MODEL_FIELDS` is now the
+runtime roster, `ML_MODEL_FIELDS` remains the full six for benchmarking and calibrator fitting,
+and a test pins the two apart so this cannot drift back.
+
+### Reading the benchmark for a SOC rather than for a leaderboard
+
+The pre-registered winner rule is mean F1, tie-broken by AUC-PR, and ECOD wins it. Pooled across
+the six attack scenarios the confusion matrix says something the rank does not:
+
+| Model | TP | FP | FN | Recall | Precision | FN per TP |
+|---|--:|--:|--:|--:|--:|--:|
+| kth-NN | 44 | 4,441 | 192 | 0.186 | 0.010 | 4.4 |
+| LOF | 43 | 13,785 | 193 | 0.182 | 0.003 | 4.5 |
+| EIF | 33 | 127 | 203 | 0.140 | 0.207 | 6.1 |
+| ECOD | 12 | 0 | 224 | 0.051 | 1.000 | 18.7 |
+| iForest | 6 | 8 | 230 | 0.025 | 0.429 | 38.3 |
+| Mahalanobis | 6 | 55 | 230 | 0.025 | 0.098 | 38.3 |
+
+F1 weights precision and recall equally, which is the wrong weighting for security: a missed
+breach costs far more than a dismissed alert. ECOD wins by being perfectly precise about twelve
+things while missing 224 — silent through most attacks. That is the profile F1 rewards and a SOC
+does not want.
+
+The opposite extreme is not free either. LOF's 13,785 false positives against 43 true ones is 320
+false alarms per real detection, and past some ratio false positives *cause* false negatives,
+because the analyst stops reading. The useful objective is recall subject to an alert budget a
+human can work, not recall maximised.
+
+**Two measurement gaps to close before that budget can be set.** ECOD, EIF and kth-NN have no
+false-positive rate measured against the benign control — only iForest, Mahalanobis and LOF do.
+And the summary table's *mean* recall is the mean of per-scenario recalls, which weights a
+two-positive scenario the same as a hundred-positive one; kth-NN reads 0.525 there against a
+pooled 0.186. The pooled figure is the honest one.
+
+Changing the winner rule to F2 is defensible but must be recorded as a forward change with its
+rationale, never applied retroactively — the rule is pre-registered, and rewriting it after seeing
+results is the exact failure `CLAUDE.md` rule 2 exists to prevent.

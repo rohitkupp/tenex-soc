@@ -150,7 +150,11 @@ def test_score_entity_windows_threshold_gating() -> None:
     df = _make_df([{}])  # a single, perfectly ordinary row
     # threshold=0.0 means every row is flagged by every model (percentile rank >= 0 always).
     drafts_low_threshold = score_entity_windows(bundle, df, threshold=0.0)
-    assert len(drafts_low_threshold) == 6  # one per model
+    # Three, not six: only the models docs/v2_migration change 19 actually ships reach the
+    # live scoring path (EIF, kth-NN, LOF). Isolation Forest, ECOD and Mahalanobis stay in the
+    # benchmark as baselines and deliberately emit no signals — see
+    # test_only_change_19_s_shipped_models_reach_the_live_scoring_path.
+    assert len(drafts_low_threshold) == 3  # one per *shipped* model
     # threshold=1.01 is unreachable (confidence is clipped to [0, 1]).
     drafts_high_threshold = score_entity_windows(bundle, df, threshold=1.01)
     assert drafts_high_threshold == []
@@ -179,3 +183,36 @@ def test_model_roster_covers_every_model_in_the_bundle() -> None:
     # a name heuristic that would quietly swallow a future omission.
     non_model_fields = {"scaler"}
     assert bundle_fields - non_model_fields - set(ML_MODEL_FIELDS.values()) == set()
+
+
+def test_only_change_19_s_shipped_models_reach_the_live_scoring_path() -> None:
+    """docs/v2_migration change 19 ships EIF, kth-NN and LOF, and keeps Isolation Forest, ECOD
+    and Mahalanobis as *benchmarked but not shipped* baselines.
+
+    That distinction existed only in the migration document until this test. `score_entity_windows`
+    scored all six, so three benchmark-only baselines were writing `signals` rows into the live
+    pipeline, feeding fusion, incident formation and the LLM's evidence package.
+
+    It is not a tuning detail. On this corpus ECOD measures 1.000 precision at 0.051 recall while
+    LOF measures 0.003 precision — fusing models three orders of magnitude apart in precision
+    without saying so produces a score nobody can reason about, and inflates the false-positive
+    burden the analyst actually pays.
+    """
+    from app.detection.ml.detect import (
+        ML_ECOD,
+        ML_EIF,
+        ML_IFOREST,
+        ML_KTH_NN,
+        ML_MAHALANOBIS,
+        ML_MODEL_FIELDS,
+        ML_PEER_GROUP,
+        SHIPPED_MODEL_FIELDS,
+    )
+
+    assert set(SHIPPED_MODEL_FIELDS) == {ML_EIF, ML_KTH_NN, ML_PEER_GROUP}
+
+    # The three baselines must stay in the full roster — the benchmark and calibrator fitting
+    # need them, and change 19 keeps them precisely so EIF has something to fail against.
+    benchmark_only = {ML_IFOREST, ML_ECOD, ML_MAHALANOBIS}
+    assert benchmark_only <= set(ML_MODEL_FIELDS)
+    assert not (benchmark_only & set(SHIPPED_MODEL_FIELDS))

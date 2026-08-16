@@ -107,6 +107,27 @@ ML_MODEL_FIELDS: dict[str, str] = {
     ML_EIF: "eif",
     ML_KTH_NN: "kth_nn",
 }
+
+# The three models that actually SHIP, per docs/v2_migration change 19's post-migration roster:
+# EIF (global anomaly, oblique splits), kth-NN (global distance, multimodality), LOF
+# (peer-relative local density). Isolation Forest, ECOD and Mahalanobis are "benchmarked but
+# **not shipped**" — retained so EIF has to prove oblique splitting earns its cost and so the
+# hypothesis-outcome table keeps its contenders.
+#
+# This distinction did not exist in code until it was noticed that `score_entity_windows` was
+# scoring all six, so three benchmark-only baselines were emitting `signals` rows into the live
+# pipeline — feeding fusion, incident formation and ultimately the LLM. That is not a tuning
+# question: ECOD's measured precision on this corpus is 1.000 at 0.051 recall while LOF's is
+# 0.003, and silently averaging models with three orders of magnitude of precision difference
+# into one fused score is not an ensemble, it is noise with extra steps.
+#
+# `ML_MODEL_FIELDS` (above) stays the full six, because the benchmark and the calibrator fitting
+# must still cover every contender. Only the runtime scoring path narrows.
+SHIPPED_MODEL_FIELDS: dict[str, str] = {
+    ML_EIF: "eif",
+    ML_KTH_NN: "kth_nn",
+    ML_PEER_GROUP: "lof",
+}
 DETECTOR_LAYER = "ml"
 
 # The operating point every model's binary "emit a signal or not" decision uses: this window's
@@ -218,13 +239,10 @@ def score_entity_windows(
     x_scaled = bundle.transform(df)
 
     drafts: list[MLSignalDraft] = []
+    # Shipped models only — see SHIPPED_MODEL_FIELDS. The benchmark (`evaluate.py`) still scores
+    # all six; this is the live path and it carries the three change 19 actually deploys.
     for detector_key, model in (
-        (ML_IFOREST, bundle.iforest),
-        (ML_MAHALANOBIS, bundle.mahalanobis),
-        (ML_ECOD, bundle.ecod),
-        (ML_PEER_GROUP, bundle.lof),
-        (ML_EIF, bundle.eif),
-        (ML_KTH_NN, bundle.kth_nn),
+        (key, getattr(bundle, field)) for key, field in SHIPPED_MODEL_FIELDS.items()
     ):
         raw = model.raw_scores(x_scaled)
         conf = model.confidence(raw)
