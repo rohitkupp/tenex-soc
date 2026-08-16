@@ -1,14 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { fetchServer } from "@/lib/api/server";
-import type { IncidentDetail, IncidentGraph, PlanOut, TimelinePhaseOut } from "@/lib/api/types";
+import type { IncidentDetail, IncidentGraph, TimelinePhaseOut } from "@/lib/api/types";
 import { CaseHeader } from "@/components/incidents/case/CaseHeader";
 import { NarrativeBlock } from "@/components/incidents/case/NarrativeBlock";
 import { ContradictingEvidence } from "@/components/incidents/case/ContradictingEvidence";
 import { TimelinePhases } from "@/components/incidents/case/TimelinePhases";
 import { SignalsSection } from "@/components/incidents/case/SignalsSection";
 import { EntityGraph } from "@/components/incidents/case/EntityGraph";
-import { ResponsePlanStepper } from "@/components/incidents/case/ResponsePlanStepper";
+import { InvestigationGuidance } from "@/components/incidents/case/InvestigationGuidance";
 import { AgentTrace } from "@/components/incidents/case/AgentTrace";
 import { FeedbackControls } from "@/components/incidents/case/FeedbackControls";
 
@@ -23,9 +23,8 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
 /**
  * docs/10: "the most important screen in the product... a vertical document, not a grid of
  * widgets." Every section fetches in parallel server-side; the client-only pieces
- * (`NarrativeBlock`'s citation expansion, `ResponsePlanStepper`'s approve/rollback,
- * `FeedbackControls`) hydrate on top of that one server-rendered pass rather than each
- * re-fetching their own snapshot.
+ * (`NarrativeBlock`'s citation expansion, `FeedbackControls`) hydrate on top of that one
+ * server-rendered pass rather than each re-fetching their own snapshot.
  */
 export default async function CaseFilePage({
   params,
@@ -34,11 +33,10 @@ export default async function CaseFilePage({
 }) {
   const { id, iid } = await params;
 
-  const [incident, timeline, graph, plan] = await Promise.all([
+  const [incident, timeline, graph] = await Promise.all([
     fetchServer<IncidentDetail>(`/api/incidents/${iid}`),
     fetchServer<TimelinePhaseOut[]>(`/api/incidents/${iid}/timeline`),
     fetchServer<IncidentGraph>(`/api/incidents/${iid}/graph`),
-    fetchServer<PlanOut>(`/api/incidents/${iid}/plan`),
   ]);
 
   if (incident === null) {
@@ -105,10 +103,10 @@ export default async function CaseFilePage({
         <EntityGraph graph={graph ?? { nodes: [], edges: [] }} />
       </section>
 
-      {/* 8. Response plan */}
+      {/* 8. Investigation guidance */}
       <section>
-        <SectionHeading>Response plan</SectionHeading>
-        <ResponsePlanStepper initialPlan={plan} />
+        <SectionHeading>Investigation guidance</SectionHeading>
+        <InvestigationGuidance actions={incident.verdict?.recommended_actions} />
       </section>
 
       {/* 9. Agent trace — collapsed by default */}

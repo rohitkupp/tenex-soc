@@ -2,10 +2,12 @@
 — full HTTP integration tests via `TestClient` against the live Postgres, docs/09's Tier 2
 section end to end.
 
-Every test forces `demo_mode=True` on `app.api.tier2`'s own `get_settings` lookup (this
-sandbox's real `.env` carries a live `ANTHROPIC_API_KEY`) so `POST .../query` always takes
-the canned-example path and never calls the network — the same pattern
-`tests/test_response_api.py` uses for `app.api.plans`, for the same reason.
+Every test forces an empty `anthropic_api_key` on `app.api.tier2`'s own `get_settings` lookup
+(this sandbox's real `.env` carries a live `ANTHROPIC_API_KEY`) so `POST .../query` always
+takes the canned-example path and never calls the network. The explicit kwarg overrides
+whatever `.env` would otherwise supply (pydantic-settings init-kwarg precedence) — same
+no-live-call guarantee the old DEMO_MODE flag gave before docs/v2_migration change 12 removed
+it, without needing a dedicated flag to do it.
 """
 
 from __future__ import annotations
@@ -21,8 +23,8 @@ from tests.conftest import authenticate, make_tenant, make_user
 
 
 @pytest.fixture(autouse=True)
-def _force_demo_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tier2_module, "get_settings", lambda: Settings(demo_mode=True))
+def _force_no_key_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(tier2_module, "get_settings", lambda: Settings(anthropic_api_key=""))
 
 
 @pytest.fixture

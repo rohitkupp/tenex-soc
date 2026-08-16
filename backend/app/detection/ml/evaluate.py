@@ -1,5 +1,8 @@
 """The L3 benchmark (docs/12 §"Model comparison — the headline tables", row "L3 unsupervised":
-Isolation Forest / Mahalanobis / ECOD / LOF / Autoencoder, F1 / AUC-PR / per-scenario recall).
+Isolation Forest / Mahalanobis / ECOD / LOF, F1 / AUC-PR / per-scenario recall). Was five models
+through the autoencoder; migration change 19 (`docs/v2_migration/MIGRATION-01-evidence-first.md`)
+removed it (its job -- joint-distribution anomalies -- is what a later phase's EIF is meant to
+take over), so this benchmark is four-wide until EIF lands.
 
     python -m app.detection.ml.evaluate --eval-seed 7 --eval-dir /tmp/m8_eval
 
@@ -7,9 +10,9 @@ Isolation Forest / Mahalanobis / ECOD / LOF / Autoencoder, F1 / AUC-PR / per-sce
 
 "No model ships without a benchmark. Every model has a simpler baseline it must beat on the
 labeled eval set. Losing is a valid, reportable outcome." docs/04's own model table names
-Isolation Forest "Baseline" — so that is literally the bar `ml.mahalanobis` and `ml.autoencoder`
-must clear here, not an informal comparison. This script does not try to make the autoencoder
-win; it measures which model wins and reports that, plainly, including if it loses.
+Isolation Forest "Baseline" — so that is literally the bar every other model here must clear, not
+an informal comparison. This script does not try to make any one model win; it measures which
+model wins and reports that, plainly, including if it loses.
 
 ## Data provenance
 
@@ -52,7 +55,6 @@ from sklearn.metrics import average_precision_score, f1_score, precision_score, 
 from app.core.logging import configure_logging, get_logger
 from app.detection.ml.artifacts import MODELS_DIR
 from app.detection.ml.detect import (
-    ML_AUTOENCODER,
     ML_ECOD,
     ML_IFOREST,
     ML_MAHALANOBIS,
@@ -88,12 +90,11 @@ LOW_AND_SLOW_SCENARIO = "low_and_slow_exfil"
 PEER_GROUP_SCENARIO = "peer_group_deviation"
 SEASONAL_SCENARIO = "seasonal_deviation"
 
-MODEL_KEYS: tuple[str, str, str, str, str] = (
+MODEL_KEYS: tuple[str, str, str, str] = (
     ML_IFOREST,
     ML_MAHALANOBIS,
     ML_ECOD,
     ML_PEER_GROUP,
-    ML_AUTOENCODER,
 )
 BASELINE_MODEL = ML_IFOREST
 
@@ -241,7 +242,6 @@ def evaluate(
             (ML_MAHALANOBIS, bundle.mahalanobis),
             (ML_ECOD, bundle.ecod),
             (ML_PEER_GROUP, bundle.lof),
-            (ML_AUTOENCODER, bundle.autoencoder),
         ):
             raw = model.raw_scores(x_scaled)
             conf = model.confidence(raw)
@@ -276,7 +276,6 @@ def evaluate(
         m.model for m in per_scenario_metrics if m.scenario == SEASONAL_SCENARIO and m.detected
     ]
     predictions = _pre_registered_predictions(
-        low_and_slow_detectors=low_and_slow_detectors,
         peer_group_detectors=peer_group_detectors,
         seasonal_l3_detectors=seasonal_l3_detectors,
     )
@@ -302,47 +301,35 @@ def evaluate(
 
 def _pre_registered_predictions(
     *,
-    low_and_slow_detectors: list[str],
     peer_group_detectors: list[str],
     seasonal_l3_detectors: list[str],
 ) -> dict[str, dict[str, object]]:
-    """docs/12's three pre-registered predictions, evaluated against measured L3 results (#3's
-    L2-side half -- whether `signal.stl_residual` itself detects scenario 6 -- is measured by a
-    separate L2 harness this module does not own the input rows for, and merged into `evals/
-    results.md` alongside this dict's own `l3_models_detected` field, not computed here).
+    """docs/12's pre-registered predictions, evaluated against measured L3 results (#3's L2-side
+    half -- whether `signal.stl_residual` itself detects scenario 6 -- is measured by a separate
+    L2 harness this module does not own the input rows for, and merged into `evals/results.md`
+    alongside this dict's own `l3_models_detected` field, not computed here).
+
+    Prediction 1 ("the autoencoder detects scenario 4, ECOD does not") is retired, not merely
+    always-FALSIFIED: migration change 19 (`docs/v2_migration/MIGRATION-01-evidence-first.md`)
+    cut the autoencoder before this benchmark ran again, on architectural grounds ("if EIF matches
+    the autoencoder, the autoencoder is cut" -- docs/04), so there is no longer a model on this
+    side of the comparison to report a result for. Kept out of the returned dict entirely rather
+    than reported as a permanent, uninformative FALSIFIED. Predictions 2 and 3 keep docs/12's own
+    numbering (not renumbered to 1/2) so this dict's keys still match that doc's prose.
 
     Each entry's `outcome` is `"CONFIRMED"` or `"FALSIFIED"` per docs/12's own stated falsification
     condition, decided by the rule alone -- never reframed after seeing the numbers.
     """
-    ae_detected = ML_AUTOENCODER in low_and_slow_detectors
-    ecod_detected = ML_ECOD in low_and_slow_detectors
-    prediction_1_confirmed = ae_detected and not ecod_detected
-
-    global_models = {ML_IFOREST, ML_MAHALANOBIS, ML_ECOD, ML_AUTOENCODER}
+    global_models = {ML_IFOREST, ML_MAHALANOBIS, ML_ECOD}
     lof_detected = ML_PEER_GROUP in peer_group_detectors
     any_global_detected = bool(global_models & set(peer_group_detectors))
     prediction_2_confirmed = lof_detected and not any_global_detected
 
     return {
-        "1_low_and_slow_ae_not_ecod": {
-            "statement": (
-                "Scenario 4 (low-and-slow exfil): the autoencoder detects it; ECOD does not."
-            ),
-            "autoencoder_detected": ae_detected,
-            "ecod_detected": ecod_detected,
-            "all_detectors": low_and_slow_detectors,
-            "outcome": "CONFIRMED" if prediction_1_confirmed else "FALSIFIED",
-            "note": (
-                "ECOD also detected it at comparable recall -- per docs/12, the autoencoder has "
-                "no remaining justification on this scenario, a good outcome reached honestly."
-                if (ecod_detected and ae_detected)
-                else ""
-            ),
-        },
         "2_peer_group_lof_not_global": {
             "statement": (
-                "Scenario 5 (peer-group deviation): LOF (ml.peer_group) detects it; the four "
-                "global L3 models (iforest, mahalanobis, ecod, autoencoder) do not."
+                "Scenario 5 (peer-group deviation): LOF (ml.peer_group) detects it; the three "
+                "other global L3 models (iforest, mahalanobis, ecod) do not."
             ),
             "lof_detected": lof_detected,
             "global_models_that_detected": sorted(global_models & set(peer_group_detectors)),
@@ -352,7 +339,7 @@ def _pre_registered_predictions(
         "3_seasonal_stl_not_l3": {
             "statement": (
                 "Scenario 6 (seasonal deviation): STL residuals (signal.stl_residual) detect it; "
-                "none of the five L3 feature-vector models do."
+                "none of the L3 feature-vector models do."
             ),
             "l3_models_detected": seasonal_l3_detectors,
             "l3_falsifies_prediction": bool(seasonal_l3_detectors),

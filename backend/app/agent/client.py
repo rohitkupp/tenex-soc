@@ -94,8 +94,9 @@ class LLMCaller(Protocol):
 class LiveCaller:
     """Real `POST /v1/messages`, real spend. `api_key` is threaded in explicitly (rather than
     relying on the SDK's ambient `ANTHROPIC_API_KEY` env-var resolution) so the orchestrator's
-    "no key -> DEMO_MODE" branch (`app.core.config.Settings.llm_enabled`) is the only place that
-    decides whether this class is ever constructed at all."""
+    own no-key check (`app.agent.orchestrator.MissingAPIKeyError`, gated on
+    `app.core.config.Settings.llm_enabled`) is the only place that decides whether this class
+    is ever constructed at all."""
 
     api_key: str
     _client: anthropic.Anthropic = field(init=False, repr=False)

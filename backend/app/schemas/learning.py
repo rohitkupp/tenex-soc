@@ -1,7 +1,8 @@
 """Pydantic v2 schemas for docs/09-API-CONTRACT.md's "Models & learning" section, as implemented
 by `app/api/learning.py` and `app/api/models.py` (M13). Response shapes are this milestone's own
 design where docs/09 gives only a one-line description ("alignment %, per-detector precision
-trend, containment rate") and no field-level contract.
+trend") and no field-level contract. Containment rate was removed along with the response
+action graph in docs/v2_migration change 20.
 """
 
 from __future__ import annotations
@@ -88,14 +89,6 @@ class DetectorPrecisionPointOut(BaseModel):
     synthetic: bool
 
 
-class ContainmentSummaryOut(BaseModel):
-    contained: int
-    partially_contained: int
-    failed: int
-    total_with_outcome: int
-    rate: float | None
-
-
 class LearningMetricsResponse(BaseModel):
     computed_at: datetime
     n_feedback_events: int
@@ -104,7 +97,6 @@ class LearningMetricsResponse(BaseModel):
     alignment_pct: float | None
     alignment_trend: list[AlignmentPointOut]
     detector_precision_trend: list[DetectorPrecisionPointOut]
-    containment: ContainmentSummaryOut
 
 
 # ---------------------------------------------------------------------------- suppressions

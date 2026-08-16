@@ -44,7 +44,6 @@ x-worker-env: &worker-env
   FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-http://localhost:3000}
   ENVIRONMENT: production
   CORS_ORIGINS: ${CORS_ORIGINS:?}
-  DEMO_MODE: ${DEMO_MODE:-false}
   LOG_LEVEL: info
 
 # Same shared shape as docker-compose.yml's x-worker-defaults — see that file's comment.
@@ -154,10 +153,6 @@ services:
   agent:
     <<: *worker-defaults
     command: python -m app.workers.agent
-
-  responder:
-    <<: *worker-defaults
-    command: python -m app.workers.responder
 
   tier2-sync:
     <<: *worker-defaults

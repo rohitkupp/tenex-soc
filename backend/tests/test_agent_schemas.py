@@ -2,8 +2,11 @@
 
 This is the primary proof site for CLAUDE.md's build brief: "Prove no technique ID outside the
 corpus can survive validation" — both at the JSON-Schema layer (`build_*_tool`'s enum) and the
-independent pydantic layer (`MitreTechniqueRef`/`RecommendedAction`), which is what lets this be
-proven without a live or fixture API call.
+independent pydantic layer (`MitreTechniqueRef`), which is what lets this be proven without a
+live or fixture API call.
+
+`recommended_actions` carries no such enum (docs/v2_migration change 20 removed the response
+action catalog) — it is free-text investigation guidance, validated only for non-blank entries.
 """
 
 from __future__ import annotations
@@ -15,13 +18,11 @@ from app.agent.mitre import all_technique_ids
 from app.agent.schemas import (
     MitreTechniqueRef,
     NarrativeStep,
-    RecommendedAction,
     TriageVerdictOut,
     build_emit_verdict_tool,
     build_submit_findings_tool,
     build_submit_rebuttal_tool,
 )
-from app.response.catalog import get_catalog
 
 
 def _valid_verdict_kwargs() -> dict:
@@ -35,9 +36,7 @@ def _valid_verdict_kwargs() -> dict:
         "summary": "A real summary of what happened.",
         "narrative": [{"step": 1, "claim": "Something happened.", "evidence_event_ids": [1, 2]}],
         "contradicting_evidence": "Could be a scheduled sync job, but timing rules it out.",
-        "recommended_actions": [
-            {"action": "block_domain_at_proxy", "target": "evil.example", "rationale": "stop C2"}
-        ],
+        "recommended_actions": ["Block evil.example at the proxy pending confirmation."],
     }
 
 
@@ -60,26 +59,6 @@ def test_mitre_technique_ref_rejects_blank_fields() -> None:
         MitreTechniqueRef(id="T1071.001", name="", rationale="ok")
     with pytest.raises(ValidationError):
         MitreTechniqueRef(id="T1071.001", name="Web Protocols", rationale="   ")
-
-
-# ---------------------------------------------------------------------------- RecommendedAction
-
-
-def test_recommended_action_accepts_real_catalog_id() -> None:
-    action = RecommendedAction(action="block_domain_at_proxy", target="evil.example", rationale="x")
-    assert action.action == "block_domain_at_proxy"
-
-
-def test_recommended_action_rejects_free_text_action() -> None:
-    """docs/07: "recommended_actions[].action must be an action ID from the response action
-    graph. Free-text actions are rejected." """
-    with pytest.raises(ValidationError, match="not in the response action catalog"):
-        RecommendedAction(action="block_domain", target="evil.example", rationale="x")
-
-
-def test_recommended_action_rejects_blank_fields() -> None:
-    with pytest.raises(ValidationError):
-        RecommendedAction(action="block_domain_at_proxy", target="", rationale="x")
 
 
 # ---------------------------------------------------------------------------- NarrativeStep
@@ -119,12 +98,21 @@ def test_triage_verdict_out_rejects_fabricated_technique_id() -> None:
         TriageVerdictOut(**kwargs)
 
 
-def test_triage_verdict_out_rejects_free_text_action() -> None:
+def test_triage_verdict_out_accepts_free_text_recommended_actions() -> None:
+    """docs/v2_migration change 20: recommended_actions is free-text investigation guidance for
+    a human analyst now, not an action ID from a catalog — any non-blank string is accepted."""
     kwargs = _valid_verdict_kwargs()
-    kwargs["recommended_actions"] = [
-        {"action": "delete_everything", "target": "prod", "rationale": "oops"}
-    ]
-    with pytest.raises(ValidationError, match="not in the response action catalog"):
+    kwargs["recommended_actions"] = ["Pull the full session log for this host and review it."]
+    verdict = TriageVerdictOut(**kwargs)
+    assert verdict.recommended_actions == (
+        "Pull the full session log for this host and review it.",
+    )
+
+
+def test_triage_verdict_out_rejects_blank_recommended_action() -> None:
+    kwargs = _valid_verdict_kwargs()
+    kwargs["recommended_actions"] = ["   "]
+    with pytest.raises(ValidationError, match="must not be blank"):
         TriageVerdictOut(**kwargs)
 
 
@@ -186,11 +174,11 @@ def test_emit_verdict_tool_technique_enum_matches_corpus_exactly() -> None:
     assert set(enum) == set(all_technique_ids())
 
 
-def test_emit_verdict_tool_action_enum_matches_catalog_exactly() -> None:
+def test_emit_verdict_tool_recommended_actions_is_free_text_no_enum() -> None:
+    """docs/v2_migration change 20: no response action catalog to enumerate against anymore."""
     tool = build_emit_verdict_tool()
     action_schema = tool["input_schema"]["properties"]["recommended_actions"]["items"]
-    enum = action_schema["properties"]["action"]["enum"]
-    assert set(enum) == set(get_catalog().actions)
+    assert action_schema == {"type": "string"}
 
 
 def test_emit_verdict_tool_is_strict_and_fully_closed() -> None:

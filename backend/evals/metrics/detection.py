@@ -83,7 +83,7 @@ def known_detector_registry() -> dict[str, str]:
     try:
         from app.detection.ml import detect as ml_detect
 
-        for name in ("ML_IFOREST", "ML_MAHALANOBIS", "ML_ECOD", "ML_PEER_GROUP", "ML_AUTOENCODER"):
+        for name in ("ML_IFOREST", "ML_MAHALANOBIS", "ML_ECOD", "ML_PEER_GROUP"):
             key = getattr(ml_detect, name, None)
             if key:
                 registry[key] = "ml"

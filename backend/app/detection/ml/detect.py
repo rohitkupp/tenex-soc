@@ -1,7 +1,14 @@
-"""Unified scoring surface over all five L3 models — `ml.iforest`, `ml.mahalanobis`, `ml.ecod`,
-`ml.peer_group` (LOF), `ml.autoencoder` (docs/04 §L3 model table), each producing a structured
-signal in the shape the task brief specifies: "Signals: detector_key `ml.<model>`, detector_layer
-`ml`, structured explanation."
+"""Unified scoring surface over all four benchmarked L3 models — `ml.iforest`, `ml.mahalanobis`,
+`ml.ecod`, `ml.peer_group` (LOF) (docs/04 §L3 model table), each producing a structured signal in
+the shape the task brief specifies: "Signals: detector_key `ml.<model>`, detector_layer `ml`,
+structured explanation."
+
+The autoencoder that used to round this bundle out to five models is gone -- migration change 19
+(`docs/v2_migration/MIGRATION-01-evidence-first.md`) removed it: its job (joint-distribution
+anomalies no single feature's tail exposes) is what EIF's oblique splits are meant to address, and
+docs/04 had already committed to "if EIF matches the autoencoder, the autoencoder is cut" before
+EIF's own benchmark ran. EIF is a later phase's work, not built here -- this bundle is four models
+until it lands.
 
 ## Why this is not `app.detection.signal.drafts.SignalDraft`
 
@@ -36,13 +43,7 @@ import numpy.typing as npt
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
-from app.detection.ml.artifacts import MODELS_DIR
-from app.detection.ml.autoencoder import (
-    AUTOENCODER_ARTIFACT_FILENAME,
-    SCALER_ARTIFACT_FILENAME,
-    AutoencoderArtifact,
-    load_scaler,
-)
+from app.detection.ml.artifacts import MODELS_DIR, SCALER_ARTIFACT_FILENAME, load_scaler
 from app.detection.ml.ecod import ECOD_ARTIFACT_FILENAME, ECODArtifact
 from app.detection.ml.features import to_feature_matrix
 from app.detection.ml.iforest import IFOREST_ARTIFACT_FILENAME, IsolationForestArtifact
@@ -51,7 +52,6 @@ from app.detection.ml.mahalanobis import MAHALANOBIS_ARTIFACT_FILENAME, Mahalano
 
 __all__ = [
     "DETECTOR_LAYER",
-    "ML_AUTOENCODER",
     "ML_ECOD",
     "ML_IFOREST",
     "ML_MAHALANOBIS",
@@ -62,15 +62,13 @@ __all__ = [
     "score_entity_windows",
 ]
 
-# `datagen.types.ML_IFOREST` / `ML_MAHALANOBIS` / `ML_AUTOENCODER` / `ML_PEER_GROUP` verbatim
-# (docs/11's scenarios already reference these strings in `expected_detectors`) — declared
-# independently here for the same reason `app.detection.signal.constants` declares its own
-# `SIGNAL_*` literals rather than importing `datagen`: `app/detection/ml/**` must not depend on
-# the synthetic-data generator. `tests/test_ml_detect.py` asserts these stay byte-identical to
-# `datagen.types`'s copies.
+# `datagen.types.ML_IFOREST` / `ML_MAHALANOBIS` / `ML_PEER_GROUP` verbatim (docs/11's scenarios
+# already reference these strings in `expected_detectors`) — declared independently here for the
+# same reason `app.detection.signal.constants` declares its own `SIGNAL_*` literals rather than
+# importing `datagen`: `app/detection/ml/**` must not depend on the synthetic-data generator.
+# `tests/test_ml_detect.py` asserts these stay byte-identical to `datagen.types`'s copies.
 ML_IFOREST = "ml.iforest"
 ML_MAHALANOBIS = "ml.mahalanobis"
-ML_AUTOENCODER = "ml.autoencoder"
 # ECOD has no pre-existing forward-referenced name in `datagen.types` to match -- `ml.ecod` is
 # this package's own natural key for `pyod.models.ecod`.
 ML_ECOD = "ml.ecod"
@@ -82,10 +80,10 @@ DETECTOR_LAYER = "ml"
 
 # The operating point every model's binary "emit a signal or not" decision uses: this window's
 # calibrated confidence (a percentile rank against the benign calibration sample — see each
-# model's own docstring) sits above the top 0.5% of ordinary benign entity-windows. Matches the
-# autoencoder's own per-feature threshold percentile (docs/04: 99.5th) so all three models are
-# held to the same "how unusual is unusual enough" bar, deliberately fixed once here rather than
-# tuned per model to flatter one model's F1 in `evals/results.md`.
+# model's own docstring) sits above the top 0.5% of ordinary benign entity-windows. docs/04's own
+# 99.5th-percentile convention, so every model is held to the same "how unusual is unusual
+# enough" bar, deliberately fixed once here rather than tuned per model to flatter one model's F1
+# in `evals/results.md`.
 SIGNAL_CONFIDENCE_THRESHOLD = 0.995
 
 
@@ -117,7 +115,6 @@ class MLModelBundle:
     mahalanobis: MahalanobisArtifact
     ecod: ECODArtifact
     lof: LOFArtifact
-    autoencoder: AutoencoderArtifact
 
     @classmethod
     def load(cls, models_dir: Path = MODELS_DIR) -> MLModelBundle:
@@ -127,7 +124,6 @@ class MLModelBundle:
             mahalanobis=MahalanobisArtifact.load(models_dir / MAHALANOBIS_ARTIFACT_FILENAME),
             ecod=ECODArtifact.load(models_dir / ECOD_ARTIFACT_FILENAME),
             lof=LOFArtifact.load(models_dir / LOF_ARTIFACT_FILENAME),
-            autoencoder=AutoencoderArtifact.load(models_dir / AUTOENCODER_ARTIFACT_FILENAME),
         )
 
     def transform(self, df: pd.DataFrame) -> npt.NDArray[np.float64]:
@@ -176,7 +172,7 @@ def score_entity_windows(
     threshold: float = SIGNAL_CONFIDENCE_THRESHOLD,
 ) -> list[MLSignalDraft]:
     """Score every `(entity, hour)` row in `df` (from `build_entity_window_features`) against all
-    five models, returning one `MLSignalDraft` per (model, row) pair whose confidence clears
+    four models, returning one `MLSignalDraft` per (model, row) pair whose confidence clears
     `threshold`. `evaluate.py` instead calls each model's `raw_scores`/`confidence` directly over
     the *entire* `df` (thresholded and unthresholded) to compute AUC-PR/F1/recall — this function
     is the "what would actually get written as a signal" view, analogous to what a live pipeline
@@ -192,7 +188,6 @@ def score_entity_windows(
         (ML_MAHALANOBIS, bundle.mahalanobis),
         (ML_ECOD, bundle.ecod),
         (ML_PEER_GROUP, bundle.lof),
-        (ML_AUTOENCODER, bundle.autoencoder),
     ):
         raw = model.raw_scores(x_scaled)
         conf = model.confidence(raw)

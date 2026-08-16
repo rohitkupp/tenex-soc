@@ -10,12 +10,28 @@ Layers run in order, each cheaper than the next stage it feeds:
 
 ```
 L1 rules (100% of events)  →  L2 signal processing  →  L3 entity-window ML
-   →  L5 graph  →  classify  →  fuse & calibrate
+   →  L5 graph  →  fuse & calibrate
 ```
 
 *A fourth layer, sequence modeling, was designed, built, and benchmarked between L3 and L5, then
 cut. It is documented at §L4 below, in its historical slot, because the rejection is a finding —
 not renumbered away.*
+
+**`MIGRATION-01-evidence-first.md` supersedes parts of this document — read it alongside this
+one; where the two disagree, the migration wins.** Three changes to the pipeline above and to the
+model roster below, applied and reflected here:
+
+- **No `classify` stage.** The old diagram was `L5 graph → classify → fuse & calibrate`, where
+  `classify` was a LightGBM multiclass technique classifier (`app.graph.classifier`, now
+  deleted). Multiclass technique attribution is the LLM hypothesis-evaluation stage's job now
+  (`docs/07`, "hypothesis evaluation replaces free generation") — see §Classification below for
+  why keeping both was actively worse than picking one.
+- **Autoencoder removed from L3.** §L3's model table below is four models, not five — see
+  "Models — four hypotheses" for why, and for what is expected to eventually replace the job it
+  did.
+- **Navigation chain extractor added to L3.** Change 18 rejected building a sequence model for
+  this corpus (§L4 already covers that rejection) but commissioned a small, deterministic
+  referer-chain reconstruction instead — see "Navigation chain extractor" under §L3.
 
 ---
 
@@ -258,10 +274,75 @@ feature vector is implemented at M8, extend `app/detection/features.py` rather t
 reintroducing either definition — a third, silently different one is exactly how this bug
 recurred before the module existed.
 
-### Models — five hypotheses, benchmark all five
+### Navigation chain extractor
+
+Migration change 18 (`docs/v2_migration/MIGRATION-01-evidence-first.md`) considered, and rejected,
+building a sequence model for this corpus — see §L4 below for that rejection in full (it stands;
+the migration did not reopen it). But it commissioned this extractor as, in the migration's own
+words, "the part of the sequence idea that pays for itself": the HTTP `Referer` header is not a
+learned transition probability, it is the browser's own ground-truth statement of which page a
+request followed. Reconstructing a chain from it needs bookkeeping, not a model — deterministic,
+cheap, and it recovers real structural evidence (how a user actually got somewhere) that §L4's
+per-window feature vector cannot see on its own.
+
+**Referer field availability, stated plainly.** The ZScaler `referer` field is parsed end to end
+into `HttpRequest.referrer` on every `HTTPActivity` (`app/parsers/zscaler.py`, `app/ocsf/
+common.py`) and does survive into the persisted `events.ocsf` JSONB (`app/pipeline/stages/
+parse.py`'s `model_dump()`) — but nested under `ocsf->'http_request'->>'referrer'`, not a
+top-level JSONB key and **not a docs/02 hot column** on the `events` table (only `principal`/
+`src_ip`/`domain`/`url_path`/`action`/... are — see `app/models/event.py`). It was not, before
+this extractor, read into either L2's DB-backed `EventRow` or L3's `MLEvent`. This is the same
+"real field, no hot-column home" situation `urlcategory` is already in (§L2 "URL path analysis").
+
+**Where it lives, and why.** `app/detection/ml/navigation.py`, feeding `app/detection/ml/
+features.py` directly — not `app/detection/signal/` (L2), even though its "not ML, deterministic
+bookkeeping" character matches that layer's own philosophy. L2's `EventRow` is deliberately five/
+six columns wide and has no path to `referrer` without either a docs/02 migration to add a hot
+column or an unindexed per-row JSONB path extraction. `app/detection/ml/events.py` is the one
+place in the detection package that already reads the *parsed OCSF object* directly, bypassing
+the hot-column path entirely (the same route `MLEvent.department` already takes) — extending it
+was the only option that does not invent a new persistence column this document does not own.
+
+**Entity scope.** Reconstructed per `principal` only, never per `src_ip` — the same reasoning
+§L3's department-cohort fallback already gives: a `src_ip` can be a shared egress point NAT'd
+across many concurrent principals, and interleaving several people's independent referer chains
+into one "sequence" is exactly the multi-user disorder §L4's rejection is about. The feature
+family is zero-filled for the `src_ip` entity dimension, a stated scope cut, not an oversight.
+
+**The five features**, per-event, aggregated into the `(entity, hour)` grain the rest of L3 uses
+(ratio/mean for the four boolean/numeric ones, distinct-count for `entry_domain`):
+
+| Feature | Meaning |
+|---|---|
+| `referer_less_deep_path` | arrived at a multi-segment path with no referer at all — the shape of a typed/bookmarked/scripted request, not a click-through |
+| `navigation_depth` | verified hops from this chain's entry point, by referer linkage |
+| `entry_domain` | the registrable domain this chain is attributed to having started from |
+| `cross_domain_redirect_chain` | a *verified*, in-chain hop whose referer domain differs from the domain it landed on — the typosquat → legitimate-site handoff shape |
+| `download_without_navigation` | a downloadable-extension path fetched at `navigation_depth == 0` — no preceding page load in this chain |
+
+A session (30-minute idle gap per principal — the same boundary the session feature family above
+already uses) resets all in-progress chain state; within a session, a referer only counts as
+continuing a chain if its domain was itself verifiably observed on this principal's own traffic
+already — an external link or a stale/unrelated referer starts a fresh chain at depth 0 rather
+than being trusted at face value. See `app/detection/ml/navigation.py`'s own module docstring for
+the exact reconstruction algorithm, and `tests/test_ml_navigation.py` for a fire/no-fire fixture
+pair per feature.
+
+### Models — four hypotheses, benchmark all four
 
 Each model tests a specific, falsifiable claim about where the attack signal lives. The eval
 table (`docs/12`) does not merely pick a winner — it reports which hypotheses were true.
+
+**Post-migration roster (`docs/v2_migration/MIGRATION-01-evidence-first.md` change 19).** The
+autoencoder is gone (below), and the migration names a target roster this document records but
+does not yet build: **EIF** (Extended/oblique Isolation Forest) and **kth-NN** ship as primary,
+alongside **LOF** and the **DGA logistic regression** (§L2) with **isotonic calibrators**
+(§Fusion) turning every raw score into a probability. **Isolation Forest, ECOD, and Mahalanobis
+are explicitly retained — as benchmarked baselines, not shipped primary** — so EIF has to prove
+oblique splitting earns its cost against them, and `docs/12`'s hypothesis-outcome table keeps its
+contenders. **EIF and kth-NN are not built in this phase** ("Do not build EIF or kth-NN — that is
+a later phase," the migration's own words) — until they land, the table below is what actually
+ships, all four as benchmarked, undifferentiated ensemble members:
 
 | Model | Hypothesis it tests |
 |---|---|
@@ -269,7 +350,6 @@ table (`docs/12`) does not merely pick a winner — it reports which hypotheses 
 | Mahalanobis / MCD | Linear correlation structure; what commercial UEBA ships |
 | ECOD | Per-feature tail probability suffices |
 | LOF | Peer-relative anomalies exist that global methods miss |
-| Autoencoder | Joint-distribution anomalies exist where no single feature is extreme |
 
 **Isolation Forest** — `n_estimators=200`, `contamination='auto'`, seeded. SHAP for attribution.
 The baseline every other model must beat. If nothing beats it, the honest conclusion is that this
@@ -297,31 +377,43 @@ globally relative: a window can sit comfortably inside the org-wide distribution
 extreme population-wide — and still be anomalous relative to its local neighborhood. This is the
 model the cohort-relative features exist to feed. Tests whether peer-group deviation is a real,
 separate failure mode from global outlierness. Scenario 5 (`docs/11`) is built specifically to be
-globally normal and locally anomalous — LOF should detect it, and the four global models should
-not (pre-registered, `docs/12`).
+globally normal and locally anomalous — LOF should detect it, and the three other (global) models
+should not (pre-registered, `docs/12`).
 
-**Autoencoder** — PyTorch, `50→32→16→8→16→32→50` (Optuna may find a shallower bottleneck wins on
-a given corpus — the M8 run did, `backend/evals/results.md`), ReLU, MSE, Optuna-tuned. Tests
-whether some attacks are only visible in the *joint* distribution — no single feature or pair is
-extreme, but the combination reconstructs badly.
-- Train on the clean benign corpus only (`docs/11`), never on the file under analysis
-- StandardScaler fit on training corpus, persisted with the model
-- Optuna over: latent dim, depth, dropout, LR, batch size, epochs. 50 trials, objective =
-  val AUC on held-out labeled scenarios
-- Per-feature threshold calibration: for each feature `i`, threshold at the 99.5th percentile of
-  `|x_i - x̂_i|` on the benign corpus
-- `explanation`: `{total_recon_error, per_feature: [{feature, error, threshold, exceeded}]}`,
-  sorted descending — this is what the UI renders as "why this was flagged"
+**Autoencoder — removed.** Shipped as a fifth model through this milestone's own development
+window (PyTorch, `50→32→16→8→16→32→50`, Optuna-tuned, per-feature reconstruction-error
+attribution — see `backend/evals/results.md` for the M8 numbers this doc used to cite here), then
+cut by migration change 19. Two justifications, both absorbed elsewhere rather than simply
+dropped:
 
-**Known limitation, state it in the README:** every learned model here (Mahalanobis, LOF, and
-especially the autoencoder) is fit or trained against a synthetic benign corpus, so it partly
-learns our own generator's distribution. Mitigated by grounding the generator in real-world-
-derived distributions (domain popularity, UA mix, diurnal curves — `docs/11`). ECOD and Isolation
-Forest are less exposed to this — order statistics and partition depth are weaker distributional
-assumptions than a fitted covariance or a trained network.
+- **Per-feature reconstruction attribution** answered "why was this flagged." Change 2 of the
+  migration gave that job to deterministic evidence extractors instead, which produce
+  measurements and historical percentiles directly rather than an error term a human has to
+  interpret.
+- **Joint-distribution anomalies where no single feature is in a tail** — the hypothesis this
+  model's whole design existed to test — is what EIF's oblique splits are meant to address
+  instead, and this document had already committed to the rule that decided it: *"if EIF matches
+  the autoencoder, the autoencoder is cut."* The migration answered that question before EIF's
+  own benchmark ran, on the architectural argument alone — a tree that partitions on linear
+  combinations of features can, in principle, capture the same non-axis-aligned structure a
+  reconstruction error can, at a fraction of the training cost and with a SHAP-attributable split
+  path instead of a per-feature error vector.
+
+This is a **reportable outcome, not a retreat**: the model was built, benchmarked, and shipped
+honestly, and then deleted once better-suited components existed to absorb its two jobs — exactly
+the discipline CLAUDE.md asks for ("losing is a valid, reportable outcome"), just with the losing
+model identified by design reasoning instead of only by an eval number.
+
+**Known limitation, state it in the README:** every learned model here (Mahalanobis and LOF) is
+fit or trained against a synthetic benign corpus, so it partly learns our own generator's
+distribution. Mitigated by grounding the generator in real-world-derived distributions (domain
+popularity, UA mix, diurnal curves — `docs/11`). ECOD and Isolation Forest are less exposed to
+this — order statistics and partition depth are weaker distributional assumptions than a fitted
+covariance.
 
 Ship whichever wins on eval as primary; keep the others as ensemble members with fusion weights —
-five uncorrelated hypotheses are worth more fused than any one hypothesis is worth alone.
+four uncorrelated hypotheses are worth more fused than any one hypothesis is worth alone. (EIF and
+kth-NN join this ensemble once a later phase builds them, per the post-migration roster above.)
 
 ---
 
@@ -387,6 +479,20 @@ the layer existed to catch), run after. A rejection backed by both is stronger t
 The capacity this freed went into proxy-specific depth instead — infrastructure clustering, URL
 path analysis, derived sessionisation, and peer-group baselining (§L2, §L3, §L5, `docs/05`).
 
+**Reopened once, on purpose, and rejected again the same way.** Migration change 18
+(`docs/v2_migration/MIGRATION-01-evidence-first.md`) revisited this question specifically for
+proxy click-paths (as opposed to the identity-session grammar this section's own benchmark was
+run against) and reached the identical verdict for the identical structural reasons: browser
+parallelism (20-80 subresource requests per page load, nondeterministic order) and multi-tab
+concurrency give proxy logs no more grammar to learn than identity logs turned out to have once
+Okta was cut. "Per-user filtering was considered and rejected" explicitly — narrowing to one
+principal's own events removes inter-user concurrency but leaves both of those disorder sources
+untouched, and no scenario in the corpus has an ordering signal no other detector already catches.
+What the migration commissioned *instead* — a deterministic navigation chain extractor
+reconstructing referer chains, no model, no learned transition probabilities — is documented under
+§L3 "Navigation chain extractor" above, not here: it is not a sequence model, and this section's
+rejection stands unmodified.
+
 ---
 
 ## L5 — Graph anomaly features
@@ -415,21 +521,37 @@ construction.
 
 ---
 
-## Classification — LightGBM → ATT&CK
+## Classification — LightGBM removed
 
-Supervised multiclass over the L3 feature vector plus signal-presence indicators. Trained on
-labeled synthetic scenarios (`docs/11`).
+This pipeline used to run a "classify" stage between L5 and fusion: supervised multiclass LightGBM
+over the L3 feature vector plus signal-presence indicators (`objective='multiclass'`, classes =
+the scenario techniques + `benign`, class weights for imbalance, SHAP values in `explanation`),
+trained on labeled synthetic scenarios (`docs/11`), benchmarked against Claude zero-shot
+classification.
 
-- `objective='multiclass'`, classes = the scenario techniques + `benign`
-- Class weights to handle imbalance
-- SHAP values written to `explanation`
-- **Benchmark against Claude zero-shot classification.** Report both accuracies. Expected
-  outcome: the trained model wins on labeled techniques, the LLM generalizes better to
-  unlabeled ones. Use the model for classification and the LLM for explanation, and justify
-  that split with the numbers.
+Migration change 19 (`docs/v2_migration/MIGRATION-01-evidence-first.md`) removed it. **Its job was
+multiclass technique attribution; change 5 of the migration replaced that with LLM hypothesis
+evaluation over RAG-retrieved candidates** (`docs/07`), which produces evidence-for,
+evidence-against, missing-evidence, and an explicit `NO_KNOWN_MAPPING` outcome when nothing fits —
+a softmax over a fixed class list produces none of that shape, and it cannot say "none of the
+known techniques match" except by picking the least-bad wrong answer. Keeping both a trained
+classifier and an LLM hypothesis-evaluation stage would leave two components assigning techniques
+to the same incident with no defined precedence between them; the migration picked one rather than
+leave that ambiguity live.
 
-Unsupervised layers catch novelty (things we did not label); the classifier assigns technique.
-Both are needed — say so.
+**Consequence for this document's own pipeline diagram** (top of file): `L5 graph → classify →
+fuse & calibrate` is now `L5 graph → fuse & calibrate`. `mitre_technique` on a `Signal` still comes
+from L1 Sigma rule tags and any L2/L3 detector that carries one; an incident with no rule-tagged
+technique among its contributing signals now surfaces as untagged at this deterministic layer,
+resolved (or explicitly left as `NO_KNOWN_MAPPING`) by the agent stage instead of by a second
+classifier guessing here.
+
+**Not the same thing as `app.learning.classifier`.** A different, LightGBM-based module survives
+this migration under `app/learning/`: the retrain-candidate classifier inside the continuous-
+learning loop (docs/08 §6, `docs/v2_migration/MIGRATION-01-evidence-first.md` change 21's
+regression-gate demonstration). It is not part of this deterministic detection pipeline, is never
+loaded to score a live incident, and does not create the precedence conflict above — see this
+migration phase's own report for the reasoning kept alongside the code.
 
 ---
 

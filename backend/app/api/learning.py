@@ -43,7 +43,6 @@ from app.models.base import get_scoped, tenant_scope
 from app.models.suppression_candidate import STATUS_ACCEPTED, STATUS_PENDING, SuppressionCandidate
 from app.schemas.learning import (
     AlignmentPointOut,
-    ContainmentSummaryOut,
     DetectorPrecisionPointOut,
     DetectorWeightChangeOut,
     FeedbackRequest,
@@ -188,13 +187,6 @@ def get_learning_metrics(
             )
             for p in metrics.detector_precision_trend
         ],
-        containment=ContainmentSummaryOut(
-            contained=metrics.containment.contained,
-            partially_contained=metrics.containment.partially_contained,
-            failed=metrics.containment.failed,
-            total_with_outcome=metrics.containment.total_with_outcome,
-            rate=metrics.containment.rate,
-        ),
     )
 
 

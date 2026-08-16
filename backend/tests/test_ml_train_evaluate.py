@@ -15,7 +15,6 @@ import app.detection.ml.evaluate as evaluate_module
 import app.detection.ml.train as train_module
 from app.detection.ml.artifacts import load_feature_manifest
 from app.detection.ml.detect import (
-    ML_AUTOENCODER,
     ML_ECOD,
     ML_IFOREST,
     ML_MAHALANOBIS,
@@ -24,21 +23,11 @@ from app.detection.ml.detect import (
 
 
 def test_train_then_evaluate_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Keep the tuning-validation set to one cheap, non-acceptance-gated scenario at small volume
-    # -- `low_and_slow_exfil`'s own acceptance gate (datagen/scenarios/s08_...) needs real volume
-    # (docs/11's ~50k default) to find a victim with enough history, which this smoke test's
-    # whole point is to avoid paying for.
-    monkeypatch.setattr(train_module, "_TUNING_SCENARIO_KEYS", ("c2_beaconing",))
-    monkeypatch.setattr(train_module, "_TUNING_SCENARIO_EVENTS", 3000)
-
     models_dir = tmp_path / "models"
     summary = train_module.train(
         corpus_seed=4242,
         corpus_events=3000,
         corpus_dir=tmp_path / "corpus",
-        tuning_seed=4343,
-        tuning_dir=tmp_path / "tuning",
-        optuna_trials=2,
         models_dir=models_dir,
     )
 
@@ -48,7 +37,8 @@ def test_train_then_evaluate_end_to_end(tmp_path: Path, monkeypatch: pytest.Monk
     assert (models_dir / "mahalanobis.joblib").exists()
     assert (models_dir / "ecod.joblib").exists()
     assert (models_dir / "lof.joblib").exists()
-    assert (models_dir / "autoencoder.pt").exists()
+    # No `autoencoder.pt` -- migration change 19 removed that model (and, with it, `train.py`'s
+    # whole tuning-validation-corpus machinery that existed only to feed its Optuna search).
 
     manifest = load_feature_manifest(models_dir)
     assert manifest.corpus_seed == 4242
@@ -60,17 +50,18 @@ def test_train_then_evaluate_end_to_end(tmp_path: Path, monkeypatch: pytest.Monk
         eval_seed=5454, eval_dir=tmp_path / "eval", models_dir=models_dir
     )
 
-    all_models = (ML_IFOREST, ML_MAHALANOBIS, ML_ECOD, ML_PEER_GROUP, ML_AUTOENCODER)
+    all_models = (ML_IFOREST, ML_MAHALANOBIS, ML_ECOD, ML_PEER_GROUP)
     assert result["winner"] in all_models
     assert result["baseline"] == ML_IFOREST
     for model_key in all_models:
         assert model_key in result["aggregate"]
         assert 0.0 <= result["fp_rate_background"][model_key] <= 1.0
+    # Prediction 1 (autoencoder vs. ECOD on scenario 4) is retired along with the model it
+    # concerned -- see `evaluate.py::_pre_registered_predictions`'s own docstring.
     assert set(result["pre_registered_predictions"]) == {
-        "1_low_and_slow_ae_not_ecod",
         "2_peer_group_lof_not_global",
         "3_seasonal_stl_not_l3",
     }
-    # Three seeds (corpus 4242, tuning 4343, eval 5454) are pairwise distinct, as `train.py`'s
-    # own module docstring requires -- checked here, not just asserted in prose.
-    assert len({4242, 4343, 5454}) == 3
+    # Two seeds (corpus 4242, eval 5454) are distinct, as `train.py`'s own module docstring
+    # requires -- checked here, not just asserted in prose.
+    assert 4242 != 5454

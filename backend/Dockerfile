@@ -13,16 +13,13 @@ RUN apt-get update \
 
 # Dependency layer, cached independently of source.
 COPY pyproject.toml ./
-# torch first, from the CPU-only index. The default PyPI wheel bundles the full CUDA runtime —
-# roughly 2.5 GB of nvidia/* libraries per image — and nothing in this system runs on a GPU: the
-# autoencoder is a 53→32→8→32→53 MLP that fits in seconds on CPU. Multiplied across the service
-# images `deploy/gcp/compose.prod.yml` builds, those unused libraries are what exhausted the disk
-# on the deploy VM. Installing it explicitly before the project pins it in place, so the
-# `pip install -e .` below resolves `torch>=2.5` as already satisfied rather than pulling the
-# CUDA build back in.
-RUN pip install --upgrade pip \
- && pip install --index-url https://download.pytorch.org/whl/cpu "torch>=2.5" \
- && pip install -e ".[dev]"
+# torch is deliberately absent. It was a direct dependency for the L3 autoencoder, which the
+# v2 migration removed (change 19) — its jobs were absorbed by the evidence extractors and by
+# EIF's oblique splits. Nothing imports it now, and pyod/shap only require it under optional
+# extras we do not install, so the CPU-only-wheel install that used to live here (added after
+# the CUDA build exhausted the deploy VM's disk) is no longer needed at all. Deleting a
+# dependency beats pinning a lighter build of it.
+RUN pip install --upgrade pip && pip install -e ".[dev]"
 
 COPY . .
 

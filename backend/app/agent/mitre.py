@@ -58,8 +58,8 @@ class Technique:
 
 class MitreCorpusError(Exception):
     """The corpus file itself is malformed — a packaging bug, not a runtime condition. Fails
-    loudly at load time (mirrors `app.response.catalog.CatalogError`'s reasoning) rather than
-    surfacing as a confusing empty-results condition on the first `search_mitre` call."""
+    loudly at load time rather than surfacing as a confusing empty-results condition on the
+    first `search_mitre` call."""
 
 
 def _load_raw(path: Path) -> list[dict[str, object]]:

@@ -1,4 +1,4 @@
-"""Entity graph, incident correlation, and technique classification (docs/05, docs/04 §L5).
+"""Entity graph and incident correlation (docs/05, docs/04 §L5).
 
 Public surface, re-exported for callers that want the whole pipeline without reaching into each
 submodule:
@@ -8,7 +8,6 @@ submodule:
 - `app.graph.incidents` — seed marking, 1-hop expansion, Louvain, merge (docs/05 "Incident
   formation").
 - `app.graph.features` — L5 graph anomaly features + infrastructure clustering (docs/04 §L5).
-- `app.graph.classifier` — LightGBM technique classification (docs/04).
 - `app.graph.titling` — deterministic incident titles (docs/05 "Incident titling").
 - `app.graph.timeline` — deterministic incident timelines (docs/05 "Timeline").
 - `app.graph.recurrence` — canonical text, embedding, cosine-search recurrence linking (docs/05

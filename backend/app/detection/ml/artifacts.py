@@ -16,12 +16,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import joblib
+from sklearn.preprocessing import StandardScaler
+
 from app.detection.ml.features import ENTITY_WINDOW_MODEL_FEATURES
 
 __all__ = [
     "MODELS_DIR",
+    "SCALER_ARTIFACT_FILENAME",
     "FeatureManifest",
     "load_feature_manifest",
+    "load_scaler",
+    "save_scaler",
     "write_feature_manifest",
 ]
 
@@ -30,6 +36,22 @@ _BACKEND_ROOT = Path(__file__).resolve().parents[3]
 MODELS_DIR: Path = _BACKEND_ROOT / "data" / "models"
 
 _MANIFEST_FILENAME = "feature_manifest.json"
+# The single `StandardScaler` every L3 model shares (`train.py` fits it once on the training
+# split; `detect.py`'s `MLModelBundle.transform` applies it before any model scores a row).
+# Originally lived in `autoencoder.py`; migration change 19 removed that model, and the scaler
+# was never autoencoder-specific to begin with, so it moved here rather than being deleted with
+# it -- see `docs/v2_migration/MIGRATION-01-evidence-first.md` change 19.
+SCALER_ARTIFACT_FILENAME = "scaler.joblib"
+
+
+def save_scaler(scaler: StandardScaler, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    joblib.dump(scaler, path)
+
+
+def load_scaler(path: Path) -> StandardScaler:
+    scaler: StandardScaler = joblib.load(path)
+    return scaler
 
 
 @dataclass(frozen=True, slots=True)

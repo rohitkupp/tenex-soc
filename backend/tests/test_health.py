@@ -26,13 +26,13 @@ def test_health_names_every_dependency_it_checked() -> None:
 
 
 def test_health_reports_the_modes_that_fail_quietly() -> None:
-    """`demo_mode`, `llm_enabled`, and `email_verification_enabled` are all states the app
-    can be in without anything looking wrong from outside. The last one fails *open* —
-    signup stamps accounts verified instead of emailing a link — so a deploy that lost its
-    Supabase credentials must be diagnosable from the health endpoint rather than only from
-    a warning buried in the signup logs."""
+    """`llm_enabled` and `email_verification_enabled` are states the app can be in without
+    anything looking wrong from outside. The latter fails *open* — signup stamps accounts
+    verified instead of emailing a link — so a deploy that lost its Supabase credentials must
+    be diagnosable from the health endpoint rather than only from a warning buried in the
+    signup logs."""
     body = client.get("/api/health").json()
-    for flag in ("demo_mode", "llm_enabled", "email_verification_enabled"):
+    for flag in ("llm_enabled", "email_verification_enabled"):
         assert isinstance(body[flag], bool), flag
 
 

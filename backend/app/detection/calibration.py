@@ -276,7 +276,9 @@ def _model_pairs(bundle: Any) -> list[tuple[str, Any]]:
     than hardcoded here: that package (out of this milestone's ownership, concurrently developed)
     grew from three models (`ml.iforest`/`ml.mahalanobis`/`ml.autoencoder`, the M8 state
     `evals/results.md` was written against) to the full five-model docs/04 roster
-    (`+ ml.ecod`, `ml.peer_group` i.e. LOF) during this milestone's own development window. Both
+    (`+ ml.ecod`, `ml.peer_group` i.e. LOF) during this milestone's own development window, then
+    back down to four when migration change 19
+    (`docs/v2_migration/MIGRATION-01-evidence-first.md`) removed the autoencoder. Both
     `_fit_ml_calibrators` and `recompare_l3` should score whatever the live package currently
     ships, not a snapshot frozen at the moment this file was written.
     """
@@ -287,7 +289,6 @@ def _model_pairs(bundle: Any) -> list[tuple[str, Any]]:
         (ml_detect.ML_MAHALANOBIS, bundle.mahalanobis),
         (ml_detect.ML_ECOD, bundle.ecod),
         (ml_detect.ML_PEER_GROUP, bundle.lof),
-        (ml_detect.ML_AUTOENCODER, bundle.autoencoder),
     ]
 
 
@@ -508,7 +509,9 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Per-detector calibration (docs/04 §Fusion, M10)")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    fit_p = sub.add_parser("fit-ml", help="Fit ml.{iforest,mahalanobis,autoencoder} calibrators")
+    fit_p = sub.add_parser(
+        "fit-ml", help="Fit ml.{iforest,mahalanobis,ecod,peer_group} calibrators"
+    )
     fit_p.add_argument("--log-level", default="info")
 
     recompare_p = sub.add_parser("recompare-l3", help="Re-run the M8 L3 comparison, calibrated")

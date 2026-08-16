@@ -15,9 +15,11 @@ horizontal scale-out, and it is how the pattern works in production.
 | `anonymizer` | worker | `q.anonymize` | `q.detect` |
 | `detector` | worker | `q.detect` | `q.correlate` |
 | `correlator` | worker | `q.correlate` | `q.triage` |
-| `agent` | worker | `q.triage` | `q.respond` |
-| `responder` | worker | `q.respond` | `q.tier2` |
+| `agent` | worker | `q.triage` | `q.tier2` |
 | `tier2-sync` | worker | `q.tier2` | — |
+
+The `responder` worker and `q.respond` (the response action graph and simulated enforcement
+plane) were removed — docs/v2_migration change 20. `agent` now publishes directly to `q.tier2`.
 
 Infra: `rabbitmq`, `postgres` (pgvector), `minio`, `redis` (SSE pub/sub only).
 
@@ -64,8 +66,7 @@ the next `StageMessage`.
 | detect | events anonymized | `signals` rows with calibrated confidence |
 | correlate | signals exist | `entities`, `entity_edges`, `incidents` |
 | triage | incidents exist | `triage_verdicts` for top-N, citations verified |
-| respond | verdicts exist | `response_plans` in `pending_approval` |
-| tier2 | plans exist | `tier2_signatures` rows |
+| tier2 | verdicts exist | `tier2_signatures` rows |
 
 ## Progress streaming
 
@@ -121,8 +122,12 @@ PSEUDONYM_SALT              # per-tenant salt, never logged
 MAX_TRIAGE_INCIDENTS=15     # LLM cost ceiling
 AGENT_MAX_TOOL_CALLS=8
 AGENT_TIMEOUT_SECONDS=120
-DEMO_MODE=false             # serve precomputed results, skip LLM calls
 ```
 
-`DEMO_MODE` matters — it lets the reviewer explore the deployed app without waiting on the
-pipeline or burning API budget.
+`DEMO_MODE` was removed (docs/v2_migration change 12). Every upload now runs the full pipeline
+and agent triage makes a real Anthropic API call for every incident — `ANTHROPIC_API_KEY` is
+required for triage to succeed; a missing key surfaces as a clear 503 from
+`POST /api/incidents/{id}/triage` / `POST /api/analyses/{id}/triage`, not a silent fallback to
+synthesized verdicts. `MAX_TRIAGE_INCIDENTS` remains the cost ceiling, and per-analysis spend
+(`analyses.llm_cost_usd`) accumulates from each triage verdict's real per-call cost and is
+exposed on `GET /api/analyses/{id}`.

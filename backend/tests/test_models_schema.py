@@ -1,17 +1,19 @@
 """Schema shape, tricky-type round trips, and structural tenant isolation for every table
 docs/02-DATA-MODEL.md defines beyond `tenants`/`users`/`uploads`/`analyses` (M1),
 `events` (M3, tests/test_events_model.py), and `dead_letters` (M4): `signals`, `entities`,
-`entity_edges`, `incidents`, `triage_verdicts`, `response_plans`, `enforcement_state`,
-`enforcement_journal`, `analyst_feedback`, `detector_stats`, `model_versions`,
-`tier2_signatures`, `eval_runs`. Runs against the real Postgres from docker-compose.yml —
-no mocking, same philosophy as the rest of this test suite.
+`entity_edges`, `incidents`, `triage_verdicts`, `analyst_feedback`, `detector_stats`,
+`model_versions`, `tier2_signatures`, `eval_runs`. Runs against the real Postgres from
+docker-compose.yml — no mocking, same philosophy as the rest of this test suite.
+
+`response_plans`, `enforcement_state`, and `enforcement_journal` were dropped in
+docs/v2_migration change 20 (the response action graph and enforcement plane); their coverage
+was removed from this file along with them.
 
 Every test cleans up its own rows with raw SQL, in FK-dependency order (children before
 parents), rather than leaning on `tenant_cleanup`'s cascade-only sweep — several of the new
-FKs (`enforcement_journal.plan_id`, `analyst_feedback.verdict_id`/`user_id`,
-`incidents.recurrence_of`) carry no `ON DELETE` action per docs/02, so a row referencing a
-soon-to-be-deleted parent must be removed explicitly or the tenant/analysis cleanup itself
-would fail with a `ForeignKeyViolation`.
+FKs (`analyst_feedback.verdict_id`/`user_id`, `incidents.recurrence_of`) carry no `ON DELETE`
+action per docs/02, so a row referencing a soon-to-be-deleted parent must be removed explicitly
+or the tenant/analysis cleanup itself would fail with a `ForeignKeyViolation`.
 """
 
 from __future__ import annotations
@@ -28,14 +30,11 @@ from app.core.db import get_engine, get_session_factory
 from app.models.analyst_feedback import AnalystFeedback
 from app.models.base import MissingTenantScopeError, tenant_scope
 from app.models.detector_stats import DetectorStats
-from app.models.enforcement_journal import EnforcementJournal
-from app.models.enforcement_state import EnforcementState
 from app.models.entity import Entity
 from app.models.entity_edge import EntityEdge
 from app.models.eval_run import EvalRun
 from app.models.incident import Incident
 from app.models.model_version import ModelVersion
-from app.models.response_plan import ResponsePlan
 from app.models.signal import Signal
 from app.models.tier2_signature import Tier2Signature
 from app.models.triage_verdict import TriageVerdict
@@ -116,20 +115,19 @@ def test_entities_unique_constraint_on_analysis_id_type_value() -> None:
     )
 
 
-def test_enforcement_state_and_detector_stats_tenant_id_has_no_fk() -> None:
+def test_detector_stats_tenant_id_has_no_fk() -> None:
     with get_engine().connect() as conn:
-        for table in ("enforcement_state", "detector_stats"):
-            fk_defs = (
-                conn.execute(
-                    text(
-                        "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
-                        f"WHERE conrelid = '{table}'::regclass AND contype = 'f'"
-                    )
+        fk_defs = (
+            conn.execute(
+                text(
+                    "SELECT pg_get_constraintdef(oid) FROM pg_constraint "
+                    "WHERE conrelid = 'detector_stats'::regclass AND contype = 'f'"
                 )
-                .scalars()
-                .all()
             )
-            assert not any("tenants" in d for d in fk_defs), table
+            .scalars()
+            .all()
+        )
+        assert not any("tenants" in d for d in fk_defs)
 
         # detector_stats' primary key is detector_key itself, per docs/02 verbatim.
         pk_cols = (
@@ -371,7 +369,7 @@ def test_entities_and_entity_edges_round_trip(tenant_cleanup: list[uuid.UUID]) -
         session.close()
 
 
-def test_triage_verdicts_and_response_plans_round_trip(
+def test_triage_verdicts_round_trip(
     tenant_cleanup: list[uuid.UUID],
 ) -> None:
     tenant = make_tenant(name="Triage Response")
@@ -404,7 +402,7 @@ def test_triage_verdicts_and_response_plans_round_trip(
             mitre_techniques={"techniques": ["T1071.004"]},
             summary="DNS tunneling detected from host X.",
             narrative=[{"step": 1, "claim": "beaconing", "evidence_event_ids": [1, 2]}],
-            recommended_actions=[{"action": "isolate_host"}],
+            recommended_actions=["Isolate host X pending IT confirmation."],
             tool_trace=[{"tool": "search_events", "args": {}}],
             citation_valid=True,
             model="claude-opus",
@@ -420,146 +418,11 @@ def test_triage_verdicts_and_response_plans_round_trip(
         assert verdict.mitre_techniques == {"techniques": ["T1071.004"]}
         assert verdict.invalid_citations == []
         assert verdict.cost_usd == Decimal("0.012345")
-
-        plan = ResponsePlan(
-            incident_id=incident_id,
-            actions=[{"action_id": "block_ip", "target": "203.0.113.9"}],
-            verification={"safe": True, "notes": "no production impact"},
-            approved_by=user.id,
-            approved_at=datetime.now(UTC),
-            outcome="contained",
-            outcome_detail={"hosts_isolated": 1},
-        )
-        session.add(plan)
-        session.commit()
-        session.refresh(plan)
-
-        assert plan.status == "pending_approval"
-        assert plan.execution_log == []
-        assert plan.actions == [{"action_id": "block_ip", "target": "203.0.113.9"}]
-        plan_id = plan.id
+        assert verdict.recommended_actions == ["Isolate host X pending IT confirmation."]
         verdict_id = verdict.id
     finally:
         session.close()
-        _exec("DELETE FROM response_plans WHERE id = :id", id=str(plan_id))
         _exec("DELETE FROM triage_verdicts WHERE id = :id", id=str(verdict_id))
-
-
-def test_enforcement_state_round_trip_and_unique_constraint(
-    tenant_cleanup: list[uuid.UUID],
-) -> None:
-    tenant = make_tenant(name="Enforcement State")
-    tenant_cleanup.append(tenant.id)
-
-    session = get_session_factory()()
-    state_id: int | None = None
-    try:
-        with tenant_scope(session, tenant.id):
-            state = EnforcementState(
-                tenant_id=tenant.id,
-                resource_type="proxy_policy",
-                resource_id="policy-42",
-                state={"blocked_domains": ["evil.example"]},
-            )
-            session.add(state)
-            session.commit()
-            session.refresh(state)
-            state_id = state.id
-
-            assert state.state == {"blocked_domains": ["evil.example"]}
-            assert state.updated_at is not None
-
-            dupe = EnforcementState(
-                tenant_id=tenant.id,
-                resource_type="proxy_policy",
-                resource_id="policy-42",
-                state={},
-            )
-            session.add(dupe)
-            with pytest.raises(IntegrityError):
-                session.commit()
-            session.rollback()
-    finally:
-        session.close()
-        if state_id is not None:
-            _exec("DELETE FROM enforcement_state WHERE id = :id", id=state_id)
-
-
-def test_enforcement_journal_round_trip(tenant_cleanup: list[uuid.UUID]) -> None:
-    tenant = make_tenant(name="Enforcement Journal")
-    tenant_cleanup.append(tenant.id)
-    user = make_user(tenant_id=tenant.id, email="enforcement-journal@example.com")
-    analysis = make_analysis(tenant_id=tenant.id, user_id=user.id)
-
-    session = get_session_factory()()
-    journal_id: int | None = None
-    plan_id: uuid.UUID | None = None
-    verdict_id: uuid.UUID | None = None
-    try:
-        with tenant_scope(session, tenant.id):
-            incident = Incident(
-                analysis_id=analysis.id,
-                tenant_id=tenant.id,
-                title="Compromised API key",
-                severity="high",
-                fused_score=0.8,
-                entity_ids=[],
-                signal_ids=[],
-            )
-            session.add(incident)
-            session.commit()
-            session.refresh(incident)
-
-        verdict = TriageVerdict(
-            incident_id=incident.id,
-            disposition="malicious",
-            confidence=0.8,
-            mitre_techniques={},
-            summary="Key abused from unfamiliar ASN.",
-            narrative=[],
-            recommended_actions=[],
-            tool_trace=[],
-            citation_valid=True,
-            model="claude-opus",
-        )
-        session.add(verdict)
-        session.flush()
-        verdict_id = verdict.id
-
-        plan = ResponsePlan(
-            incident_id=incident.id,
-            actions=[{"action_id": "revoke_key"}],
-            verification={"safe": True},
-        )
-        session.add(plan)
-        session.commit()
-        session.refresh(plan)
-        plan_id = plan.id
-
-        journal = EnforcementJournal(
-            plan_id=plan.id,
-            action_id="revoke_key",
-            before_state={"key_status": "active"},
-            after_state={"key_status": "revoked"},
-            succeeded=True,
-        )
-        session.add(journal)
-        session.commit()
-        session.refresh(journal)
-        journal_id = journal.id
-
-        assert journal.before_state == {"key_status": "active"}
-        assert journal.after_state == {"key_status": "revoked"}
-        assert journal.succeeded is True
-        assert journal.precondition_failure is None
-    finally:
-        session.close()
-        if journal_id is not None:
-            _exec("DELETE FROM enforcement_journal WHERE id = :id", id=journal_id)
-        if plan_id is not None:
-            _exec("DELETE FROM response_plans WHERE id = :id", id=str(plan_id))
-        if verdict_id is not None:
-            _exec("DELETE FROM triage_verdicts WHERE id = :id", id=str(verdict_id))
 
 
 def test_analyst_feedback_round_trip(tenant_cleanup: list[uuid.UUID]) -> None:
@@ -635,7 +498,7 @@ def test_detector_stats_pk_is_detector_key_and_defaults(
 ) -> None:
     tenant = make_tenant(name="Detector Stats")
     tenant_cleanup.append(tenant.id)
-    detector_key = f"ml.autoencoder.{uuid.uuid4()}"
+    detector_key = f"ml.mahalanobis.{uuid.uuid4()}"
 
     session = get_session_factory()()
     try:

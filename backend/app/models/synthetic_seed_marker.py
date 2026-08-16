@@ -4,9 +4,9 @@ plainly... rather than implying the data is real").
 
 **Why a generic marker table instead of a `synthetic` column on each seeded table.** Seeded rows
 land in real, shared tables: `uploads`, `analyses`, `signals`, `incidents`, `triage_verdicts`,
-`analyst_feedback`, and (for the containment-rate metric) `response_plans` — none of which this
-milestone owns, several of which (`analyst_feedback`, `incidents`, `signals`, `triage_verdicts`)
-have docstrings elsewhere stating they are matched to docs/02 *exactly*. Adding a column to any
+`analyst_feedback` — none of which this milestone owns, several of which (`analyst_feedback`,
+`incidents`, `signals`, `triage_verdicts`) have docstrings elsewhere stating they are matched to
+docs/02 *exactly*. Adding a column to any
 of them would mean editing a table this task's brief does not grant, and `docs/02-DATA-MODEL.md`
 itself is off limits to this milestone. A separate, purely additive marker table sidesteps both:
 `app/scripts/seed_feedback.py` inserts one row per synthetic row it creates (`table_name`,

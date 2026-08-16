@@ -92,6 +92,14 @@ import pandas as pd
 
 from app.detection.features import is_off_hours, robust_z, shannon_entropy
 from app.detection.ml.events import MLEvent
+from app.detection.ml.navigation import (
+    NAV_CROSS_DOMAIN_REDIRECT_CHAIN,
+    NAV_DOWNLOAD_WITHOUT_NAVIGATION,
+    NAV_ENTRY_DOMAIN,
+    NAV_NAVIGATION_DEPTH,
+    NAV_REFERER_LESS_DEEP_PATH,
+    annotate_navigation_hops,
+)
 
 __all__ = [
     "DEVICE_FEATURES",
@@ -99,6 +107,7 @@ __all__ = [
     "ENTITY_WINDOW_MODEL_FEATURES",
     "HTTP_FEATURES",
     "IDENTITY_FEATURES",
+    "NAVIGATION_FEATURES",
     "SCORE_OVERFLOW_SENTINEL",
     "TEMPORAL_FEATURES",
     "TRANSFER_FEATURES",
@@ -191,6 +200,19 @@ IDENTITY_FEATURES: Final[tuple[str, ...]] = (
     "session_start_events",  # added: `user.session.start` count -- identity activity volume base
 )
 
+# Migration change 18's navigation chain extractor (`app.detection.ml.navigation`), aggregated to
+# this module's `(entity, hour)` grain -- see that module's docstring for the per-event mechanics
+# and for why this family is `entity_type == "user"` only (zero-filled for `src_ip`, "Entity
+# scope"). Ratio/mean for the four boolean/numeric hop columns, distinct-count for `entry_domain`
+# (how many different places this entity's windows were attributed to having started from).
+NAVIGATION_FEATURES: Final[tuple[str, ...]] = (
+    "referer_less_deep_path_ratio",
+    "navigation_depth_mean",
+    "n_unique_entry_domains",
+    "cross_domain_redirect_chain_ratio",
+    "download_without_navigation_ratio",
+)
+
 # Fixed column order every consumer (models, calibration, SHAP) reads `X` in. Concatenation
 # order matches docs/04's own table order; never reorder without retraining every artifact.
 ENTITY_WINDOW_MODEL_FEATURES: Final[tuple[str, ...]] = (
@@ -201,6 +223,7 @@ ENTITY_WINDOW_MODEL_FEATURES: Final[tuple[str, ...]] = (
     + HTTP_FEATURES
     + DEVICE_FEATURES
     + IDENTITY_FEATURES
+    + NAVIGATION_FEATURES
 )
 assert len(ENTITY_WINDOW_MODEL_FEATURES) == len(set(ENTITY_WINDOW_MODEL_FEATURES))
 
@@ -363,6 +386,7 @@ def _events_frame(events: Sequence[MLEvent]) -> pd.DataFrame:
                 "threat_present",
                 "is_direct_ip",
                 "department",
+                "referrer",
             ]
         )
     cols: dict[str, list[object]] = {
@@ -392,6 +416,7 @@ def _events_frame(events: Sequence[MLEvent]) -> pd.DataFrame:
         "threat_present": [e.threat_present for e in events],
         "is_direct_ip": [e.is_direct_ip for e in events],
         "department": [e.department for e in events],
+        "referrer": [e.referrer for e in events],
     }
     df = pd.DataFrame(cols)
     df["ts"] = pd.to_datetime(df["ts"], utc=True)
@@ -505,6 +530,13 @@ def _build_for_entity(df: pd.DataFrame, entity_col: str, entity_type: str) -> pd
     # ---- file-wide domain popularity (for n_rare_domains / rare_domain_ratio)
     proxy = work[work["kind"] == "proxy"]
     domain_event_counts = proxy["registrable_domain"].value_counts()
+
+    # ---- navigation chain hops (`app.detection.ml.navigation`, migration change 18) --
+    # `entity_type == "user"` only, see that module's docstring "Entity scope". Joined onto
+    # `proxy` *before* the `.assign(_is_new_domain=...)` chain below builds `proxy_group_map`, so
+    # every per-(entity, hour) group `pg` already carries these five columns to aggregate.
+    if entity_type == "user" and not proxy.empty:
+        proxy = proxy.join(annotate_navigation_hops(proxy, entity_col=entity_col))
 
     # ---- first-seen (entity, domain) hour, for n_new_domains_for_user
     if not proxy.empty:
@@ -673,6 +705,26 @@ def _build_for_entity(df: pd.DataFrame, entity_col: str, entity_type: str) -> pd
             )
         else:
             for name in IDENTITY_FEATURES:
+                row[name] = 0.0
+
+        # ---------------------------------------------------------------- Navigation
+        # `entity_type == "user"` only -- `app.detection.ml.navigation`'s own module docstring,
+        # "Entity scope", on why a `src_ip` never gets a reconstructed chain at all rather than a
+        # degenerate/misleading one.
+        if entity_type == "user" and pg is not None:
+            row["referer_less_deep_path_ratio"] = float(
+                pg[NAV_REFERER_LESS_DEEP_PATH].astype(bool).mean()
+            )
+            row["navigation_depth_mean"] = float(pg[NAV_NAVIGATION_DEPTH].mean())
+            row["n_unique_entry_domains"] = float(pg[NAV_ENTRY_DOMAIN].nunique())
+            row["cross_domain_redirect_chain_ratio"] = float(
+                pg[NAV_CROSS_DOMAIN_REDIRECT_CHAIN].astype(bool).mean()
+            )
+            row["download_without_navigation_ratio"] = float(
+                pg[NAV_DOWNLOAD_WITHOUT_NAVIGATION].astype(bool).mean()
+            )
+        else:
+            for name in NAVIGATION_FEATURES:
                 row[name] = 0.0
 
         rows.append(row)

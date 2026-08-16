@@ -97,9 +97,9 @@ def query_tier2(
     # Deliberately synchronous (FastAPI runs a `def` route in a worker thread) -- both the
     # optional Anthropic call and the readonly-role DB call are blocking, same reasoning as
     # app.api.ops.list_dead_letters. `settings=get_settings()` resolved *here*, module-
-    # level import, rather than left to answer_question's own default -- same pattern
-    # app.api.plans uses for app.response.verification, so tests can monkeypatch this
-    # module's own `get_settings` name to force the skip path without a live API key.
+    # level import, rather than left to answer_question's own default -- so tests can
+    # monkeypatch this module's own `get_settings` name to force the skip path without a
+    # live API key.
     result = answer_question(body.question, settings=get_settings())
     return Tier2QueryResponse(
         sql=result.sql,

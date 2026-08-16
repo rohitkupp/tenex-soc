@@ -2,8 +2,8 @@
 
 An AI SOC analyst pipeline for **ZScaler web proxy logs**. It normalizes raw proxy lines to OCSF,
 detects anomalies through a layered funnel, correlates signals into incidents on an entity graph,
-triages each incident with a Claude agent that cites its evidence, derives an ordered containment
-plan from an action graph, and learns from analyst feedback.
+triages each incident with a Claude agent that cites its evidence, and learns from analyst
+feedback.
 
 **Live demo:** https://tenex-soc.vercel.app · **API:** https://34-150-170-252.sslip.io/api/docs
 
@@ -36,7 +36,7 @@ L4 (sequence models over event ordering) was built, benchmarked, and **rejected*
 ## One log source, deliberately
 
 The brief says "pick your favorite log format" — singular. Multi-source correlation was never
-asked for. The parser interface stays pluggable ([docs/03](docs/03-PARSERS-OCSF.md)) so a second
+asked for. The parser interface stays pluggable ([docs/03](docs/v1/03-PARSERS-OCSF.md)) so a second
 source is cheap to add, but shipping one source is the scope that matches the brief and leaves
 room for analytical depth on it instead of breadth across three.
 
@@ -74,9 +74,11 @@ with ground-truth labels — start with `01-mixed-week.log` (10,747 lines, three
 and one benign decoy hidden in a week of ordinary traffic). See that directory's README for what
 each contains and what the system should find in it.
 
-**The pipeline runs end to end without an Anthropic API key** — only agentic triage is skipped.
-`DEMO_MODE=true` serves the recorded verdicts in `backend/data/demo/verdicts/` (checked in, 44 KB)
-and makes zero API calls, so the agent layer is inspectable with no key and no spend.
+**An Anthropic API key is required.** `DEMO_MODE` was removed in the v2 migration — every upload
+runs the full pipeline and makes real API calls, so latency and cost are visible rather than
+hidden behind precomputed verdicts. Per-analysis spend is surfaced on the analysis page, and
+`MAX_TRIAGE_INCIDENTS` caps it. The test suite still replays recorded fixtures, so **CI never
+needs a key**.
 
 **Model artifacts are not committed, and `make train` is a real prerequisite.** They total 171 MB,
 dominated by `ecod.joblib` at 125 MB and `lof.joblib` at 33 MB. Both models are instance-based —
@@ -98,7 +100,6 @@ Training is seeded and deterministic: same corpus, same models, ~165 s.
 | L5 graph | entity graph, Louvain communities, incident formation, recurrence via pgvector | `backend/app/graph/` |
 | Fusion | isotonic calibration per detector, layer-diversity bonus | `backend/app/detection/fusion.py` |
 | Agent | tool-using Claude triage, MITRE RAG, citation verification | `backend/app/agent/` |
-| Response | action graph → topologically ordered plan, stateful simulated enforcement, rollback | `backend/app/response/` |
 | Learning | 5 feedback consumers, detector reweighting, suppression candidates, retraining gate | `backend/app/learning/` |
 | Tier 2 | cross-tenant indicator overlap, NL→SQL with a read-only role | `backend/app/tier2/` |
 | Frontend | 13 routes, per-detector explanation renderers, entity graph, case file | `frontend/` |
@@ -140,7 +141,7 @@ These are in [CLAUDE.md](CLAUDE.md) and each one is load-bearing, not aspiration
   a true closure, not a lambda default arg; SQLAlchemy's statement cache does not track the latter.
 - **Cross-domain auth.** Vercel and the API VM are different registrable domains, so `SameSite=Lax`
   cookies are never sent. Chose `SameSite=None` + double-submit CSRF (`hmac.compare_digest`) +
-  Origin validation, with the decision recorded in [docs/06](docs/06-PRIVACY-SECURITY.md).
+  Origin validation, with the decision recorded in [docs/06](docs/v1/06-PRIVACY-SECURITY.md).
 - **Signup discloses nothing.** `POST /api/auth/signup` returns the identical
   `201 {"status": "verification_sent"}` whether or not the address is already registered, and
   creates nothing on the second call — extending the rule login already followed. On login, the
@@ -190,10 +191,9 @@ Nothing here is hidden in a footnote. Each is a real limitation of what shipped.
    model is scored on data it was fit or tuned on — but that does not make the scenarios
    adversarially realistic. One measured fidelity gap within that: **human user agents are
    desktop-only**, so the 26.3% mobile share of the real browser table is unreachable
-   ([docs/11](docs/11-SYNTHETIC-DATA.md)). Held in place by an `xfail(strict=True)` test rather
+   ([docs/11](docs/v1/11-SYNTHETIC-DATA.md)). Held in place by an `xfail(strict=True)` test rather
    than fixed, because changing the generator would invalidate every number in
    `backend/evals/results.md` for a realism detail no detector reads.
-6. **The enforcement plane is deliberately simulated** and stateful. Everything else runs for real.
 7. **Verification email delivery is best-effort.** It goes through Supabase's built-in sender,
    which Supabase documents as "for development and testing purposes… best-effort… subject to
    hourly rate limits." Fine for a reviewer signing up once; it will throttle under real volume.
@@ -215,18 +215,18 @@ conflicting) the doc was fixed first.
 
 | Doc | Covers |
 |---|---|
-| [01-ARCHITECTURE](docs/01-ARCHITECTURE.md) | Services, queue topology, stage contracts, deployment |
-| [02-DATA-MODEL](docs/02-DATA-MODEL.md) | Postgres schema |
-| [03-PARSERS-OCSF](docs/03-PARSERS-OCSF.md) | Parser contract and OCSF field mappings |
-| [04-DETECTION](docs/04-DETECTION.md) | The detection layers, models, fusion and calibration |
-| [05-CORRELATION](docs/05-CORRELATION.md) | Entity graph and incident formation |
-| [06-PRIVACY-SECURITY](docs/06-PRIVACY-SECURITY.md) | Pseudonymization, redaction, prompt-injection defense |
-| [07-AGENT](docs/07-AGENT.md) | Tools, three-role flow, citation verification |
-| [08-RESPONSE-AND-LEARNING](docs/08-RESPONSE-AND-LEARNING.md) | Action graph, enforcement plane, feedback consumers |
-| [09-API-CONTRACT](docs/09-API-CONTRACT.md) | Every endpoint |
-| [10-FRONTEND](docs/10-FRONTEND.md) | Routes, design direction, components |
-| [11-SYNTHETIC-DATA](docs/11-SYNTHETIC-DATA.md) | Generator and the eight labeled scenarios |
-| [12-EVALUATION](docs/12-EVALUATION.md) | Metrics, harness, pre-registered predictions, CI gate |
-| [13-MILESTONES](docs/13-MILESTONES.md) | Build order and acceptance criteria |
+| [01-ARCHITECTURE](docs/v1/01-ARCHITECTURE.md) | Services, queue topology, stage contracts, deployment |
+| [02-DATA-MODEL](docs/v1/02-DATA-MODEL.md) | Postgres schema |
+| [03-PARSERS-OCSF](docs/v1/03-PARSERS-OCSF.md) | Parser contract and OCSF field mappings |
+| [04-DETECTION](docs/v1/04-DETECTION.md) | The detection layers, models, fusion and calibration |
+| [05-CORRELATION](docs/v1/05-CORRELATION.md) | Entity graph and incident formation |
+| [06-PRIVACY-SECURITY](docs/v1/06-PRIVACY-SECURITY.md) | Pseudonymization, redaction, prompt-injection defense |
+| [07-AGENT](docs/v1/07-AGENT.md) | Tools, three-role flow, citation verification |
+| [08-RESPONSE-AND-LEARNING](docs/v1/08-RESPONSE-AND-LEARNING.md) | Feedback consumers and the learning loop |
+| [09-API-CONTRACT](docs/v1/09-API-CONTRACT.md) | Every endpoint |
+| [10-FRONTEND](docs/v1/10-FRONTEND.md) | Routes, design direction, components |
+| [11-SYNTHETIC-DATA](docs/v1/11-SYNTHETIC-DATA.md) | Generator and the eight labeled scenarios |
+| [12-EVALUATION](docs/v1/12-EVALUATION.md) | Metrics, harness, pre-registered predictions, CI gate |
+| [13-MILESTONES](docs/v1/13-MILESTONES.md) | Build order and acceptance criteria |
 
 Built as a take-home exercise for Tenex.ai.

@@ -10,9 +10,11 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # CI must never require an ANTHROPIC_API_KEY. Agent tests replay recorded
-  # fixtures from tests/fixtures/llm/ — see docs/07-AGENT.md.
-  DEMO_MODE: "true"
+  # CI must never require an ANTHROPIC_API_KEY. No key is set below, so
+  # `Settings.llm_enabled` is false throughout; agent tests replay recorded
+  # fixtures from tests/fixtures/llm/ instead of making live calls — see
+  # docs/07-AGENT.md. DEMO_MODE (a separate, now-removed config flag) used to
+  # do this job too; docs/v2_migration change 12 deleted it.
 
 jobs:
   backend:
@@ -85,8 +87,8 @@ jobs:
   # Enabled at M16. A regression beyond tolerance fails the build — see docs/12. Needs a live
   # Postgres (the real L1 Sigma rules and L2 events_dao have no DB-free code path — see
   # backend/evals/pipeline.py's module docstring) but never an ANTHROPIC_API_KEY: agent metrics
-  # degrade to "not measured" (backend/evals/metrics/agent.py) rather than attempting a live call,
-  # which is exactly what `DEMO_MODE: "true"` (this workflow's own global env, above) signals.
+  # degrade to "not measured" (backend/evals/metrics/agent.py) rather than attempting a live
+  # call, because no key is configured here either (see this workflow's top-level `env`).
   eval-gate:
     runs-on: ubuntu-latest
     defaults:

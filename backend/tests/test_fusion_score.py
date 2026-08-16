@@ -88,7 +88,7 @@ def test_score_incident_end_to_end() -> None:
     signals = [
         FusionInput(detector_key="signal.beaconing", detector_layer="signal", confidence=0.9),
         FusionInput(detector_key="sigma.large_post", detector_layer="rule", confidence=0.8),
-        FusionInput(detector_key="ml.autoencoder", detector_layer="ml", confidence=0.7),
+        FusionInput(detector_key="ml.mahalanobis", detector_layer="ml", confidence=0.7),
     ]
     result = score_incident(signals, community_signal_density=0.5)
     assert result.n_distinct_detector_layers == 3
@@ -113,7 +113,7 @@ def test_score_incident_graph_bonus_rewards_cross_layer_corroboration() -> None:
     ]
     diff_layer = [
         FusionInput(detector_key="signal.beaconing", detector_layer="signal", confidence=0.4),
-        FusionInput(detector_key="ml.autoencoder", detector_layer="ml", confidence=0.4),
+        FusionInput(detector_key="ml.mahalanobis", detector_layer="ml", confidence=0.4),
     ]
     same_result = score_incident(same_layer, community_signal_density=0.5)
     diff_result = score_incident(diff_layer, community_signal_density=0.5)

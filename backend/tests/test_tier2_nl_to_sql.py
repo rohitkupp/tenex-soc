@@ -1,14 +1,14 @@
 """Task 3's other half: how a candidate SQL string comes to exist at all, and the
-`settings.llm_enabled` gate docs/13 M14 requires ("with no key or DEMO_MODE, return a
-canned example rather than failing"). `tests/test_tier2_sql_validator.py` covers what
-happens to a SQL string once it exists; this file covers where it came from and proves the
-one remaining milestone-brief attack that lives here rather than there: "a prompt-injection
-string in the question itself."
+`settings.llm_enabled` gate docs/13 M14 requires ("with no key, return a canned example
+rather than failing"). `tests/test_tier2_sql_validator.py` covers what happens to a SQL
+string once it exists; this file covers where it came from and proves the one remaining
+milestone-brief attack that lives here rather than there: "a prompt-injection string in
+the question itself."
 
-Per CLAUDE.md ("Agent tests use recorded LLM responses, not live calls") and
-`app.response.verification`'s established pattern, every test below either takes the
-`llm_enabled=False` skip path or monkeypatches `app.tier2.nl_to_sql._call_anthropic`
-directly — nothing here ever calls the real Anthropic API, even though this sandbox's
+Per CLAUDE.md ("Agent tests use recorded LLM responses, not live calls"), every test below
+either takes the `llm_enabled=False` skip path or monkeypatches
+`app.tier2.nl_to_sql._call_anthropic` directly — nothing here ever calls the real Anthropic
+API, even though this sandbox's
 `.env` happens to carry a live key (see `tests/test_config.py`'s own docstring for why
 that must never change whether a test suite is green).
 """
@@ -27,7 +27,6 @@ from app.tier2.nl_to_sql import (
 from app.tier2.sql_validator import validate_and_prepare
 from app.tier2.views import ALLOWED_VIEWS
 
-_DEMO_SETTINGS = Settings(_env_file=None, demo_mode=True, anthropic_api_key="sk-would-be-real")
 _NO_KEY_SETTINGS = Settings(_env_file=None)
 _LLM_ENABLED_SETTINGS = Settings(_env_file=None, anthropic_api_key="sk-fake-test-key-not-real")
 
@@ -40,16 +39,6 @@ def test_no_api_key_uses_the_canned_example_not_a_failure() -> None:
     assert result.source == "canned"
     assert result.sql  # never empty -- always something to show
     assert not result.rejected
-
-
-def test_demo_mode_uses_the_canned_example_even_with_a_real_looking_key() -> None:
-    """docs/06/config.py's `llm_enabled` property: DEMO_MODE disables the LLM regardless
-    of whether a key is configured -- this is the same property `test_config.py` already
-    asserts for `Settings.llm_enabled` itself; this test asserts the *consequence* of that
-    property inside `answer_question`."""
-    assert _DEMO_SETTINGS.llm_enabled is False
-    result = answer_question("Show me the overlap", settings=_DEMO_SETTINGS)
-    assert result.source == "canned"
 
 
 def test_canned_examples_are_valid_and_pass_the_real_validator() -> None:

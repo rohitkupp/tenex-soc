@@ -34,7 +34,6 @@ def health() -> dict[str, Any]:
     return {
         "status": "ok" if all(d["ok"] for d in dependencies) else "degraded",
         "version": "0.1.0",
-        "demo_mode": settings.demo_mode,
         "llm_enabled": settings.llm_enabled,
         # Reported for the same reason as the two flags above: this is a mode the app can
         # silently be in, and the failure is quiet. When false, `POST /api/auth/signup`

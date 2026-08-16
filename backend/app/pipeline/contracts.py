@@ -9,14 +9,16 @@
 | detect | events anonymized | `signals` rows with calibrated confidence |
 | correlate | signals exist | `entities`, `entity_edges`, `incidents` |
 | triage | incidents exist | `triage_verdicts` for top-N, citations verified |
-| respond | verdicts exist | `response_plans` in `pending_approval` |
-| tier2 | plans exist | `tier2_signatures` rows |
+| tier2 | verdicts exist | `tier2_signatures` rows |
 
 `ingest` and `parse` are real as of this milestone (M4's "the real parse stage"); every
 stage from `enrich` on is a **documented skeleton** until its own milestone (M5 through
 M14 per docs/13) — each one honestly advances `analyses.stage`/`progress`, forwards the
 `StageMessage`, and says in its progress `message` that it is a pass-through, rather
 than claiming a postcondition it did not actually produce.
+
+The `respond` stage (response action graph / enforcement plane) was removed in
+docs/v2_migration change 20. `triage` now forwards directly to `tier2` — see `NEXT_QUEUE`.
 """
 
 from __future__ import annotations
@@ -35,11 +37,10 @@ STAGE_SEQUENCE: tuple[str, ...] = (
     "detect",
     "correlate",
     "triage",
-    "respond",
     "tier2",
 )
 
-# `analyses.progress` on completion of each stage — a simple 1/9, 2/9, ... ladder. The
+# `analyses.progress` on completion of each stage — a simple 1/8, 2/8, ... ladder. The
 # funnel counters (docs/01 "Progress streaming") are the headline UI element; this
 # number is secondary (a progress bar position), so an even split is a deliberate,
 # defensible simplification rather than a weighted estimate of real stage cost.
@@ -50,13 +51,16 @@ STAGE_PROGRESS: dict[str, float] = {
 # Skeleton stages (M5+) forward 1:1 to the next queue once M4's pass-through runs.
 # `parse` is deliberately absent — its fan-in (pending_parsers -> single q.enrich
 # publish) is handled explicitly in app.pipeline.stages.parse, not by this table.
+#
+# `triage` -> `tier2` directly: `respond` (the response action graph / enforcement plane) was
+# removed in docs/v2_migration change 20, closing the gap in the chain so `triage` never
+# publishes into a queue that no longer exists.
 NEXT_QUEUE: dict[str, str | None] = {
     "enrich": "anonymize",
     "anonymize": "detect",
     "detect": "correlate",
     "correlate": "triage",
-    "triage": "respond",
-    "respond": "tier2",
+    "triage": "tier2",
     "tier2": None,  # terminal — docs/01's `tier2-sync` "Produces" column is "—"
 }
 
@@ -69,7 +73,6 @@ SKELETON_MESSAGE: dict[str, str] = {
     "detect": "Detection stage — pass-through skeleton, real detectors land M6-M9.",
     "correlate": "Correlation stage — pass-through skeleton, real graph correlation lands at M10.",
     "triage": "Triage stage — pass-through skeleton, the real agent lands at M11.",
-    "respond": "Response stage — pass-through skeleton, the real response graph lands at M12.",
     "tier2": "Tier 2 sync — pass-through skeleton, real signature sync lands at M14.",
 }
 
@@ -87,7 +90,6 @@ QUEUE_STAGE_LABEL: dict[str, str] = {
     "detect": "detect",
     "correlate": "correlate",
     "triage": "triage",
-    "respond": "respond",
     "tier2": "tier2",
 }
 

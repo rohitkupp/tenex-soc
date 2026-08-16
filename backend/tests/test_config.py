@@ -79,12 +79,6 @@ def test_llm_disabled_without_a_key() -> None:
     )
 
 
-def test_demo_mode_disables_the_llm_even_with_a_key() -> None:
-    """DEMO_MODE must never spend API budget — the deployed demo relies on this."""
-    cfg = make_settings(environment="local", anthropic_api_key=SecretStr("sk-x"), demo_mode=True)
-    assert cfg.llm_enabled is False
-
-
 def test_email_verification_disabled_without_supabase_config() -> None:
     """No `.env` in this repo sets `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` -- this
     is the state the entire test suite (and a fresh `make up`) actually runs in."""

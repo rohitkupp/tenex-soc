@@ -3,8 +3,9 @@
 `mark_benign_baseline=true` (`analyst_feedback`, docs/02) flags the incident's entity-windows for
 inclusion in the next benign training corpus — "highest-fidelity loop for UEBA, because most
 false positives are weird but sanctioned, and the fix is teaching the model that this shape of
-weird is normal" (docs/08). Triggers retraining for the corpus-fitted L3 models (autoencoder,
-Isolation Forest, Mahalanobis — docs/04 §L3).
+weird is normal" (docs/08). Triggers retraining for the corpus-fitted L3 models (Isolation Forest,
+Mahalanobis, ECOD, LOF — docs/04 §L3; the autoencoder that used to be in this list was removed,
+migration change 19, `docs/v2_migration/MIGRATION-01-evidence-first.md`).
 
 ## Scope boundary
 

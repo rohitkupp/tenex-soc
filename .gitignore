@@ -28,9 +28,12 @@ out/
 backend/data/corpus/
 backend/data/eval/
 backend/data/models/
-# NOT ignored: backend/data/demo/. It is 44 KB of recorded triage verdicts, and DEMO_MODE
-# serves them without making a single API call — a reviewer with no ANTHROPIC_API_KEY has to be
-# able to see what the agent layer actually produces.
+# backend/data/demo/ (datagen's mixed-scenario demo log file) is generated output too, same as
+# the three above — the special-case exception that used to live here existed only to keep
+# DEMO_MODE's committed precomputed verdicts visible to a reviewer with no ANTHROPIC_API_KEY.
+# DEMO_MODE was removed entirely (docs/v2_migration change 12); nothing under this path is
+# committed anymore.
+backend/data/demo/
 #
 # backend/data/models/ IS ignored, and that is a real tradeoff rather than an oversight: the
 # fitted artifacts total 171 MB, dominated by ecod.joblib at 125 MB and lof.joblib at 33 MB.

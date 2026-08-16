@@ -66,7 +66,7 @@ def test_canonical_text_drops_none_technique() -> None:
 def test_embed_text_is_deterministic() -> None:
     text = canonical_text(
         technique_ids=["T1071.001"],
-        detector_keys=["signal.beaconing", "ml.autoencoder"],
+        detector_keys=["signal.beaconing", "ml.mahalanobis"],
         entity_types=["user", "domain"],
         enrichment_tags=["high_risk_tld"],
     )
@@ -104,7 +104,7 @@ def test_embed_text_similar_incidents_are_closer_than_dissimilar_ones() -> None:
     exfil = embed_text(
         canonical_text(
             technique_ids=["T1567.002"],
-            detector_keys=["signal.burst", "ml.autoencoder"],
+            detector_keys=["signal.burst", "ml.mahalanobis"],
             entity_types=["user", "dst_ip"],
             enrichment_tags=["high_risk_tld"],
         )

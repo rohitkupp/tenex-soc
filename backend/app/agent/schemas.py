@@ -1,19 +1,24 @@
 """Structured-output schemas for the three-role flow — docs/07-AGENT.md "Output schema" and
 docs/06-PRIVACY-SECURITY.md defense #4/#5 ("Structured output only" / "Output validation").
 
-Two layers of defense against a fabricated technique/action id, deliberately redundant:
+Defense against a fabricated technique id, deliberately redundant across two layers:
 
-1. **Schema-level (this module, `build_*_tool`)**: the `mitre_techniques[].id` and
-   `recommended_actions[].action` tool-parameter fields are JSON-Schema `enum`s built from
-   `app.agent.mitre.all_technique_ids()` / `app.response.catalog.get_catalog()` at request time.
-   With `strict: true` on the tool definition, the Messages API itself cannot produce a value
-   outside the enum — a fabricated id is not just invalid, it is not a representable output.
-2. **Pydantic-level (the models below)**: `MitreTechniqueRef`/`RecommendedAction` re-validate
-   the same constraint independently of the API. This is not redundant paranoia — it is what
-   lets `tests/test_agent_verifier.py` prove the rejection path works by constructing a bad
-   payload directly, without needing a live (or even a fixture) API response that somehow
-   defeats layer 1, and it is what protects a fixture-replay test path from ever silently
-   accepting a corpus/catalog drift that layer 1 alone wouldn't catch offline.
+1. **Schema-level (this module, `build_*_tool`)**: the `mitre_techniques[].id` tool-parameter
+   field is a JSON-Schema `enum` built from `app.agent.mitre.all_technique_ids()` at request
+   time. With `strict: true` on the tool definition, the Messages API itself cannot produce a
+   value outside the enum — a fabricated id is not just invalid, it is not a representable
+   output.
+2. **Pydantic-level (the models below)**: `MitreTechniqueRef` re-validates the same constraint
+   independently of the API. This is not redundant paranoia — it is what lets
+   `tests/test_agent_verifier.py` prove the rejection path works by constructing a bad payload
+   directly, without needing a live (or even a fixture) API response that somehow defeats layer
+   1, and it is what protects a fixture-replay test path from ever silently accepting a corpus
+   drift that layer 1 alone wouldn't catch offline.
+
+`recommended_actions` carries no such enum: docs/v2_migration change 20 removed the response
+action graph and its catalog, so this is now free-text **investigation guidance** for a human
+analyst — concrete next steps, not action IDs from a catalog (diagram 3's wording; matched in
+the case-file UI, `frontend/components/incidents/case/InvestigationGuidance.tsx`).
 
 Every model here is used for the *final* verdict and the two intermediate role outputs
 (`InvestigationFindings`, `Rebuttal`) — see `app/agent/orchestrator.py`.
@@ -28,7 +33,6 @@ from typing import Any, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.agent.mitre import all_technique_ids, technique_exists
-from app.response.catalog import get_catalog
 
 __all__ = [
     "AgentRole",
@@ -37,7 +41,6 @@ __all__ = [
     "MitreTechniqueRef",
     "NarrativeStep",
     "Rebuttal",
-    "RecommendedAction",
     "SchemaValidationError",
     "ToolTraceEntry",
     "TriageVerdictOut",
@@ -88,28 +91,6 @@ class MitreTechniqueRef(BaseModel):
         return v
 
 
-class RecommendedAction(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    action: str
-    target: str
-    rationale: str
-
-    @field_validator("action")
-    @classmethod
-    def _must_exist_in_catalog(cls, v: str) -> str:
-        if v not in get_catalog():
-            raise ValueError(f"action id {v!r} is not in the response action catalog")
-        return v
-
-    @field_validator("target", "rationale")
-    @classmethod
-    def _not_blank(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("must not be blank")
-        return v
-
-
 class NarrativeStep(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -138,13 +119,20 @@ class InvestigationFindings(BaseModel):
     disposition_lean: Disposition
     narrative: tuple[NarrativeStep, ...]
     mitre_techniques: tuple[MitreTechniqueRef, ...] = Field(default_factory=tuple)
-    recommended_actions: tuple[RecommendedAction, ...] = Field(default_factory=tuple)
+    recommended_actions: tuple[str, ...] = Field(default_factory=tuple)
 
     @field_validator("hypothesis")
     @classmethod
     def _not_blank(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("must not be blank")
+        return v
+
+    @field_validator("recommended_actions")
+    @classmethod
+    def _actions_not_blank(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not item or not item.strip() for item in v):
+            raise ValueError("recommended_actions entries must not be blank")
         return v
 
 
@@ -193,7 +181,9 @@ class TriageVerdictOut(BaseModel):
     summary: str
     narrative: tuple[NarrativeStep, ...]
     contradicting_evidence: str
-    recommended_actions: tuple[RecommendedAction, ...] = Field(default_factory=tuple)
+    # Free-text investigation guidance for a human analyst (docs/v2_migration change 20) — not
+    # action IDs from a response catalog. Diagram 3 calls this "Investigation guidance".
+    recommended_actions: tuple[str, ...] = Field(default_factory=tuple)
 
     # --- filled in after construction, not part of the LLM's tool-use payload ---
     tool_trace: tuple[ToolTraceEntry, ...] = Field(default_factory=tuple)
@@ -212,6 +202,13 @@ class TriageVerdictOut(BaseModel):
     def _not_blank(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("must not be blank")
+        return v
+
+    @field_validator("recommended_actions")
+    @classmethod
+    def _actions_not_blank(cls, v: tuple[str, ...]) -> tuple[str, ...]:
+        if any(not item or not item.strip() for item in v):
+            raise ValueError("recommended_actions entries must not be blank")
         return v
 
     @model_validator(mode="after")
@@ -241,19 +238,6 @@ def _technique_ref_schema() -> dict[str, Any]:
     }
 
 
-def _action_schema() -> dict[str, Any]:
-    return {
-        "type": "object",
-        "properties": {
-            "action": {"type": "string", "enum": sorted(get_catalog().actions)},
-            "target": {"type": "string"},
-            "rationale": {"type": "string"},
-        },
-        "required": ["action", "target", "rationale"],
-        "additionalProperties": False,
-    }
-
-
 def _narrative_step_schema() -> dict[str, Any]:
     return {
         "type": "object",
@@ -279,8 +263,9 @@ def build_submit_findings_tool() -> dict[str, Any]:
             "Submit your investigation findings: a working hypothesis, a disposition lean, a "
             "step-by-step narrative where every factual claim cites the specific event ids that "
             "support it, any MITRE techniques you can defend from the search_mitre corpus "
-            "(empty array if none apply), and any response actions you'd recommend from the "
-            "catalog (empty array if none). Call this once, when your investigation is complete."
+            "(empty array if none apply), and free-text investigation guidance for the human "
+            "analyst who picks this up next — concrete next steps, not a formal action catalog "
+            "(empty array if none). Call this once, when your investigation is complete."
         ),
         "strict": True,
         "input_schema": {
@@ -290,7 +275,7 @@ def build_submit_findings_tool() -> dict[str, Any]:
                 "disposition_lean": {"type": "string", "enum": list(_DISPOSITIONS)},
                 "narrative": {"type": "array", "items": _narrative_step_schema()},
                 "mitre_techniques": {"type": "array", "items": _technique_ref_schema()},
-                "recommended_actions": {"type": "array", "items": _action_schema()},
+                "recommended_actions": {"type": "array", "items": {"type": "string"}},
             },
             "required": [
                 "hypothesis",
@@ -330,7 +315,8 @@ def build_submit_rebuttal_tool() -> dict[str, Any]:
 def build_emit_verdict_tool() -> dict[str, Any]:
     """The Reporter's forced terminal tool — docs/07: "Emitted via tool-use so it is
     schema-validated, not parsed from prose." `strict: true` closes every enum (disposition,
-    severity opinion, technique id, action id) at the API layer."""
+    severity opinion, technique id) at the API layer. `recommended_actions` is free text
+    (investigation guidance for a human analyst, docs/v2_migration change 20) — no enum."""
     return {
         "name": "emit_verdict",
         "description": (
@@ -350,7 +336,7 @@ def build_emit_verdict_tool() -> dict[str, Any]:
                 "summary": {"type": "string"},
                 "narrative": {"type": "array", "items": _narrative_step_schema()},
                 "contradicting_evidence": {"type": "string"},
-                "recommended_actions": {"type": "array", "items": _action_schema()},
+                "recommended_actions": {"type": "array", "items": {"type": "string"}},
             },
             "required": [
                 "disposition",

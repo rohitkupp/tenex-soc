@@ -1,11 +1,15 @@
-"""`GET /api/learning/metrics` (docs/09): "alignment %, per-detector precision trend, containment
-rate." This module computes all three, live, from `analyst_feedback`/`signals`/`response_plans` —
-no separate metrics table; the source data is small enough at this scale that a stored rollup
-would just be a second, driftable copy.
+"""`GET /api/learning/metrics` (docs/09): "alignment %, per-detector precision trend." This
+module computes both, live, from `analyst_feedback`/`signals` — no separate metrics table; the
+source data is small enough at this scale that a stored rollup would just be a second,
+driftable copy.
 
 Every returned figure that could be influenced by `make seed`'s synthetic feedback history
 (`app/scripts/seed_feedback.py`) is paired with a synthetic count so `GET /api/learning/metrics`
 never presents seeded numbers as if they were real analyst activity (docs/08 "Demo honesty").
+
+Containment rate (docs/08 Part 1's headline response metric) was removed along with the
+response action graph and enforcement plane in docs/v2_migration change 20 — "autonomous
+containment rate is gone as a metric" — so it no longer appears here.
 """
 
 from __future__ import annotations
@@ -21,13 +25,11 @@ from app.learning.feedback_data import LabeledExample, labeled_examples
 from app.models.analyst_feedback import AnalystFeedback
 from app.models.base import tenant_scope
 from app.models.incident import Incident
-from app.models.response_plan import ResponsePlan
 from app.models.synthetic_seed_marker import SyntheticSeedMarker
 from app.models.triage_verdict import TriageVerdict
 
 __all__ = [
     "AlignmentPoint",
-    "ContainmentSummary",
     "DetectorPrecisionPoint",
     "LearningMetrics",
     "compute_learning_metrics",
@@ -80,15 +82,6 @@ class DetectorPrecisionPoint:
     synthetic: bool
 
 
-@dataclass(frozen=True, slots=True)
-class ContainmentSummary:
-    contained: int
-    partially_contained: int
-    failed: int
-    total_with_outcome: int
-    rate: float | None  # `contained / total_with_outcome`, None if no plan has resolved yet
-
-
 @dataclass(slots=True)
 class LearningMetrics:
     tenant_id: uuid.UUID
@@ -98,9 +91,6 @@ class LearningMetrics:
     alignment_pct: float | None
     alignment_trend: list[AlignmentPoint] = field(default_factory=list)
     detector_precision_trend: list[DetectorPrecisionPoint] = field(default_factory=list)
-    containment: ContainmentSummary = field(
-        default_factory=lambda: ContainmentSummary(0, 0, 0, 0, None)
-    )
 
 
 def _alignment_trend(
@@ -161,36 +151,6 @@ def _detector_precision_trend(
     return points
 
 
-def _containment_summary(session: Session, tenant_id: uuid.UUID) -> ContainmentSummary:
-    """docs/08 Part 1's headline response metric, surfaced here because docs/09 groups it into
-    `GET /api/learning/metrics` alongside the two consumer-facing figures. `response_plans` has
-    no `tenant_id` column (see `app.models.response_plan`'s docstring) -- the join against
-    `incidents` below is not optional decoration, it is what makes this query tenant-scoped at
-    all (`app.models.base`'s guard only ever fires for a *touched* `TenantScopedMixin` table)."""
-    with tenant_scope(session, tenant_id):
-        outcomes = (
-            session.execute(
-                select(ResponsePlan.outcome)
-                .join(Incident, ResponsePlan.incident_id == Incident.id)
-                .where(ResponsePlan.outcome.is_not(None))
-            )
-            .scalars()
-            .all()
-        )
-
-    contained = sum(1 for o in outcomes if o == "contained")
-    partial = sum(1 for o in outcomes if o == "partially_contained")
-    failed = sum(1 for o in outcomes if o == "failed")
-    total = len(outcomes)
-    return ContainmentSummary(
-        contained=contained,
-        partially_contained=partial,
-        failed=failed,
-        total_with_outcome=total,
-        rate=(contained / total) if total else None,
-    )
-
-
 def compute_learning_metrics(session: Session, tenant_id: uuid.UUID) -> LearningMetrics:
     synthetic_ids = synthetic_feedback_ids(session, tenant_id)
 
@@ -229,5 +189,4 @@ def compute_learning_metrics(session: Session, tenant_id: uuid.UUID) -> Learning
         alignment_pct=alignment_pct,
         alignment_trend=_alignment_trend(feedback_rows, synthetic_ids),
         detector_precision_trend=_detector_precision_trend(examples, synthetic_ids),
-        containment=_containment_summary(session, tenant_id),
     )

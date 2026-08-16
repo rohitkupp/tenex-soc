@@ -56,7 +56,7 @@ from decimal import Decimal
 from typing import Any
 
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.agent import prompts
@@ -78,6 +78,7 @@ from app.agent.verifier import verify_citations
 from app.core.config import get_settings
 from app.core.logging import get_logger
 from app.graph.timeline import build_timeline
+from app.models.analysis import Analysis
 from app.models.base import tenant_scope
 from app.models.incident import Incident
 from app.models.signal import Signal
@@ -96,6 +97,7 @@ except ImportError:  # pragma: no cover - integration point for when app/learnin
 __all__ = [
     "AgentRefusalError",
     "AgentTimeoutError",
+    "MissingAPIKeyError",
     "triage_incident",
     "triage_top_incidents_for_analysis",
 ]
@@ -146,6 +148,27 @@ class AgentRefusalError(Exception):
         super().__init__(f"model refused during {role} (category={category})")
         self.role = role
         self.category = category
+
+
+class MissingAPIKeyError(RuntimeError):
+    """Raised by `triage_incident` when it needs to make a live call (no `caller` was injected)
+    and `Settings.anthropic_api_key` is unset. docs/v2_migration change 12 removed the old
+    DEMO_MODE / no-key fallback (`app.agent.demo.synthesize_demo_verdict`) entirely — every
+    upload now makes real calls, so a missing key is a configuration error, not a mode to
+    degrade into. Raised here, at the one call site that would otherwise construct a
+    `LiveCaller`, rather than at process startup: `api`/`orchestrator`/`parser`/`enricher`/
+    `anonymizer`/`detector`/`correlator`/`tier2-sync` never need a key at all (docs/01), so
+    refusing to *boot* without one would fail healthy services for a key only the `agent`
+    worker (and its `POST /api/incidents/{id}/triage` callers) actually needs. This is also
+    the one path every test that wants live-call behavior already has to inject a `caller`
+    for (`tests/fixtures/llm/`, recorded fixtures) — see this module's own docstring."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            "ANTHROPIC_API_KEY is not configured. Agent triage now always makes a real "
+            "call (DEMO_MODE and the no-key fallback were removed) — set ANTHROPIC_API_KEY "
+            "before triaging an incident, or inject a caller explicitly (tests)."
+        )
 
 
 @dataclass(slots=True)
@@ -657,6 +680,35 @@ def _needs_review_fallback(
     )
 
 
+def _accumulate_analysis_cost(
+    session: Session, tenant_id: uuid.UUID, incident_id: uuid.UUID, cost_usd: Decimal | None
+) -> None:
+    """docs/v2_migration change 12 ("surface spend per analysis"): every persisted verdict's
+    real per-call cost (`app.agent.client.estimate_cost_usd`) rolls up into
+    `analyses.llm_cost_usd`, which `GET /api/analyses/{id}` already exposes
+    (`app.schemas.uploads.AnalysisOut`) — this is the write side that was missing. An atomic
+    `UPDATE ... SET x = x + delta` rather than read-modify-write so concurrent triage runs
+    against the same analysis (not how this codebase drives triage today —
+    `triage_top_incidents_for_analysis` triages sequentially — but not guaranteed to stay that
+    way) can never lose an increment to a last-write-wins race. Skipped for zero/None cost
+    (inherited-recurrence verdicts, `_persist_inherited`, cost 0 by construction) to avoid a
+    pointless write."""
+    if not cost_usd:
+        return
+    with tenant_scope(session, tenant_id):
+        analysis_id = session.execute(
+            select(Incident.analysis_id).where(Incident.id == incident_id)
+        ).scalar_one_or_none()
+        if analysis_id is None:  # pragma: no cover - the incident was just triaged, must exist
+            return
+        session.execute(
+            update(Analysis)
+            .where(Analysis.id == analysis_id)
+            .values(llm_cost_usd=func.coalesce(Analysis.llm_cost_usd, 0) + cost_usd)
+        )
+        session.commit()
+
+
 def _persist(session: Session, incident_id: uuid.UUID, verdict: TriageVerdictOut) -> TriageVerdict:
     row = TriageVerdict(
         incident_id=incident_id,
@@ -667,7 +719,7 @@ def _persist(session: Session, incident_id: uuid.UUID, verdict: TriageVerdictOut
         summary=verdict.summary,
         narrative=[n.model_dump(mode="json") for n in verdict.narrative],
         contradicting_evidence=verdict.contradicting_evidence,
-        recommended_actions=[a.model_dump(mode="json") for a in verdict.recommended_actions],
+        recommended_actions=list(verdict.recommended_actions),
         tool_trace=[t.model_dump(mode="json") for t in verdict.tool_trace],
         citation_valid=verdict.citation_valid,
         invalid_citations=list(verdict.invalid_citations),
@@ -741,8 +793,9 @@ def triage_incident(
     Dispatch order:
     1. Existing verdict (unless `force`) — return it.
     2. Recurrence with an already-triaged parent — inherit, no API call (docs/07 scope discipline).
-    3. DEMO_MODE or no API key (`Settings.llm_enabled`) — `app.agent.demo`, no API call.
-    4. Otherwise, the real three-role flow.
+    3. Otherwise, the real three-role flow — raises `MissingAPIKeyError` if no `caller` was
+       injected and `Settings.anthropic_api_key` is unset (docs/v2_migration change 12: no more
+       silent demo-verdict fallback).
     """
     settings = get_settings()
 
@@ -769,12 +822,8 @@ def triage_incident(
         # Parent has no verdict of its own yet (not triaged, or outside the top-N window) —
         # fall through and triage this incident on its own merits rather than blocking on it.
 
-    if settings.demo_mode or not settings.llm_enabled:
-        from app.agent.demo import synthesize_demo_verdict  # local import: avoid a cycle at
-
-        # module load time, and keep the live path free of demo-only imports.
-        verdict_out = synthesize_demo_verdict(session, tenant_id, incident_id)
-        return _persist(session, incident_id, verdict_out)
+    if caller is None and not settings.llm_enabled:
+        raise MissingAPIKeyError
 
     ctx = build_agent_context(session, tenant_id, incident_id)
     active_caller = caller or LiveCaller(api_key=settings.anthropic_api_key.get_secret_value())
@@ -810,7 +859,9 @@ def triage_incident(
             elapsed_ms=elapsed_ms,
             model=settings.anthropic_model,
         )
-        return _persist(session, incident_id, verdict_out)
+        row = _persist(session, incident_id, verdict_out)
+        _accumulate_analysis_cost(session, tenant_id, incident_id, verdict_out.cost_usd)
+        return row
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
     citation_valid, invalid_citations, _checks = verify_citations(ctx, verdict_out)
@@ -838,7 +889,9 @@ def triage_incident(
         cost_usd=str(verdict_out.cost_usd),
         latency_ms=elapsed_ms,
     )
-    return _persist(session, incident_id, verdict_out)
+    row = _persist(session, incident_id, verdict_out)
+    _accumulate_analysis_cost(session, tenant_id, incident_id, verdict_out.cost_usd)
+    return row
 
 
 def triage_top_incidents_for_analysis(

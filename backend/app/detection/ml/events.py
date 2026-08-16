@@ -109,6 +109,12 @@ class MLEvent:
     # source event carried no `actor.user.groups` at all (e.g. a service account with neither
     # `location` nor `department` populated).
     department: str | None = None
+    # `http_request.referrer`, verbatim -- same "no hot-column home, read straight off the parsed
+    # OCSF object" pattern `department` above already uses. Not a docs/02 hot column (see
+    # `app/models/event.py`); this is the one place in the detection package that can see it, and
+    # `app.detection.ml.navigation` (migration change 18, "navigation chain extractor") is the
+    # reason it was added -- see that module's docstring, "Referer field availability."
+    referrer: str | None = None
 
 
 def _department_from_groups(groups: Sequence[str]) -> str | None:
@@ -191,6 +197,7 @@ def _from_http_activity(event: HTTPActivity) -> MLEvent:
         threat_present=bool(event.malware),
         is_direct_ip=is_direct_ip,
         department=_department_from_groups(event.actor.user.groups),
+        referrer=event.http_request.referrer if event.http_request else None,
     )
 
 

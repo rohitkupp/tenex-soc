@@ -88,18 +88,12 @@ def main(argv: list[str] | None = None) -> int:
     log.info("run.calibrators")
     calibrators = _load_or_fit_calibrators(refit=args.refit_calibrators)
 
-    classifier = pipeline.load_classifier()
-
     log.info("run.golden_scenarios")
-    runs, scenario_tenant_ids = pipeline.run_golden_scenarios(
-        calibrators=calibrators, classifier=classifier
-    )
+    runs, scenario_tenant_ids = pipeline.run_golden_scenarios(calibrators=calibrators)
     all_tenant_ids.extend(scenario_tenant_ids)
 
     log.info("run.benign_pure")
-    benign_run, benign_tenant_ids = pipeline.run_benign_pure(
-        calibrators=calibrators, classifier=classifier
-    )
+    benign_run, benign_tenant_ids = pipeline.run_benign_pure(calibrators=calibrators)
     all_tenant_ids.extend(benign_tenant_ids)
 
     log.info("run.detection_metrics")

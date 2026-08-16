@@ -53,7 +53,6 @@ from app.learning.weights import retune_detector_weights
 from app.models.analysis import Analysis
 from app.models.base import bypass_tenant_scope, tenant_scope
 from app.models.incident import Incident
-from app.models.response_plan import ResponsePlan
 from app.models.signal import Signal
 from app.models.synthetic_seed_marker import SyntheticSeedMarker
 from app.models.triage_verdict import TriageVerdict
@@ -67,7 +66,6 @@ SEED_RNG_SEED = 1337  # CLAUDE.md rule 7: determinism where possible -- same see
 N_WEEKS = 8
 SINGLE_INCIDENTS_PER_DETECTOR_PER_WEEK = 2
 N_MULTI_DETECTOR_INCIDENTS = 40
-N_RESPONSE_PLANS = 20
 
 _SEVERITY_THRESHOLDS = (  # docs/04 "Severity" -- reused exactly, so seeded severities are the
     (0.85, "critical"),  # same buckets a live fusion score would land in, not an invented scale.
@@ -111,7 +109,10 @@ DETECTOR_PROFILES: tuple[DetectorProfile, ...] = (
     DetectorProfile("signal.burst", "signal", "user", 0.55, 0.20, 0.25, "T1567"),
     DetectorProfile("signal.rarity", "signal", "domain", 0.35, 0.45, 0.55, "T1078"),
     DetectorProfile("ml.iforest", "ml", "user", 0.55, 0.40, 0.50, "T1530"),
-    DetectorProfile("ml.autoencoder", "ml", "user", 0.55, 0.35, 0.45, "T1029"),
+    # Was "ml.autoencoder" -- migration change 19 removed that model (`docs/v2_migration/
+    # MIGRATION-01-evidence-first.md`); swapped for another still-shipping L3 baseline so this
+    # stays eleven real, live detector keys rather than one that no longer produces signals.
+    DetectorProfile("ml.mahalanobis", "ml", "user", 0.55, 0.35, 0.45, "T1029"),
 )
 
 _DISMISSAL_REASONS = (
@@ -429,38 +430,6 @@ def _generate_incident(
     )
 
 
-def _seed_response_plans(
-    session: Session, tenant_id: uuid.UUID, incidents: list[GeneratedIncident], rng: random.Random
-) -> None:
-    """Backs `containment_rate` in `GET /api/learning/metrics` (docs/08 Part 1's headline
-    response metric, surfaced under this milestone's endpoint per docs/09) -- `app/response/`
-    itself is a concurrent milestone's ownership, so this writes plausible `response_plans` rows
-    directly rather than driving the real planner/executor, which this milestone does not own."""
-    true_positive_incidents = [i for i in incidents if i.label == 1]
-    if not true_positive_incidents:
-        return
-    sample = rng.sample(
-        true_positive_incidents, k=min(N_RESPONSE_PLANS, len(true_positive_incidents))
-    )
-    for inc in sample:
-        outcome = rng.choices(
-            ["contained", "partially_contained", "failed"], weights=[60, 25, 15], k=1
-        )[0]
-        with tenant_scope(session, tenant_id):
-            plan = ResponsePlan(
-                incident_id=inc.incident_id,
-                actions=[{"action_id": "isolate_host", "target": "synthetic"}],
-                verification={"approved": True, "concerns": [], "escalate_to_human": False},
-                status="executed",
-                approved_at=datetime.now(UTC),
-                execution_log=[{"action_id": "isolate_host", "succeeded": outcome != "failed"}],
-                outcome=outcome,
-            )
-            session.add(plan)
-            session.flush()
-        _mark_synthetic(session, tenant_id, "response_plans", plan.id)
-
-
 def seed_feedback() -> None:
     session = get_session_factory()()
     try:
@@ -516,7 +485,6 @@ def seed_feedback() -> None:
             )
         session.flush()
 
-        _seed_response_plans(session, tenant_id, generated, rng)
         session.commit()
 
         n_feedback = len(generated)

@@ -1,16 +1,13 @@
-"""Shared, non-test factory helpers for `tests/test_response_*.py` and
-`tests/test_enforcement_*.py` — this milestone's own equivalent of `tests/conftest.py`'s
-`make_tenant`/`make_user`/`make_analysis`, kept in a separate module (not `conftest.py`) so this
-milestone's fixtures never collide with what other, concurrently-developed milestones keep there.
-Imported directly into test modules — pytest fixtures work the same whether they're defined in
-the module or imported into it.
-
-**Why cleanup can't reuse `conftest.py`'s `tenant_cleanup`.** `enforcement_journal.plan_id`
-references `response_plans.id` with no `ON DELETE` action (docs/02, matched exactly) — deleting
-a `response_plans` row (including via cascade: `analyses` -> `incidents` -> `response_plans`)
-while it still has journal children violates that FK. `enforcement_state` carries no FK at all
-(a bare `tenant_id` column, docs/02), so nothing cascades into it either.
-`response_tenant_cleanup` tears the whole chain down in the order those constraints require.
+"""Shared, non-test factory helpers originally written for `tests/test_response_*.py` and
+`tests/test_enforcement_*.py` (both deleted — docs/v2_migration change 20 removed the response
+action graph and enforcement plane entirely). `make_incident`/`make_signal`/`make_triage_verdict`
+and `response_tenant_cleanup` below are still imported by tests that are *not* about the response
+plane (`tests/test_incident_detail_api.py`, `tests/test_events_signals.py`,
+`tests/test_agent_tools.py`, `tests/test_tier2_indicator_overlap.py`,
+`tests/test_tier2_signature_sync.py`) — this module's own equivalent of `tests/conftest.py`'s
+`make_tenant`/`make_user`/`make_analysis`, kept separate so it never collided with the
+now-deleted response-plane test modules. The module name stays `response.py` rather than being
+renamed, to avoid an import-path churn across every test file above for no behavioral change.
 """
 
 from __future__ import annotations
@@ -25,7 +22,6 @@ from sqlalchemy import text
 from app.core.db import get_engine, get_session_factory
 from app.models.base import tenant_scope
 from app.models.incident import Incident
-from app.models.response_plan import ResponsePlan
 from app.models.signal import Signal
 from app.models.triage_verdict import TriageVerdict
 
@@ -37,27 +33,6 @@ def response_tenant_cleanup() -> Iterator[list[uuid.UUID]]:
     if not created:
         return
     with get_engine().begin() as conn:
-        conn.execute(
-            text(
-                "DELETE FROM enforcement_journal WHERE plan_id IN ("
-                "  SELECT rp.id FROM response_plans rp "
-                "  JOIN incidents i ON i.id = rp.incident_id "
-                "  WHERE i.tenant_id = ANY(:ids)"
-                ")"
-            ),
-            {"ids": created},
-        )
-        conn.execute(
-            text("DELETE FROM enforcement_state WHERE tenant_id = ANY(:ids)"), {"ids": created}
-        )
-        conn.execute(
-            text(
-                "DELETE FROM response_plans WHERE incident_id IN ("
-                "  SELECT id FROM incidents WHERE tenant_id = ANY(:ids)"
-                ")"
-            ),
-            {"ids": created},
-        )
         conn.execute(
             text(
                 "DELETE FROM triage_verdicts WHERE incident_id IN ("
@@ -146,7 +121,7 @@ def make_incident(
 def make_triage_verdict(
     *,
     incident_id: uuid.UUID,
-    recommended_actions: list[dict[str, Any]],
+    recommended_actions: list[str],
     disposition: str = "true_positive",
     confidence: float = 0.9,
     summary: str = "Synthetic verdict for response-module testing.",
@@ -171,15 +146,5 @@ def make_triage_verdict(
         session.commit()
         session.refresh(verdict)
         return verdict
-    finally:
-        session.close()
-
-
-def get_response_plan(plan_id: uuid.UUID) -> ResponsePlan:
-    session = get_session_factory()()
-    try:
-        plan = session.get(ResponsePlan, plan_id)
-        assert plan is not None
-        return plan
     finally:
         session.close()

@@ -103,7 +103,6 @@ def _all_workers(enrich_handler: _STAGE_HANDLER) -> list[StageWorker]:
         "detect": make_skeleton_handler("detect"),
         "correlate": make_skeleton_handler("correlate"),
         "triage": make_skeleton_handler("triage"),
-        "respond": make_skeleton_handler("respond"),
         "tier2": make_skeleton_handler("tier2"),
     }
     return [StageWorker(name, handler) for name, handler in handlers.items()]
@@ -199,12 +198,21 @@ async def test_upload_flows_through_every_stage_with_parser_fanout(
             "detect",
             "correlate",
             "triage",
-            "respond",
             "tier2",
         ):
             assert expected_stage in stages_seen, (
                 f"never saw a progress event for stage={expected_stage!r}: {stages_seen}"
             )
+
+        # docs/v2_migration change 20: the response action graph's `respond` stage/queue was
+        # removed entirely, and `triage` now publishes straight to `tier2` (`app.pipeline.
+        # contracts.NEXT_QUEUE["triage"] == "tier2"`). This is the regression this fanout test
+        # exists to catch: if `triage` still published into `q.respond`, no worker in
+        # `_all_workers` above would ever consume it, the pipeline would stall mid-run, and
+        # `status == "complete"` above would already have failed. Assert the negative directly
+        # too, so a future change re-adding a dangling `respond` hop fails here by name, not by
+        # a timeout with no explanation.
+        assert "respond" not in stages_seen, stages_seen
 
         assert progress_events[-1]["status"] == "complete"
         assert progress_events[-1]["progress"] == 1.0

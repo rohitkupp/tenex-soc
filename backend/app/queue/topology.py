@@ -77,6 +77,10 @@ STAGES_EXCHANGE = "stages"
 # them (minus the `q.` prefix, which every helper below adds back). One parse queue today
 # (`parse.zscaler` — Okta and CloudTrail's sibling queues were removed along with those
 # sources); adding a source back means adding one more `parse.<source>` entry here.
+#
+# `respond`/`q.respond` was removed in docs/v2_migration change 20 (the response action graph
+# and enforcement plane) — the `agent` worker (`triage`) now publishes straight to `tier2`; see
+# `app.pipeline.contracts.NEXT_QUEUE`.
 QUEUE_NAMES: tuple[str, ...] = (
     "orchestrator",
     "parse.zscaler",
@@ -85,7 +89,6 @@ QUEUE_NAMES: tuple[str, ...] = (
     "detect",
     "correlate",
     "triage",
-    "respond",
     "tier2",
 )
 

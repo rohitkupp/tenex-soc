@@ -60,8 +60,9 @@ Constraints, non-negotiable:
 - Map to MITRE ATT&CK techniques only from the corpus returned by search_mitre, or techniques
   you are certain exist in the real ATT&CK framework. Never invent a technique ID — a fabricated
   ID cannot be represented in your output and the call will fail.
-- Recommended actions must be an action ID from the response action catalog you are given the
-  enum for. Free-text actions are not representable and will be rejected.
+- Recommended actions are free-text investigation guidance for the human analyst who picks this
+  incident up next (e.g. specific logs to pull, an entity to confirm with IT, a config to
+  verify) — not action IDs from a catalog. There is no enum to satisfy here.
 - If the evidence is insufficient to reach a confident disposition, say so — needs_review is a
   correct, complete answer, not a failure to finish the job.
 """.strip()

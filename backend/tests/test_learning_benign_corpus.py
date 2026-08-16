@@ -64,7 +64,7 @@ def test_flag_benign_baseline_creates_one_entry_per_distinct_entity_window(
         learning_session,
         tenant_id=tenant.id,
         analysis_id=analysis.id,
-        detector_key="ml.autoencoder",
+        detector_key="ml.mahalanobis",
         entity_type="user",
         entity_value="user1@corp.example",
     )

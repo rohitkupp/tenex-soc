@@ -103,13 +103,6 @@ def learning_cleanup(tenant_cleanup: list[uuid.UUID]) -> Iterator[list[uuid.UUID
         )
         conn.execute(
             text(
-                "DELETE FROM response_plans WHERE incident_id IN "
-                "(SELECT id FROM incidents WHERE tenant_id = ANY(:ids))"
-            ),
-            {"ids": tenant_ids},
-        )
-        conn.execute(
-            text(
                 "DELETE FROM analyst_feedback WHERE verdict_id IN "
                 "(SELECT tv.id FROM triage_verdicts tv JOIN incidents i "
                 "ON tv.incident_id = i.id WHERE i.tenant_id = ANY(:ids))"

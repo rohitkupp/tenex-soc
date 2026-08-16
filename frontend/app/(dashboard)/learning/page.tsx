@@ -4,13 +4,13 @@ import type { LearningMetricsResponse, SuppressionListResponse } from "@/lib/api
 import { Panel } from "@/components/ui/Panel";
 import { AlignmentTrendChart } from "@/components/learning/AlignmentTrendChart";
 import { DetectorPrecisionTable } from "@/components/learning/DetectorPrecisionTable";
-import { ContainmentSummary } from "@/components/learning/ContainmentSummary";
 import { SuppressionsList } from "@/components/learning/SuppressionsList";
 
 export const metadata: Metadata = { title: "Learning — Tenex SOC Analyst" };
 
-// docs/10: "/learning — Alignment trend, per-detector precision, containment rate, pending
-// suppressions."
+// docs/10: "/learning — Alignment trend, per-detector precision, pending suppressions."
+// Containment rate was removed along with the response action graph and enforcement plane
+// (docs/v2_migration change 20 — "autonomous containment rate is gone as a metric").
 export default async function LearningPage() {
   const [metrics, suppressions] = await Promise.all([
     fetchServer<LearningMetricsResponse>("/api/learning/metrics"),
@@ -41,10 +41,6 @@ export default async function LearningPage() {
 
       <Panel title="Per-detector precision">
         {metrics ? <DetectorPrecisionTable points={metrics.detector_precision_trend} /> : <p className="text-sm text-[var(--color-severity-high)]">Could not load.</p>}
-      </Panel>
-
-      <Panel title="Autonomous containment rate">
-        {metrics ? <ContainmentSummary containment={metrics.containment} /> : <p className="text-sm text-[var(--color-severity-high)]">Could not load.</p>}
       </Panel>
 
       <Panel title="Pending suppressions">

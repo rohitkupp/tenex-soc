@@ -11,10 +11,8 @@ import numpy as np
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
 
-from app.detection.ml.autoencoder import tune_and_train
 from app.detection.ml.detect import (
     DETECTOR_LAYER,
-    ML_AUTOENCODER,
     ML_ECOD,
     ML_IFOREST,
     ML_MAHALANOBIS,
@@ -36,17 +34,22 @@ def test_detector_keys_match_datagen_ground_truth_labels() -> None:
     docstring) — this is the one test in the suite that legitimately imports both sides of that
     boundary to audit it hasn't drifted, the same shape of check
     `tests/test_signal_constants.py` runs for the L2 layer."""
-    from datagen.types import ML_AUTOENCODER as GEN_AUTOENCODER
     from datagen.types import ML_IFOREST as GEN_IFOREST
     from datagen.types import ML_MAHALANOBIS as GEN_MAHALANOBIS
     from datagen.types import ML_PEER_GROUP as GEN_PEER_GROUP
 
     assert ML_IFOREST == GEN_IFOREST
     assert ML_MAHALANOBIS == GEN_MAHALANOBIS
-    assert ML_AUTOENCODER == GEN_AUTOENCODER
     assert ML_PEER_GROUP == GEN_PEER_GROUP
     # ML_ECOD has no datagen ground-truth counterpart to audit against (no scenario names it in
-    # `expected_detectors` yet) -- nothing to compare here beyond the four that do.
+    # `expected_detectors` yet) -- nothing to compare here beyond the three that do.
+    #
+    # `datagen.types.ML_AUTOENCODER` still exists (scenario 4's own `expected_detectors` ground
+    # truth, `datagen/scenarios/s04_low_and_slow_exfil.py`, is untouched by this migration phase)
+    # but has no live counterpart in `app.detection.ml.detect` to audit against anymore --
+    # migration change 19 removed the model. That is an honest, reportable gap (CLAUDE.md: "losing
+    # is a valid, reportable outcome"), not a bug: no currently-shipped L3 model is expected to
+    # catch scenario 4 until a later phase's EIF lands.
 
 
 def test_detector_layer_is_ml_not_signal() -> None:
@@ -65,20 +68,12 @@ def _build_bundle(seed: int = 0) -> MLModelBundle:
     ecod = ECODArtifact.fit(x_train, x_calib)
     lof = LOFArtifact.fit(x_train, x_calib)
 
-    x_val = rng.normal(size=(100, _N_FEATURES))
-    y_val = np.zeros(100, dtype=np.int64)
-    x_val[:10] = 9.0
-    y_val[:10] = 1
-    x_val_scaled = scaler.transform(x_val)
-    autoencoder, _ = tune_and_train(x_train, x_calib, x_val_scaled, y_val, n_trials=2)
-
     return MLModelBundle(
         scaler=scaler,
         iforest=iforest,
         mahalanobis=mahalanobis,
         ecod=ecod,
         lof=lof,
-        autoencoder=autoencoder,
     )
 
 
@@ -109,7 +104,7 @@ def test_score_entity_windows_flags_outliers_and_spares_ordinary_rows() -> None:
     flagged_entities = {d.entity_value for d in drafts}
     assert "user1@corp.example" in flagged_entities
     detector_keys = {d.detector_key for d in drafts}
-    assert detector_keys <= {ML_IFOREST, ML_MAHALANOBIS, ML_ECOD, ML_PEER_GROUP, ML_AUTOENCODER}
+    assert detector_keys <= {ML_IFOREST, ML_MAHALANOBIS, ML_ECOD, ML_PEER_GROUP}
     for draft in drafts:
         assert draft.detector_layer == "ml"
         assert draft.evidence_line_numbers
@@ -136,7 +131,7 @@ def test_score_entity_windows_threshold_gating() -> None:
     df = _make_df([{}])  # a single, perfectly ordinary row
     # threshold=0.0 means every row is flagged by every model (percentile rank >= 0 always).
     drafts_low_threshold = score_entity_windows(bundle, df, threshold=0.0)
-    assert len(drafts_low_threshold) == 5  # one per model
+    assert len(drafts_low_threshold) == 4  # one per model
     # threshold=1.01 is unreachable (confidence is clipped to [0, 1]).
     drafts_high_threshold = score_entity_windows(bundle, df, threshold=1.01)
     assert drafts_high_threshold == []

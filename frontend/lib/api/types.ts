@@ -480,13 +480,6 @@ export interface NarrativeStep {
   evidence_event_ids: number[];
 }
 
-/** docs/07's output schema, `recommended_actions[]` */
-export interface RecommendedAction {
-  action: string;
-  target: string;
-  rationale: string;
-}
-
 /** docs/07 "Citation verification" — existence/scope/temporal-plausibility failures recorded
  * here (best-effort field names; docs/07 describes the checks but not the exact JSON keys). */
 export interface InvalidCitation {
@@ -513,7 +506,9 @@ export interface TriageVerdictOut {
   summary: string;
   narrative: NarrativeStep[];
   contradicting_evidence: string;
-  recommended_actions: RecommendedAction[];
+  /** Free-text investigation guidance for a human analyst (docs/v2_migration change 20) —
+   * not action IDs from a catalog. */
+  recommended_actions: string[];
   tool_trace: ToolTraceEntry[];
   citation_valid: boolean;
   invalid_citations: InvalidCitation[];
@@ -526,7 +521,7 @@ export interface TriageVerdictOut {
 }
 
 /** `GET /api/incidents/{id}` — docs/09: "Full detail: signals with explanations, entities,
- * timeline, verdict, plan." `verdict` is `null` for an incident not yet triaged (recurrences
+ * timeline, verdict." `verdict` is `null` for an incident not yet triaged (recurrences
  * inherit their parent's verdict per docs/05, so this can still be non-null there). */
 export interface IncidentDetail {
   id: string;
@@ -647,88 +642,8 @@ export interface FeedbackResponse {
   retrain_attempt: RetrainAttemptOut | null;
 }
 
-// ---- Response plans (M15) — real schemas, `backend/app/schemas/plans.py` verbatim ----
-
-export interface PreconditionCheckOut {
-  id: string;
-  satisfied: boolean;
-  reason: string;
-}
-export interface PlanStepOut {
-  step: number;
-  action_id: string;
-  name: string;
-  target: string;
-  target_type: string;
-  preconditions: string[];
-  blast_radius: string;
-  reversible: boolean;
-  rollback: string | null;
-  rollback_available: boolean;
-  depends_on: string[];
-  mitre_mitigation: string;
-  rationale: string | null;
-  implied: boolean;
-  live_preconditions: PreconditionCheckOut[];
-}
-export interface PlanOut {
-  id: string;
-  incident_id: string;
-  status: string;
-  actions: PlanStepOut[];
-  verification: Record<string, unknown>;
-  approved_by: string | null;
-  approved_at: string | null;
-  execution_log: Record<string, unknown>[];
-  outcome: string | null;
-  outcome_detail: Record<string, unknown> | null;
-}
-export interface JournalEntryOut {
-  id: number;
-  action_id: string;
-  before_state: Record<string, unknown> | null;
-  after_state: Record<string, unknown> | null;
-  succeeded: boolean;
-  precondition_failure: string | null;
-  executed_at: string;
-}
-export interface ApproveResponse {
-  plan_id: string;
-  status: string;
-  halted: boolean;
-  journal: JournalEntryOut[];
-  outcome: string | null;
-  outcome_detail: Record<string, unknown> | null;
-}
-export interface RestoredResourceOut {
-  action_id: string;
-  resource_type: string;
-  resource_id: string;
-  restored_state: Record<string, unknown>;
-}
-export interface RollbackResponse {
-  plan_id: string;
-  status: string;
-  restored: RestoredResourceOut[];
-}
-export interface StateDiffEntryOut {
-  step: number | null;
-  action_id: string;
-  target: string;
-  resource_type: string;
-  resource_id: string;
-  before: Record<string, unknown> | null;
-  after: Record<string, unknown> | null;
-  current: Record<string, unknown> | null;
-  succeeded: boolean;
-  precondition_failure: string | null;
-  executed_at: string;
-}
-export interface StateDiffResponse {
-  plan_id: string;
-  status: string;
-  diff: StateDiffEntryOut[];
-}
+// Response plans (formerly M15, `backend/app/schemas/plans.py`) were removed in
+// docs/v2_migration change 20 along with the response action graph and enforcement plane.
 
 // ---- Models & calibration (real schemas, `backend/app/schemas/learning.py` verbatim) ----
 
@@ -820,13 +735,6 @@ export interface DetectorPrecisionPointOut {
   n: number;
   synthetic: boolean;
 }
-export interface ContainmentSummaryOut {
-  contained: number;
-  partially_contained: number;
-  failed: number;
-  total_with_outcome: number;
-  rate: number | null;
-}
 export interface LearningMetricsResponse {
   computed_at: string;
   n_feedback_events: number;
@@ -835,7 +743,6 @@ export interface LearningMetricsResponse {
   alignment_pct: number | null;
   alignment_trend: AlignmentPointOut[];
   detector_precision_trend: DetectorPrecisionPointOut[];
-  containment: ContainmentSummaryOut;
 }
 export interface SuppressionCandidateOut {
   id: string;

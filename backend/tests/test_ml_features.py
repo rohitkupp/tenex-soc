@@ -54,6 +54,7 @@ def _event(
     threat_present: bool = False,
     is_direct_ip: bool = False,
     department: str | None = "engineering",
+    referrer: str | None = None,
 ) -> MLEvent:
     return MLEvent(
         line_no=line_no,
@@ -84,6 +85,7 @@ def _event(
         threat_present=threat_present,
         is_direct_ip=is_direct_ip,
         department=department,
+        referrer=referrer,
     )
 
 
@@ -91,7 +93,10 @@ def _event(
 
 
 def test_feature_vector_has_approximately_fifty_unique_features() -> None:
-    assert 45 <= len(ENTITY_WINDOW_MODEL_FEATURES) <= 55
+    # Upper bound raised from 55 -- migration change 18 (`docs/v2_migration/
+    # MIGRATION-01-evidence-first.md`) added `NAVIGATION_FEATURES`' five columns on top of the
+    # ~50-53 already here.
+    assert 45 <= len(ENTITY_WINDOW_MODEL_FEATURES) <= 60
     assert len(ENTITY_WINDOW_MODEL_FEATURES) == len(set(ENTITY_WINDOW_MODEL_FEATURES))
 
 
@@ -140,6 +145,12 @@ def test_feature_vector_includes_every_docs04_named_feature() -> None:
         "n_mfa_challenges",
         "n_distinct_geos",
         "privilege_events",
+        # Migration change 18's navigation chain extractor (`app.detection.ml.navigation`).
+        "referer_less_deep_path_ratio",
+        "navigation_depth_mean",
+        "n_unique_entry_domains",
+        "cross_domain_redirect_chain_ratio",
+        "download_without_navigation_ratio",
     }
     assert named <= set(ENTITY_WINDOW_MODEL_FEATURES)
 
@@ -451,6 +462,55 @@ def test_identity_features_are_zero_on_a_pure_proxy_window() -> None:
     assert row["n_auth_failures"] == 0.0
     assert row["n_mfa_challenges"] == 0.0
     assert row["privilege_events"] == 0.0
+
+
+# ---------------------------------------------------------------------------- navigation (migration change 18)
+
+
+def test_navigation_features_are_wired_into_the_user_entity_window() -> None:
+    # `app.detection.ml.navigation`'s own unit tests (`test_ml_navigation.py`) cover the five
+    # features' fire/no-fire conditions in isolation; this is the integration proof that
+    # `features.py` actually reads them back into the real entity-window vector.
+    events = [
+        _event(
+            line_no=1,
+            ts=_T0,
+            principal="alice@corp.example",
+            domain="corp.com",
+            registrable_domain="corp.com",
+            url_path="/account/settings/billing",  # deep path, no referer -> referer_less_deep_path
+            referrer=None,
+        )
+    ]
+    df = build_entity_window_features(events)
+    row = df[df["entity_type"] == "user"].iloc[0]
+    assert row["referer_less_deep_path_ratio"] == 1.0
+    assert row["navigation_depth_mean"] == 0.0
+    assert row["n_unique_entry_domains"] == 1.0
+    assert row["cross_domain_redirect_chain_ratio"] == 0.0
+    assert row["download_without_navigation_ratio"] == 0.0
+
+
+def test_navigation_features_are_zero_for_the_src_ip_dimension() -> None:
+    # Deliberate scope cut (`app.detection.ml.navigation`'s own module docstring, "Entity
+    # scope"): a `src_ip` can multiplex many concurrent principals, so no chain is ever
+    # reconstructed for that dimension at all.
+    events = [
+        _event(
+            line_no=1,
+            ts=_T0,
+            src_ip="10.0.0.9",
+            url_path="/account/settings/billing",
+            referrer=None,
+        )
+    ]
+    df = build_entity_window_features(events)
+    row = df[df["entity_type"] == "src_ip"].iloc[0]
+    assert row["referer_less_deep_path_ratio"] == 0.0
+    assert row["navigation_depth_mean"] == 0.0
+    assert row["n_unique_entry_domains"] == 0.0
+    assert row["cross_domain_redirect_chain_ratio"] == 0.0
+    assert row["download_without_navigation_ratio"] == 0.0
 
 
 # ---------------------------------------------------------------------------- to_feature_matrix

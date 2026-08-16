@@ -1,10 +1,9 @@
 """End-to-end M10 verification: parse -> events (Postgres) -> L1/L2/L3 detectors -> calibrate ->
-entity graph -> L5 graph features -> incidents -> classify -> fuse & severity -> title -> timeline
--> recurrence -> persist.
+entity graph -> L5 graph features -> incidents -> fuse & severity -> title -> timeline ->
+recurrence -> persist.
 
     python -m app.graph.pipeline_demo run --scenario c2_beaconing --seed 7 --events 50000
     python -m app.graph.pipeline_demo fit-calibrators
-    python -m app.graph.pipeline_demo train-classifier
     python -m app.graph.pipeline_demo full-report
 
 This module is the orchestration glue docs/13 M10's verification bar asks for ("load a real
@@ -14,8 +13,16 @@ severities"). It reuses, read-only, every layer this milestone does not own
 future `app/pipeline` orchestrator would, and owns only the M10-specific glue: turning each
 layer's raw output into one common `RawSignal` shape, calibrating it
 (`app.detection.calibration`), building the graph (`app.graph.builder`), forming incidents
-(`app.graph.incidents`), scoring them (`app.detection.fusion`), classifying, titling, and linking
-recurrences.
+(`app.graph.incidents`), scoring them (`app.detection.fusion`), titling, and linking recurrences.
+
+**No `classify` stage, and no `train-classifier` command.** The pipeline used to run `L5 graph ->
+classify -> fuse` (docs/04's old ordering) via `app.graph.classifier`'s LightGBM technique
+classifier; migration change 19 (`docs/v2_migration/MIGRATION-01-evidence-first.md`) deleted that
+model -- multiclass technique attribution is the LLM hypothesis-evaluation stage's job now
+(`docs/07`, out of this package's ownership), not a stage this offline demo pipeline performs
+itself. `_pick_top_technique` below falls back to `None` (`NO_KNOWN_MAPPING`, in the language of
+docs/07) when no L1/L2 rule already supplied a technique for an incident's signals, rather than
+asking a second, now-nonexistent classifier to guess one.
 """
 
 from __future__ import annotations
@@ -60,11 +67,6 @@ from app.graph.builder import (
     fetch_graph_events,
     persist_entity_graph,
 )
-from app.graph.classifier import (
-    CLASSIFIER_ARTIFACT_FILENAME,
-    TechniqueClassifierArtifact,
-)
-from app.graph.classifier import MODELS_DIR as CLASSIFIER_MODELS_DIR
 from app.graph.features import NodeFeatures, compute_node_features, graph_signals_for_incident
 from app.graph.incidents import IncidentCandidate, SignalRef, form_incidents
 from app.graph.ingest import IngestResult, ingest_log_file
@@ -181,7 +183,8 @@ def _ml_model_pairs(bundle: Any) -> list[tuple[str, Any]]:
     `app.detection.ml.detect.MLModelBundle` exposes -- see
     `app.detection.calibration._model_pairs`'s docstring for why this is read dynamically off
     that package's own constants rather than hardcoded (it grew from three models to five during
-    this milestone's own development window)."""
+    this milestone's own development window, then back down to four when migration change 19 cut
+    the autoencoder)."""
     from app.detection.ml import detect as ml_detect
 
     return [
@@ -189,7 +192,6 @@ def _ml_model_pairs(bundle: Any) -> list[tuple[str, Any]]:
         (ml_detect.ML_MAHALANOBIS, bundle.mahalanobis),
         (ml_detect.ML_ECOD, bundle.ecod),
         (ml_detect.ML_PEER_GROUP, bundle.lof),
-        (ml_detect.ML_AUTOENCODER, bundle.autoencoder),
     ]
 
 
@@ -449,43 +451,25 @@ def _pick_primary_entity(candidate: IncidentCandidate) -> EntityKey:
     return max(candidate.seed_entity_keys, key=lambda k: (counts.get(k, 0), k))
 
 
-def _pick_top_technique(
-    candidate: IncidentCandidate,
-    classifier: TechniqueClassifierArtifact | None,
-    l3_df: Any,
-) -> str | None:
+def _pick_top_technique(candidate: IncidentCandidate) -> str | None:
+    """The most common `mitre_technique` already attached to one of `candidate`'s own L1/L2
+    signals (deterministic: ties broken alphabetically), or `None` -- this offline demo pipeline's
+    equivalent of docs/07's `NO_KNOWN_MAPPING` -- when no contributing signal carried one.
+
+    Used to fall back to `app.graph.classifier`'s LightGBM technique classifier here; migration
+    change 19 deleted that model (module docstring, "No `classify` stage"). Multiclass softmax
+    attribution is not reintroduced as a fallback -- that is exactly the "two components assigning
+    techniques with no defined precedence" problem the migration cut it to avoid, and the real
+    replacement (LLM hypothesis evaluation, docs/07) is out of this package's ownership.
+    """
     techniques = [s.mitre_technique for s in candidate.signals if s.mitre_technique]
-    if techniques:
-        # deterministic: most common, ties broken alphabetically
-        counts: dict[str, int] = defaultdict(int)
-        for t in techniques:
-            counts[t] += 1
-        return max(sorted(counts), key=lambda t: counts[t])
-    if classifier is None or l3_df is None or getattr(l3_df, "empty", True):
+    if not techniques:
         return None
-    from app.detection.ml.detect import MLModelBundle
-    from app.detection.ml.features import ENTITY_WINDOW_MODEL_FEATURES
-
-    entity_keys = set(candidate.entity_keys)
-    mask = l3_df.apply(lambda r: (r["entity_type"], r["entity_value"]) in entity_keys, axis=1)
-    rows = l3_df[mask]
-    if rows.empty:
-        return None
-    bundle = MLModelBundle.load()
-    x_scaled = bundle.transform(rows)
-    from app.detection.ml.detect import SIGNAL_CONFIDENCE_THRESHOLD
-
-    # Must match `app.graph.classifier.SIGNAL_PRESENCE_FEATURES`'s model order exactly -- that is
-    # the column order the loaded classifier was trained against.
-    model_pairs = _ml_model_pairs(bundle)
-    flags = np.zeros((len(rows), len(model_pairs)))
-    for j, (_detector_key, model) in enumerate(model_pairs):
-        raw = model.raw_scores(x_scaled)
-        flags[:, j] = (model.confidence(raw) >= SIGNAL_CONFIDENCE_THRESHOLD).astype(float)
-    feature_cols = list(ENTITY_WINDOW_MODEL_FEATURES)
-    x_full = np.hstack([rows[feature_cols].to_numpy(dtype=np.float64), flags])
-    label, _, _ = classifier.predict(x_full[0])
-    return None if label == "benign" else label
+    # deterministic: most common, ties broken alphabetically
+    counts: dict[str, int] = defaultdict(int)
+    for t in techniques:
+        counts[t] += 1
+    return max(sorted(counts), key=lambda t: counts[t])
 
 
 def run_scenario(
@@ -495,7 +479,6 @@ def run_scenario(
     events: int,
     out_dir: Path,
     calibrators: CalibratorStore,
-    classifier: TechniqueClassifierArtifact | None,
 ) -> RunResult:
     t0 = time.perf_counter()
     log_path, labels_path = _generate_scenario(out_dir, scenario, seed, events)
@@ -511,7 +494,10 @@ def run_scenario(
 
     l1 = _run_l1(ingest.analysis_id, ingest.tenant_id)
     l2 = _run_l2(session, ingest.analysis_id, ingest.tenant_id)
-    l3, l3_df, _bundle = _run_l3(log_path, line_to_event_id)
+    # `l3_df`/`bundle` (the entity-window frame and loaded model bundle) used to also feed
+    # `_pick_top_technique`'s LightGBM fallback -- migration change 19 removed that path (module
+    # docstring), so only the signals list is needed here now.
+    l3, _l3_df, _bundle = _run_l3(log_path, line_to_event_id)
 
     with tenant_scope(session, ingest.tenant_id):
         graph_events = fetch_graph_events(session, ingest.analysis_id)
@@ -586,7 +572,7 @@ def run_scenario(
                 fusion_inputs, community_signal_density=candidate.community_signal_density
             )
 
-            top_technique = _pick_top_technique(candidate, classifier, l3_df)
+            top_technique = _pick_top_technique(candidate)
             primary_entity = _pick_primary_entity(candidate)
             title = title_for_incident(
                 top_technique_id=top_technique,
@@ -780,48 +766,6 @@ def fit_layer_calibrators(*, fit_dir: Path, seed: int = CALIBRATION_FIT_SEED) ->
     return store
 
 
-# ---------------------------------------------------------------------------- classifier training
-
-
-def train_classifier(*, train_seed: int, test_seed: int, base_dir: Path) -> None:
-    from app.detection.ml.evaluate import SCENARIO_KEYS
-    from app.graph.classifier import train_and_evaluate
-
-    train_dirs: list[Path] = []
-    test_dirs: list[Path] = []
-    for key in SCENARIO_KEYS:
-        d_train = base_dir / f"train_{key}"
-        d_test = base_dir / f"test_{key}"
-        _generate_scenario(d_train, key, train_seed, 50_000)
-        _generate_scenario(d_test, key, test_seed, 50_000)
-        train_dirs.append(d_train)
-        test_dirs.append(d_test)
-
-    artifact, result = train_and_evaluate(train_dirs, test_dirs)
-    artifact.save()
-    report_path = CLASSIFIER_MODELS_DIR / "lightgbm_technique_report.json"
-    report_path.write_text(
-        json.dumps(
-            {
-                "accuracy": result.accuracy,
-                "macro_f1": result.macro_f1,
-                "n_train": result.n_train,
-                "n_test": result.n_test,
-                "classes": list(result.classes),
-                "class_counts_train": result.class_counts_train,
-                "class_counts_test": result.class_counts_test,
-                "per_class_f1": result.per_class_f1,
-                "fit_seconds": result.fit_seconds,
-                "shap_example": result.shap_example,
-            },
-            indent=2,
-            default=str,
-        ),
-        encoding="utf-8",
-    )
-    log.info("train_classifier.done", accuracy=result.accuracy, macro_f1=result.macro_f1)
-
-
 # ---------------------------------------------------------------------------- CLI
 
 
@@ -839,14 +783,11 @@ def main(argv: list[str] | None = None) -> int:
     fit_calibrators_p = sub.add_parser(
         "fit-calibrators", help="Fit L1/L2/L3/L5 calibrators on a held-out seed"
     )
-    train_classifier_p = sub.add_parser(
-        "train-classifier", help="Train the LightGBM technique classifier"
-    )
 
     report_p = sub.add_parser("full-report", help="Run every correlation scenario + report metrics")
     report_p.add_argument("--out", type=Path, default=None)
 
-    for p in (run_p, fit_calibrators_p, train_classifier_p, report_p):
+    for p in (run_p, fit_calibrators_p, report_p):
         p.add_argument("--log-level", default="info")
 
     args = parser.parse_args(argv)
@@ -856,16 +797,7 @@ def main(argv: list[str] | None = None) -> int:
         fit_layer_calibrators(fit_dir=Path("/tmp/m10_calibration_fit"))  # noqa: S108
         return 0
 
-    if args.command == "train-classifier":
-        train_classifier(train_seed=11, test_seed=7, base_dir=Path("/tmp/m10_classifier"))  # noqa: S108
-        return 0
-
     calibrators = CalibratorStore()
-    classifier = (
-        TechniqueClassifierArtifact.load()
-        if (CLASSIFIER_MODELS_DIR / CLASSIFIER_ARTIFACT_FILENAME).exists()
-        else None
-    )
 
     if args.command == "run":
         results: list[RunResult] = []
@@ -877,7 +809,6 @@ def main(argv: list[str] | None = None) -> int:
                 events=args.events,
                 out_dir=out_dir,
                 calibrators=calibrators,
-                classifier=classifier,
             )
             results.append(result)
             _print_run(result)
@@ -891,7 +822,6 @@ def main(argv: list[str] | None = None) -> int:
                 events=50_000,
                 out_dir=Path(f"/tmp/m10_demo_run_{key}"),  # noqa: S108
                 calibrators=calibrators,
-                classifier=classifier,
             )
             for key in CORRELATION_SCENARIO_KEYS
         ]

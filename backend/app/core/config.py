@@ -72,7 +72,6 @@ class Settings(BaseSettings):
     max_triage_incidents: int = 15
     agent_max_tool_calls: int = 8
     agent_timeout_seconds: int = 120
-    demo_mode: bool = False
 
     # --- Auth: self-serve signup email verification (M15, app.core.verification) ---
     # Supabase Auth's built-in email sender is the transport; our own Postgres row is
@@ -143,8 +142,13 @@ class Settings(BaseSettings):
 
     @property
     def llm_enabled(self) -> bool:
-        """The pipeline runs end to end without a key; only agentic triage is skipped."""
-        return bool(self.anthropic_api_key.get_secret_value()) and not self.demo_mode
+        """Whether a real Anthropic API key is configured. The upload pipeline (parse through
+        correlate) always runs regardless; only agentic triage depends on this. Unlike the old
+        DEMO_MODE-era version of this property, a false value here is no longer treated as a
+        normal, silently-handled state by `app.agent.orchestrator` — see that module's docstring.
+        It still matters to other, independent no-key fallbacks (e.g. `app.tier2.nl_to_sql`'s
+        canned-example path), which is why the property itself stays rather than being inlined."""
+        return bool(self.anthropic_api_key.get_secret_value())
 
     @property
     def email_verification_enabled(self) -> bool:

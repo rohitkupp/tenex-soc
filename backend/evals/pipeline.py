@@ -1,8 +1,13 @@
 """Runs the real L1 (Sigma) -> L2 (signal) -> L3 (ml) -> L5 (graph) -> fusion -> incident pipeline
 over the golden scenario set, via `app.graph.pipeline_demo` — the M10 milestone's own end-to-end
 verification harness (`app/graph/pipeline_demo.py`'s module docstring: "parse -> events -> L1/L2/
-L3 detectors -> calibrate -> entity graph -> L5 graph features -> incidents -> classify -> fuse &
-severity"). This module is the thin evals-owned glue around it: an isolated calibrator store (so
+L3 detectors -> calibrate -> entity graph -> L5 graph features -> incidents -> fuse & severity").
+No `classify` stage: migration change 19 (`docs/v2_migration/MIGRATION-01-evidence-first.md`)
+removed `app.graph.classifier`'s LightGBM technique classifier this module used to load
+(`load_classifier`, deleted with it) and thread through `run_golden_scenarios`/`run_benign_pure`;
+multiclass technique attribution is the LLM hypothesis-evaluation stage's job now (docs/07), out
+of this milestone's ownership. This module is the thin evals-owned glue around it: an isolated
+calibrator store (so
 this harness never races the shared `data/models/calibrators/` directory other concurrently-
 developed code reads/writes), per-scenario timing, re-querying persisted `Signal` rows for
 per-detector precision/recall, a benign-only-corpus runner (`run_scenario` itself requires a
@@ -34,8 +39,6 @@ from app.core.db import get_session_factory
 from app.core.logging import get_logger
 from app.detection.calibration import CalibratorStore, DetectorSample, fit_calibrators
 from app.graph.builder import fetch_graph_events
-from app.graph.classifier import CLASSIFIER_ARTIFACT_FILENAME, TechniqueClassifierArtifact
-from app.graph.classifier import MODELS_DIR as CLASSIFIER_MODELS_DIR
 from app.graph.ingest import IngestResult, ingest_log_file
 from app.graph.pipeline_demo import (
     RunResult,
@@ -121,14 +124,6 @@ _install_robust_z_sanitizer()
 # at this 120-user org, every seed tried). Matching `GOLDEN_EVENTS_PER_SCENARIO` sidesteps that
 # rather than chasing a second, separately-tuned "just barely enough" constant.
 _CALIBRATION_FIT_EVENTS = GOLDEN_EVENTS_PER_SCENARIO
-
-
-def load_classifier() -> TechniqueClassifierArtifact | None:
-    path = CLASSIFIER_MODELS_DIR / CLASSIFIER_ARTIFACT_FILENAME
-    if not path.exists():
-        log.warning("pipeline.classifier_missing", path=str(path))
-        return None
-    return TechniqueClassifierArtifact.load()
 
 
 def fit_isolated_calibrators(
@@ -235,7 +230,7 @@ def _fetch_signals(analysis_id: uuid.UUID, tenant_id: uuid.UUID) -> list[Signal]
 
 
 def run_golden_scenarios(
-    *, calibrators: CalibratorStore, classifier: TechniqueClassifierArtifact | None
+    *, calibrators: CalibratorStore
 ) -> tuple[dict[str, ScenarioRun], list[uuid.UUID]]:
     """Run every one of docs/11's eight golden scenarios end to end (L1-L5, fusion, incidents),
     against the frozen `evals/golden/<key>/` files. Returns `{key: ScenarioRun}` plus the list of
@@ -252,7 +247,6 @@ def run_golden_scenarios(
             events=GOLDEN_EVENTS_PER_SCENARIO,
             out_dir=golden.scenario_dir(key),
             calibrators=calibrators,
-            classifier=classifier,
         )
         elapsed = time.perf_counter() - t0
         signals = _fetch_signals(result.ingest.analysis_id, result.ingest.tenant_id)
@@ -286,7 +280,7 @@ class BenignPureRun:
 
 
 def run_benign_pure(
-    *, calibrators: CalibratorStore, classifier: TechniqueClassifierArtifact | None
+    *, calibrators: CalibratorStore
 ) -> tuple[BenignPureRun, list[uuid.UUID]]:
     """Run L1-L5 over the pure-benign FP-control corpus (docs/12: false-positive rate "on pure
     benign files"). No `.labels.json` exists for this file (`datagen benign` does not write one,
@@ -378,7 +372,6 @@ __all__ = [
     "ScenarioRun",
     "correlation_metrics",
     "fit_isolated_calibrators",
-    "load_classifier",
     "run_benign_pure",
     "run_golden_scenarios",
 ]

@@ -15,8 +15,8 @@ The primary key is `detector_key` itself (no surrogate `id`) — matched exactly
 choice, not an oversight here.
 
 `tenant_id` overrides `TenantScopedMixin`'s column exactly like `app.models.event.Event` /
-`app.models.signal.Signal` / `app.models.incident.Incident` / `app.models.enforcement_state.
-EnforcementState` — no FK, no bare index, matching docs/02's literal SQL.
+`app.models.signal.Signal` / `app.models.incident.Incident` — no FK, no bare index, matching
+docs/02's literal SQL.
 """
 
 from __future__ import annotations

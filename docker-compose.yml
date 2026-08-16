@@ -18,7 +18,6 @@ x-backend-env: &backend-env
   MAX_TRIAGE_INCIDENTS: ${MAX_TRIAGE_INCIDENTS:-15}
   AGENT_MAX_TOOL_CALLS: ${AGENT_MAX_TOOL_CALLS:-8}
   AGENT_TIMEOUT_SECONDS: ${AGENT_TIMEOUT_SECONDS:-120}
-  DEMO_MODE: ${DEMO_MODE:-false}
   CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000}
   LOG_LEVEL: ${LOG_LEVEL:-info}
 
@@ -149,10 +148,6 @@ services:
   agent:
     <<: *worker-defaults
     command: python -m app.workers.agent
-
-  responder:
-    <<: *worker-defaults
-    command: python -m app.workers.responder
 
   tier2-sync:
     <<: *worker-defaults

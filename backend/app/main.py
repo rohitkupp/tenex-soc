@@ -23,7 +23,6 @@ from app.api import (
     learning,
     models,
     ops,
-    plans,
     stream,
     tier2,
     uploads,
@@ -45,7 +44,6 @@ log = get_logger(__name__)
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     log.info(
         "api.startup",
-        demo_mode=settings.demo_mode,
         llm_enabled=settings.llm_enabled,
         model=settings.anthropic_model,
     )
@@ -72,7 +70,7 @@ app = FastAPI(
     description=(
         "Layered detection funnel over security telemetry: OCSF normalization → rules → "
         "signal processing → entity-window ML → sequence models → graph correlation → "
-        "agentic triage → response planning."
+        "agentic triage."
     ),
     version="0.1.0",
     docs_url="/api/docs",
@@ -117,7 +115,6 @@ app.include_router(stream.router, prefix="/api", tags=["analyses"])
 app.include_router(events.router, prefix="/api", tags=["events"])
 app.include_router(incident_detail.router, prefix="/api", tags=["incidents"])
 app.include_router(incidents.router, prefix="/api", tags=["incidents"])
-app.include_router(plans.router, prefix="/api", tags=["response"])
 app.include_router(learning.router, prefix="/api", tags=["learning"])
 app.include_router(models.router, prefix="/api", tags=["models"])
 app.include_router(ops.router, prefix="/api", tags=["ops"])

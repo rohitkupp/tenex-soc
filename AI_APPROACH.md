@@ -78,7 +78,7 @@ strawman loss.
 
 ## 3. Pre-registered predictions — two came back falsified
 
-[docs/12](docs/12-EVALUATION.md) states falsifiable predictions *before* the run, and two synthetic
+[docs/12](docs/v1/12-EVALUATION.md) states falsifiable predictions *before* the run, and two synthetic
 scenarios were built specifically to test them. This is the part of the project I would most want
 read closely.
 

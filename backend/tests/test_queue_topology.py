@@ -71,6 +71,8 @@ async def test_stages_exchange_exists(channel: AbstractChannel) -> None:
 async def test_queue_names_cover_docs_01_services_table() -> None:
     # One parse queue today (`parse.zscaler`) -- Okta and CloudTrail's sibling queues were
     # removed along with those sources; this project is narrowed to ZScaler web proxy logs only.
+    # `respond` was removed in docs/v2_migration change 20 -- `triage` now publishes directly
+    # to `tier2`.
     assert set(QUEUE_NAMES) == {
         "orchestrator",
         "parse.zscaler",
@@ -79,6 +81,5 @@ async def test_queue_names_cover_docs_01_services_table() -> None:
         "detect",
         "correlate",
         "triage",
-        "respond",
         "tier2",
     }

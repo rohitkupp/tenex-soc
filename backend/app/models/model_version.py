@@ -13,9 +13,13 @@ CREATE TABLE model_versions (
 );
 ```
 
-Not tenant-scoped — no `tenant_id` column in docs/02's SQL. Models (`autoencoder`, `iforest`,
-`lightgbm`, `logbert`, `markov`) are trained and versioned globally across the whole platform,
-not per tenant.
+Not tenant-scoped — no `tenant_id` column in docs/02's SQL. Models (`iforest`, `mahalanobis`,
+`ecod`, `lof`, `lightgbm` -- the learning loop's retrain-candidate classifier,
+`app.learning.classifier`, not the deleted `app.graph.classifier`; see migration change 19,
+`docs/v2_migration/MIGRATION-01-evidence-first.md`) are trained and versioned globally across the
+whole platform, not per tenant. `autoencoder`, `logbert`, and `markov` no longer apply -- all
+three were cut (autoencoder: change 19; logbert/markov: the earlier L4 sequence-model rejection,
+docs/04 §L4).
 """
 
 from __future__ import annotations
