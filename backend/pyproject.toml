@@ -119,4 +119,10 @@ ignore_errors = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+  "exclusive_broker: needs a broker no other test is touching; leaks consumers on cancel (see tests/test_pipeline_load.py)",
+]
+# The load test is excluded by default because it leaves live consumers on the shared work queue
+# and steals later tests' messages. Run it explicitly: pytest tests/test_pipeline_load.py
+addopts = "-m 'not exclusive_broker'"
 filterwarnings = ["error::DeprecationWarning:app.*"]
