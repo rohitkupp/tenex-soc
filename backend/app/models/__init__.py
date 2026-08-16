@@ -11,7 +11,13 @@ additive rather than changes to an existing table.
 
 `response_plans`, `enforcement_state`, and `enforcement_journal` (the response action graph and
 simulated enforcement plane) were removed in docs/v2_migration change 20 -- see the migration
-alembic revision for the drop, and docs/08-RESPONSE-AND-LEARNING.md, Part 1 (deleted)."""
+alembic revision for the drop, and docs/08-RESPONSE-AND-LEARNING.md, Part 1 (deleted).
+
+docs/v2_migration change 1 ("Historical baseline store") adds `baseline_windows`,
+`baseline_profiles`, and `baseline_contacts` -- the persistent per-tenant history every
+percentile and rarity lookup resolves against from here on, never the uploaded file. Loaded by
+`app.baseline.loader`, queried by `app.baseline.resolve`; see `app/models/baseline_window.py`
+for why none of the three carry a `tenants` FK."""
 
 from __future__ import annotations
 
@@ -24,6 +30,9 @@ from app.models.base import (
     tenant_scope,
     tenant_session,
 )
+from app.models.baseline_contact import BaselineContact
+from app.models.baseline_profile import BaselineProfile
+from app.models.baseline_window import BaselineWindow
 from app.models.benign_baseline_entry import BenignBaselineEntry
 from app.models.dead_letter import DeadLetter
 from app.models.detector_stats import DetectorStats
@@ -36,15 +45,19 @@ from app.models.model_version import ModelVersion
 from app.models.signal import Signal
 from app.models.suppression_candidate import SuppressionCandidate
 from app.models.synthetic_seed_marker import SyntheticSeedMarker
-from app.models.tenant import Tenant
+from app.models.tenant import LIVE_TENANT_NAME, Tenant, get_or_create_live_tenant
 from app.models.tier2_signature import Tier2Signature
 from app.models.triage_verdict import TriageVerdict
 from app.models.upload import Upload
 from app.models.user import User
 
 __all__ = [
+    "LIVE_TENANT_NAME",
     "Analysis",
     "AnalystFeedback",
+    "BaselineContact",
+    "BaselineProfile",
+    "BaselineWindow",
     "BenignBaselineEntry",
     "DeadLetter",
     "DetectorStats",
@@ -65,6 +78,7 @@ __all__ = [
     "Upload",
     "User",
     "bypass_tenant_scope",
+    "get_or_create_live_tenant",
     "tenant_scope",
     "tenant_session",
 ]

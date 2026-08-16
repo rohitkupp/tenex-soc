@@ -12,21 +12,28 @@ verification state.
 **Self-serve signup + email verification.** Supabase Auth is the
 email-ownership oracle only — this app never authenticates against it and never
 stores a second password there. See `app.core.verification`'s module docstring for
-the full design. `signup` always creates our own `Tenant` + `User` row (mirroring
-`app.scripts.seed.seed`) and, when a Supabase project is configured
-(`Settings.email_verification_enabled`), asks Supabase to email a confirmation link.
-When it is *not* configured — local dev, CI, and every test in this suite —
-`email_verified_at` is stamped immediately instead of left `NULL`; see `signup`'s
-docstring for why that branch is a deliberate, loud fallback and not an accidental
-bypass. `login` is the enforcement point: it checks the password first and the
-verification state second, in that order, and only the second check can produce the
-new `email_not_verified` response — see `login`'s docstring for why the order itself
-is load-bearing.
+the full design. `signup` always creates our own `User` row and, when a Supabase
+project is configured (`Settings.email_verification_enabled`), asks Supabase to email
+a confirmation link. When it is *not* configured — local dev, CI, and every test in
+this suite — `email_verified_at` is stamped immediately instead of left `NULL`; see
+`signup`'s docstring for why that branch is a deliberate, loud fallback and not an
+accidental bypass. `login` is the enforcement point: it checks the password first and
+the verification state second, in that order, and only the second check can produce
+the new `email_not_verified` response — see `login`'s docstring for why the order
+itself is load-bearing.
+
+**Shared workspace (docs/v2_migration/MIGRATION-01-evidence-first.md, change 23).**
+`signup` no longer creates a `Tenant` — every account, old or new, joins the single
+live tenant (`app.models.tenant.get_or_create_live_tenant`, the same lookup
+`app.scripts.seed.seed` uses for the demo user). Authentication and per-account
+credentials are unchanged; what changed is that a tenant is no longer minted per
+signup. `TenantScopedMixin`, `tenant_scope`, and the `do_orm_execute` guard
+(`app.models.base`) are untouched — there is simply one tenant flowing through them
+in practice.
 """
 
 from __future__ import annotations
 
-import secrets
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -52,7 +59,7 @@ from app.core.security import (
 )
 from app.core.verification import is_email_confirmed_upstream, send_verification_email
 from app.models.base import bypass_tenant_scope
-from app.models.tenant import Tenant
+from app.models.tenant import get_or_create_live_tenant
 from app.models.user import User
 from app.schemas.auth import (
     LoginRequest,
@@ -84,10 +91,14 @@ def signup(
     body: SignupRequest,
     db: Annotated[Session, Depends(get_db)],
 ) -> VerificationSentResponse:
-    """Creates our own `Tenant` + `User` (mirroring `app.scripts.seed.seed`'s
-    tenant-then-user, fresh-random-salt sequence exactly — two places building a
-    tenant's first user is one place too many to let the salt scheme drift) and,
-    when Supabase is configured, asks it to email a confirmation link.
+    """Creates our own `User`, joined to the single live tenant
+    (`app.models.tenant.get_or_create_live_tenant` — change 23, the same lookup
+    `app.scripts.seed.seed` uses for the demo user) and, when Supabase is configured,
+    asks it to email a confirmation link.
+
+    `body.org_name` is still accepted and validated (the API contract and the
+    frontend's signup form are unchanged) but no longer names anything: it is not
+    persisted anywhere, since there is no longer a per-signup tenant for it to name.
 
     Returns the *same* 201 body whether or not `body.email` was already registered
     (docs/06: never disclose account existence) — on a collision this creates nothing
@@ -119,9 +130,7 @@ def signup(
         log.info("auth.signup_email_already_registered")
         return VerificationSentResponse(status="verification_sent", email=body.email)
 
-    tenant = Tenant(name=body.org_name, pseudonym_salt=secrets.token_bytes(32))
-    db.add(tenant)
-    db.flush()  # assign tenant.id before the user row references it
+    tenant = get_or_create_live_tenant(db)
 
     if settings.email_verification_enabled:
         email_verified_at = None

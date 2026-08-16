@@ -1,11 +1,22 @@
-"""Train all four L3 models on the clean benign corpus (docs/13 M8/M8b acceptance: "All models
+"""Train all six L3 models on the clean benign corpus (docs/13 M8/M8b acceptance: "All models
 trained and benchmarked"). Was five, and needed a second, separately-seeded labeled "tuning
 validation" corpus purely to feed the autoencoder's Optuna hyperparameter search -- migration
 change 19 (`docs/v2_migration/MIGRATION-01-evidence-first.md`) removed that model, and the tuning-
 validation machinery (`--tuning-seed`/`--tuning-dir`/`--optuna-trials`, `_build_tuning_
 validation`) had no other consumer, so it went with it rather than being left as dead code with
-nothing left to tune. The other four models fit directly against the benign corpus alone; none of
+nothing left to tune. The other four (now six, with EIF and kth-NN landing per that same
+migration's post-migration roster) models fit directly against the benign corpus alone; none of
 them needs a second, labeled corpus the way an Optuna val-AUC objective did.
+
+## Full-space vs. PCA — the shipped choice is explicit, recorded here
+
+`ml.kth_nn` and `ml.peer_group` (LOF) are this package's two distance-based models, and migration
+change 25's test plan requires them evaluated "full-space vs. PCA" (`dimensionality.py`). This
+script fits and saves *both* variants of each: the full-space instance is the one `MLModelBundle`
+actually loads and scores with (`detect.py`) — `_SHIPPED_DISTANCE_SPACE` below names that choice
+explicitly rather than leaving it an unstated default — and the PCA-space instance is saved
+alongside it purely so `evaluate.py` can report the comparison. Neither `detect.py` nor
+`MLModelBundle` ever loads the `_pca` artifacts; they exist only for the benchmark.
 
     python -m app.detection.ml.train \\
         --corpus-seed 42 --corpus-events 400000 --corpus-dir /tmp/m8_corpus
@@ -43,7 +54,7 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import pandas as pd
 from sklearn.preprocessing import StandardScaler
@@ -55,16 +66,36 @@ from app.detection.ml.artifacts import (
     save_scaler,
     write_feature_manifest,
 )
+from app.detection.ml.dimensionality import FeatureSpace
 from app.detection.ml.ecod import ECOD_ARTIFACT_FILENAME, ECODArtifact
+from app.detection.ml.eif import EIF_ARTIFACT_FILENAME, EIFArtifact
 from app.detection.ml.events import load_ml_events
 from app.detection.ml.features import build_entity_window_features, to_feature_matrix
 from app.detection.ml.iforest import IFOREST_ARTIFACT_FILENAME, IsolationForestArtifact
-from app.detection.ml.lof import LOF_ARTIFACT_FILENAME, LOFArtifact
+from app.detection.ml.knn import (
+    KNN_ARTIFACT_FILENAME,
+    KNN_PCA_ARTIFACT_FILENAME,
+    KNNArtifact,
+)
+from app.detection.ml.lof import (
+    LOF_ARTIFACT_FILENAME,
+    LOF_PCA_ARTIFACT_FILENAME,
+    LOFArtifact,
+)
 from app.detection.ml.mahalanobis import MAHALANOBIS_ARTIFACT_FILENAME, MahalanobisArtifact
 
 log = get_logger(__name__)
 
 _TRAIN_CALIBRATION_SPLIT = 0.9  # fraction of the (time-sorted) corpus rows used for training
+
+# The explicit, recorded full-space/PCA choice for the shipped `ml.kth_nn`/`ml.peer_group`
+# instances that `MLModelBundle` actually loads (module docstring). "full" for now: raw feature
+# units stay directly citable in an incident's evidence section (docs/09) without translating a
+# PCA loading back into "bytes_out_sum" for an analyst, and there is not yet a benchmark run
+# against the real (regenerated) corpus showing PCA-space distance detects anything full-space
+# misses that would be worth that interpretability cost. `evaluate.py` scores both spaces so that
+# claim is checked, not assumed — see its own "full_vs_pca" result section.
+_SHIPPED_DISTANCE_SPACE: Final[FeatureSpace] = "full"
 
 
 def _run_datagen(args: list[str]) -> None:
@@ -138,8 +169,36 @@ def train(
     log.info("ecod.fit.done", fit_seconds=round(ecod.fit_seconds, 3))
 
     log.info("lof.fit.start")
-    lof = LOFArtifact.fit(x_train, x_calib)
+    lof = LOFArtifact.fit(x_train, x_calib, space=_SHIPPED_DISTANCE_SPACE)
     log.info("lof.fit.done", fit_seconds=round(lof.fit_seconds, 3))
+
+    log.info("eif.fit.start")
+    eif = EIFArtifact.fit(x_train, x_calib)
+    log.info(
+        "eif.fit.done", fit_seconds=round(eif.fit_seconds, 3), extension_level=eif.extension_level
+    )
+
+    log.info("kth_nn.fit.start")
+    kth_nn = KNNArtifact.fit(x_train, x_calib, space=_SHIPPED_DISTANCE_SPACE)
+    log.info("kth_nn.fit.done", fit_seconds=round(kth_nn.fit_seconds, 3))
+
+    # PCA-space variants of the two distance models, fit purely so `evaluate.py` can report
+    # "full-space vs. PCA" (module docstring) -- never loaded by `MLModelBundle`/`detect.py`.
+    log.info("lof_pca.fit.start")
+    lof_pca = LOFArtifact.fit(x_train, x_calib, space="pca")
+    log.info(
+        "lof_pca.fit.done",
+        fit_seconds=round(lof_pca.fit_seconds, 3),
+        n_components=lof_pca.pca.n_components if lof_pca.pca else None,
+    )
+
+    log.info("kth_nn_pca.fit.start")
+    kth_nn_pca = KNNArtifact.fit(x_train, x_calib, space="pca")
+    log.info(
+        "kth_nn_pca.fit.done",
+        fit_seconds=round(kth_nn_pca.fit_seconds, 3),
+        n_components=kth_nn_pca.pca.n_components if kth_nn_pca.pca else None,
+    )
 
     models_dir.mkdir(parents=True, exist_ok=True)
     save_scaler(scaler, models_dir / SCALER_ARTIFACT_FILENAME)
@@ -147,6 +206,10 @@ def train(
     mahalanobis.save(models_dir / MAHALANOBIS_ARTIFACT_FILENAME)
     ecod.save(models_dir / ECOD_ARTIFACT_FILENAME)
     lof.save(models_dir / LOF_ARTIFACT_FILENAME)
+    eif.save(models_dir / EIF_ARTIFACT_FILENAME)
+    kth_nn.save(models_dir / KNN_ARTIFACT_FILENAME)
+    lof_pca.save(models_dir / LOF_PCA_ARTIFACT_FILENAME)
+    kth_nn_pca.save(models_dir / KNN_PCA_ARTIFACT_FILENAME)
 
     trained_at = datetime.now(UTC).isoformat()
     write_feature_manifest(
@@ -160,6 +223,14 @@ def train(
             "mahalanobis_fit_seconds": mahalanobis.fit_seconds,
             "ecod_fit_seconds": ecod.fit_seconds,
             "lof_fit_seconds": lof.fit_seconds,
+            "eif_fit_seconds": eif.fit_seconds,
+            "eif_extension_level": eif.extension_level,
+            "kth_nn_fit_seconds": kth_nn.fit_seconds,
+            "shipped_distance_space": _SHIPPED_DISTANCE_SPACE,
+            "lof_pca_fit_seconds": lof_pca.fit_seconds,
+            "lof_pca_n_components": lof_pca.pca.n_components if lof_pca.pca else None,
+            "kth_nn_pca_fit_seconds": kth_nn_pca.fit_seconds,
+            "kth_nn_pca_n_components": kth_nn_pca.pca.n_components if kth_nn_pca.pca else None,
         },
         models_dir=models_dir,
     )
@@ -176,6 +247,11 @@ def train(
         "mahalanobis_fit_seconds": mahalanobis.fit_seconds,
         "ecod_fit_seconds": ecod.fit_seconds,
         "lof_fit_seconds": lof.fit_seconds,
+        "eif_fit_seconds": eif.fit_seconds,
+        "eif_extension_level": eif.extension_level,
+        "kth_nn_fit_seconds": kth_nn.fit_seconds,
+        "lof_pca_n_components": lof_pca.pca.n_components if lof_pca.pca else None,
+        "kth_nn_pca_n_components": kth_nn_pca.pca.n_components if kth_nn_pca.pca else None,
         "total_seconds": total_seconds,
     }
     summary_path = models_dir / "train_summary.json"

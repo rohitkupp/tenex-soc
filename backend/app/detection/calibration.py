@@ -284,12 +284,10 @@ def _model_pairs(bundle: Any) -> list[tuple[str, Any]]:
     """
     from app.detection.ml import detect as ml_detect
 
-    return [
-        (ml_detect.ML_IFOREST, bundle.iforest),
-        (ml_detect.ML_MAHALANOBIS, bundle.mahalanobis),
-        (ml_detect.ML_ECOD, bundle.ecod),
-        (ml_detect.ML_PEER_GROUP, bundle.lof),
-    ]
+    # Genuinely dynamic now. This used to be four hardcoded tuples under a docstring claiming
+    # it was read off the package's own constants — which meant EIF and kth-NN, added by
+    # migration change 19, were silently never calibrated.
+    return [(key, getattr(bundle, field)) for key, field in ml_detect.ML_MODEL_FIELDS.items()]
 
 
 def _fit_ml_calibrators() -> dict[str, IsotonicCalibrator]:

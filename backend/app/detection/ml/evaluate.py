@@ -1,8 +1,12 @@
 """The L3 benchmark (docs/12 §"Model comparison — the headline tables", row "L3 unsupervised":
-Isolation Forest / Mahalanobis / ECOD / LOF, F1 / AUC-PR / per-scenario recall). Was five models
-through the autoencoder; migration change 19 (`docs/v2_migration/MIGRATION-01-evidence-first.md`)
-removed it (its job -- joint-distribution anomalies -- is what a later phase's EIF is meant to
-take over), so this benchmark is four-wide until EIF lands.
+Isolation Forest / Mahalanobis / ECOD / LOF / EIF / kth-NN, F1 / AUC-PR / per-scenario recall).
+Was five models through the autoencoder; migration change 19
+(`docs/v2_migration/MIGRATION-01-evidence-first.md`) removed it (its job -- joint-distribution
+anomalies -- is what EIF's oblique splits take over) and named EIF and kth-NN as the roster
+entries that absorb its job and round the L3 distance/instance-based side out, respectively. Both
+land here alongside the three retained baselines (Isolation Forest, Mahalanobis, ECOD) and LOF --
+change 19's own words: those three stay registered specifically "so EIF has to prove oblique
+splitting earns its cost against them."
 
     python -m app.detection.ml.evaluate --eval-seed 7 --eval-dir /tmp/m8_eval
 
@@ -13,6 +17,14 @@ labeled eval set. Losing is a valid, reportable outcome." docs/04's own model ta
 Isolation Forest "Baseline" — so that is literally the bar every other model here must clear, not
 an informal comparison. This script does not try to make any one model win; it measures which
 model wins and reports that, plainly, including if it loses.
+
+## Full-space vs. PCA (migration change 25's test plan)
+
+`ml.kth_nn` and `ml.peer_group` (LOF) are this package's two distance-based models. `train.py`
+fits and saves a PCA-space variant of each (`dimensionality.py`) purely so this benchmark can
+report the comparison the test plan asks for — see `evaluate`'s own `full_vs_pca_metrics` and the
+returned `full_vs_pca` section. This is a separate, additional comparison from the primary
+six-model `aggregate`/`winner` table above; the PCA variants are never candidates for `winner`.
 
 ## Data provenance
 
@@ -43,6 +55,7 @@ import json
 import subprocess
 import sys
 import time
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -56,7 +69,9 @@ from app.core.logging import configure_logging, get_logger
 from app.detection.ml.artifacts import MODELS_DIR
 from app.detection.ml.detect import (
     ML_ECOD,
+    ML_EIF,
     ML_IFOREST,
+    ML_KTH_NN,
     ML_MAHALANOBIS,
     ML_PEER_GROUP,
     SIGNAL_CONFIDENCE_THRESHOLD,
@@ -64,6 +79,8 @@ from app.detection.ml.detect import (
 )
 from app.detection.ml.events import load_ml_events
 from app.detection.ml.features import build_entity_window_features
+from app.detection.ml.knn import KNN_PCA_ARTIFACT_FILENAME, KNNArtifact
+from app.detection.ml.lof import LOF_PCA_ARTIFACT_FILENAME, LOFArtifact
 
 log = get_logger(__name__)
 
@@ -90,13 +107,21 @@ LOW_AND_SLOW_SCENARIO = "low_and_slow_exfil"
 PEER_GROUP_SCENARIO = "peer_group_deviation"
 SEASONAL_SCENARIO = "seasonal_deviation"
 
-MODEL_KEYS: tuple[str, str, str, str] = (
+MODEL_KEYS: tuple[str, str, str, str, str, str] = (
     ML_IFOREST,
     ML_MAHALANOBIS,
     ML_ECOD,
     ML_PEER_GROUP,
+    ML_EIF,
+    ML_KTH_NN,
 )
 BASELINE_MODEL = ML_IFOREST
+
+# Full-space vs. PCA comparison (module docstring) — distinct model keys from the primary six
+# above so the PCA variants never enter `_pick_winner`'s contention; they exist to answer "does
+# PCA help the distance methods," not to compete for the shipped slot.
+ML_PEER_GROUP_PCA = "ml.peer_group.pca"
+ML_KTH_NN_PCA = "ml.kth_nn.pca"
 
 
 def _run_datagen(args: list[str]) -> None:
@@ -218,9 +243,15 @@ def evaluate(
 ) -> dict[str, Any]:
     t0 = time.perf_counter()
     bundle = MLModelBundle.load(models_dir)
+    # PCA-space variants of the two distance models — `train.py` always fits and saves both
+    # spaces (module docstring "Full-space vs. PCA"); loaded here, outside `MLModelBundle`,
+    # purely for the comparison this benchmark reports and never for `_pick_winner`.
+    lof_pca = LOFArtifact.load(models_dir / LOF_PCA_ARTIFACT_FILENAME)
+    kth_nn_pca = KNNArtifact.load(models_dir / KNN_PCA_ARTIFACT_FILENAME)
     scenario_dirs = _generate_eval_scenarios(eval_dir, eval_seed)
 
     per_scenario_metrics: list[ScenarioModelMetrics] = []
+    full_vs_pca_metrics: list[ScenarioModelMetrics] = []
     ground_truths: dict[str, dict[str, Any]] = {}
     fp_background_flagged: dict[str, int] = dict.fromkeys(MODEL_KEYS, 0)
     fp_background_total = 0
@@ -242,6 +273,8 @@ def evaluate(
             (ML_MAHALANOBIS, bundle.mahalanobis),
             (ML_ECOD, bundle.ecod),
             (ML_PEER_GROUP, bundle.lof),
+            (ML_EIF, bundle.eif),
+            (ML_KTH_NN, bundle.kth_nn),
         ):
             raw = model.raw_scores(x_scaled)
             conf = model.confidence(raw)
@@ -253,9 +286,36 @@ def evaluate(
             if key == FP_CONTROL_SCENARIO:
                 fp_scenario10[model_key] = (flagged_benign, int(benign_mask.sum()))
 
+        # Full-space vs. PCA comparison — same `x_scaled` input every model above scores (each
+        # PCA artifact projects internally, `knn.py`/`lof.py`'s own `_project`), kept in a
+        # separate metrics list so these two extra keys never enter `MODEL_KEYS`'s winner pick.
+        for pca_model_key, pca_model in (
+            (ML_PEER_GROUP_PCA, lof_pca),
+            (ML_KTH_NN_PCA, kth_nn_pca),
+        ):
+            pca_raw = pca_model.raw_scores(x_scaled)
+            pca_conf = pca_model.confidence(pca_raw)
+            full_vs_pca_metrics.append(_metrics_for_model(key, pca_model_key, y, pca_raw, pca_conf))
+
         log.info("evaluate.scenario_done", scenario=key, n_rows=len(df), n_positive=int(y.sum()))
 
     aggregate = _aggregate_metrics(per_scenario_metrics)
+    full_vs_pca_aggregate = _aggregate_metrics(
+        per_scenario_metrics + full_vs_pca_metrics,
+        model_keys=(ML_PEER_GROUP, ML_PEER_GROUP_PCA, ML_KTH_NN, ML_KTH_NN_PCA),
+    )
+    full_vs_pca = {
+        "lof": {
+            "full": full_vs_pca_aggregate[ML_PEER_GROUP],
+            "pca": full_vs_pca_aggregate[ML_PEER_GROUP_PCA],
+            "pca_n_components": lof_pca.pca.n_components if lof_pca.pca else None,
+        },
+        "kth_nn": {
+            "full": full_vs_pca_aggregate[ML_KTH_NN],
+            "pca": full_vs_pca_aggregate[ML_KTH_NN_PCA],
+            "pca_n_components": kth_nn_pca.pca.n_components if kth_nn_pca.pca else None,
+        },
+    }
     fp_rates = {
         model: (fp_background_flagged[model] / fp_background_total if fp_background_total else 0.0)
         for model in MODEL_KEYS
@@ -295,6 +355,7 @@ def evaluate(
         "seasonal_l3_detectors": seasonal_l3_detectors,
         "pre_registered_predictions": predictions,
         "ground_truths": ground_truths,
+        "full_vs_pca": full_vs_pca,
     }
     return result
 
@@ -320,7 +381,12 @@ def _pre_registered_predictions(
     Each entry's `outcome` is `"CONFIRMED"` or `"FALSIFIED"` per docs/12's own stated falsification
     condition, decided by the rule alone -- never reframed after seeing the numbers.
     """
-    global_models = {ML_IFOREST, ML_MAHALANOBIS, ML_ECOD}
+    # `ml.eif` ("global entity anomaly") and `ml.kth_nn` ("global distance") both carry the
+    # roster's own "global" label (docs/v2_migration change 19's post-migration roster table) --
+    # included here alongside the three original global baselines so this prediction stays a
+    # real test of "LOF's peer-relative-ness is what catches this, not global-ness in general"
+    # now that there are five global models to check against, not three.
+    global_models = {ML_IFOREST, ML_MAHALANOBIS, ML_ECOD, ML_EIF, ML_KTH_NN}
     lof_detected = ML_PEER_GROUP in peer_group_detectors
     any_global_detected = bool(global_models & set(peer_group_detectors))
     prediction_2_confirmed = lof_detected and not any_global_detected
@@ -328,8 +394,9 @@ def _pre_registered_predictions(
     return {
         "2_peer_group_lof_not_global": {
             "statement": (
-                "Scenario 5 (peer-group deviation): LOF (ml.peer_group) detects it; the three "
-                "other global L3 models (iforest, mahalanobis, ecod) do not."
+                "Scenario 5 (peer-group deviation): LOF (ml.peer_group) detects it; the other "
+                f"{len(global_models)} global L3 models (iforest, mahalanobis, ecod, eif, "
+                "kth_nn) do not."
             ),
             "lof_detected": lof_detected,
             "global_models_that_detected": sorted(global_models & set(peer_group_detectors)),
@@ -351,16 +418,20 @@ def _pre_registered_predictions(
     }
 
 
-def _aggregate_metrics(rows: list[ScenarioModelMetrics]) -> dict[str, dict[str, float]]:
+def _aggregate_metrics(
+    rows: list[ScenarioModelMetrics], model_keys: Sequence[str] = MODEL_KEYS
+) -> dict[str, dict[str, float]]:
     """Per-model aggregate F1/AUC-PR, averaged over the eight *attack* scenarios (excludes the
     prompt-injection canary and the benign-but-weird FP control, neither of which is a detection
     target for these models — averaging them in would penalize every model for correctly *not*
-    flagging traffic that is not supposed to fire)."""
+    flagging traffic that is not supposed to fire). `model_keys` defaults to the primary
+    `MODEL_KEYS` six; the full-space-vs-PCA comparison (`evaluate`) calls this a second time with
+    its own four-key subset so those two extra PCA keys never enter the primary aggregate."""
     attack_scenarios = {
         k for k in SCENARIO_KEYS if k not in (FP_CONTROL_SCENARIO, "prompt_injection_canary")
     }
     aggregate: dict[str, dict[str, float]] = {}
-    for model in MODEL_KEYS:
+    for model in model_keys:
         model_rows = [r for r in rows if r.model == model and r.scenario in attack_scenarios]
         f1s = [r.f1 for r in model_rows]
         aucs = [r.auc_pr for r in model_rows if not np.isnan(r.auc_pr)]

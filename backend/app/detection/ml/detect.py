@@ -1,14 +1,19 @@
-"""Unified scoring surface over all four benchmarked L3 models — `ml.iforest`, `ml.mahalanobis`,
-`ml.ecod`, `ml.peer_group` (LOF) (docs/04 §L3 model table), each producing a structured signal in
-the shape the task brief specifies: "Signals: detector_key `ml.<model>`, detector_layer `ml`,
-structured explanation."
+"""Unified scoring surface over all six benchmarked L3 models — `ml.iforest`, `ml.mahalanobis`,
+`ml.ecod`, `ml.peer_group` (LOF), `ml.eif`, `ml.kth_nn` (docs/04 §L3 model table), each producing
+a structured signal in the shape the task brief specifies: "Signals: detector_key `ml.<model>`,
+detector_layer `ml`, structured explanation."
 
 The autoencoder that used to round this bundle out to five models is gone -- migration change 19
 (`docs/v2_migration/MIGRATION-01-evidence-first.md`) removed it: its job (joint-distribution
 anomalies no single feature's tail exposes) is what EIF's oblique splits are meant to address, and
 docs/04 had already committed to "if EIF matches the autoencoder, the autoencoder is cut" before
-EIF's own benchmark ran. EIF is a later phase's work, not built here -- this bundle is four models
-until it lands.
+EIF's own benchmark ran. EIF and kth-NN (`eif.py`, `knn.py`) are that migration's post-migration
+roster landing: EIF for joint-distribution/oblique anomalies, kth-NN for global, multimodality-
+tolerant distance. `ml.iforest`, `ml.mahalanobis`, and `ml.ecod` stay registered here too — change
+19 keeps them as benchmarked baselines specifically so EIF has something to prove it beats; this
+module does not decide which subset ships as "primary" (that gate lives in fusion/signal-emission
+policy, out of this package's scope) — every model that is fit gets scored and offered as a
+candidate signal, uniformly.
 
 ## Why this is not `app.detection.signal.drafts.SignalDraft`
 
@@ -45,15 +50,19 @@ from sklearn.preprocessing import StandardScaler
 
 from app.detection.ml.artifacts import MODELS_DIR, SCALER_ARTIFACT_FILENAME, load_scaler
 from app.detection.ml.ecod import ECOD_ARTIFACT_FILENAME, ECODArtifact
+from app.detection.ml.eif import EIF_ARTIFACT_FILENAME, EIFArtifact
 from app.detection.ml.features import to_feature_matrix
 from app.detection.ml.iforest import IFOREST_ARTIFACT_FILENAME, IsolationForestArtifact
+from app.detection.ml.knn import KNN_ARTIFACT_FILENAME, KNNArtifact
 from app.detection.ml.lof import LOF_ARTIFACT_FILENAME, LOFArtifact
 from app.detection.ml.mahalanobis import MAHALANOBIS_ARTIFACT_FILENAME, MahalanobisArtifact
 
 __all__ = [
     "DETECTOR_LAYER",
     "ML_ECOD",
+    "ML_EIF",
     "ML_IFOREST",
+    "ML_KTH_NN",
     "ML_MAHALANOBIS",
     "ML_PEER_GROUP",
     "SIGNAL_CONFIDENCE_THRESHOLD",
@@ -76,6 +85,28 @@ ML_ECOD = "ml.ecod"
 # is the name docs/04 and the scenario 3/5 ground truth (`datagen.types.ML_PEER_GROUP`) already
 # use for "the model LOF formalizes."
 ML_PEER_GROUP = "ml.peer_group"
+# `datagen/generate_corpus.py` (the migration's regenerated corpus, out of this package's
+# ownership) already references the literal string `"ml.eif"` in `expected_detectors` -- matched
+# here rather than invented independently.
+ML_EIF = "ml.eif"
+# kth-NN has no pre-existing forward-referenced name to match (unlike `ml.eif`) -- `ml.kth_nn` is
+# this package's own natural key, mirroring the post-migration roster's own name for it.
+ML_KTH_NN = "ml.kth_nn"
+
+# The canonical roster: detector key -> the `MLModelBundle` attribute holding that model.
+# Single source of truth so anything iterating "every L3 model" (isotonic calibration, the
+# benchmark, the demo pipeline) picks up a new model automatically instead of carrying its own
+# hardcoded copy of the list. Adding a model to the bundle without adding it here is the bug
+# this mapping exists to prevent — `app.detection.calibration._model_pairs` silently skipped
+# EIF and kth-NN for exactly that reason.
+ML_MODEL_FIELDS: dict[str, str] = {
+    ML_IFOREST: "iforest",
+    ML_MAHALANOBIS: "mahalanobis",
+    ML_ECOD: "ecod",
+    ML_PEER_GROUP: "lof",
+    ML_EIF: "eif",
+    ML_KTH_NN: "kth_nn",
+}
 DETECTOR_LAYER = "ml"
 
 # The operating point every model's binary "emit a signal or not" decision uses: this window's
@@ -115,6 +146,8 @@ class MLModelBundle:
     mahalanobis: MahalanobisArtifact
     ecod: ECODArtifact
     lof: LOFArtifact
+    eif: EIFArtifact
+    kth_nn: KNNArtifact
 
     @classmethod
     def load(cls, models_dir: Path = MODELS_DIR) -> MLModelBundle:
@@ -124,6 +157,8 @@ class MLModelBundle:
             mahalanobis=MahalanobisArtifact.load(models_dir / MAHALANOBIS_ARTIFACT_FILENAME),
             ecod=ECODArtifact.load(models_dir / ECOD_ARTIFACT_FILENAME),
             lof=LOFArtifact.load(models_dir / LOF_ARTIFACT_FILENAME),
+            eif=EIFArtifact.load(models_dir / EIF_ARTIFACT_FILENAME),
+            kth_nn=KNNArtifact.load(models_dir / KNN_ARTIFACT_FILENAME),
         )
 
     def transform(self, df: pd.DataFrame) -> npt.NDArray[np.float64]:
@@ -172,7 +207,7 @@ def score_entity_windows(
     threshold: float = SIGNAL_CONFIDENCE_THRESHOLD,
 ) -> list[MLSignalDraft]:
     """Score every `(entity, hour)` row in `df` (from `build_entity_window_features`) against all
-    four models, returning one `MLSignalDraft` per (model, row) pair whose confidence clears
+    six models, returning one `MLSignalDraft` per (model, row) pair whose confidence clears
     `threshold`. `evaluate.py` instead calls each model's `raw_scores`/`confidence` directly over
     the *entire* `df` (thresholded and unthresholded) to compute AUC-PR/F1/recall — this function
     is the "what would actually get written as a signal" view, analogous to what a live pipeline
@@ -188,6 +223,8 @@ def score_entity_windows(
         (ML_MAHALANOBIS, bundle.mahalanobis),
         (ML_ECOD, bundle.ecod),
         (ML_PEER_GROUP, bundle.lof),
+        (ML_EIF, bundle.eif),
+        (ML_KTH_NN, bundle.kth_nn),
     ):
         raw = model.raw_scores(x_scaled)
         conf = model.confidence(raw)

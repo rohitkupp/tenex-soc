@@ -1,14 +1,17 @@
-"""`make seed` → `python -m app.scripts.seed`. Creates the demo tenant + user.
+"""`make seed` → `python -m app.scripts.seed`. Creates the single live tenant
+(`northwind`, docs/v2_migration/MIGRATION-01-evidence-first.md change 23) + the demo user.
 
 Credentials come from the environment with sane local defaults — never a hardcoded
 secret shipped for anything beyond local dev. Idempotent: re-running it when the demo
-user already exists is a no-op, not an error.
+user already exists is a no-op, not an error. The tenant name is not overridable — it
+must be exactly `LIVE_TENANT_NAME` ("northwind") to match the corpus generator's
+train-split org (see `app.models.tenant`'s docstring), unlike the email/password below,
+which have no such downstream dependency.
 """
 
 from __future__ import annotations
 
 import os
-import secrets
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -17,18 +20,16 @@ from app.core.db import get_session_factory
 from app.core.logging import configure_logging, get_logger
 from app.core.security import hash_password
 from app.models.base import bypass_tenant_scope
-from app.models.tenant import Tenant
+from app.models.tenant import get_or_create_live_tenant
 from app.models.user import User
 
 log = get_logger(__name__)
 
-DEFAULT_TENANT_NAME = "Demo Tenant"
 DEFAULT_EMAIL = "demo@tenex.local"
 DEFAULT_PASSWORD = "tenex-demo-password"  # noqa: S105 - documented local-only default
 
 
 def seed() -> None:
-    tenant_name = os.environ.get("SEED_TENANT_NAME", DEFAULT_TENANT_NAME)
     email = os.environ.get("SEED_USER_EMAIL", DEFAULT_EMAIL)
     password = os.environ.get("SEED_USER_PASSWORD", DEFAULT_PASSWORD)
 
@@ -42,9 +43,7 @@ def seed() -> None:
             log.info("seed.already_exists", email=email, tenant_id=str(existing.tenant_id))
             return
 
-        tenant = Tenant(name=tenant_name, pseudonym_salt=secrets.token_bytes(32))
-        session.add(tenant)
-        session.flush()  # assign tenant.id before the user row references it
+        tenant = get_or_create_live_tenant(session)
 
         # Born verified: the demo user must be able to log in immediately on a fresh
         # `make up` + `make migrate` + `make seed`, and there is no pre-existing row
@@ -65,7 +64,7 @@ def seed() -> None:
         log.info(
             "seed.created",
             tenant_id=str(tenant.id),
-            tenant_name=tenant_name,
+            tenant_name=tenant.name,
             user_id=str(user.id),
             email=email,
         )

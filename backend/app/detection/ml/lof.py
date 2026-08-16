@@ -46,6 +46,14 @@ because pyod fits it with `novelty=True`) and report, per feature, how far this 
 *mean of those specific neighbors* — the same "deviation from the population this row is actually
 being compared against" idea `ml.mahalanobis`'s quadratic decomposition uses, just with the
 population narrowed to this row's own local neighborhood instead of the whole training set.
+
+## Full-space vs. PCA (migration change 25's test plan; see `dimensionality.py`)
+
+LOF is this package's other *distance*-based model (alongside `ml.kth_nn`) — both are density/
+distance measures over the fitted feature space, so both get the same recorded-choice PCA path
+(`space`, `dimensionality.fit_pca_reduction`). `explain_row` reports the neighbor-mean deviation in
+original feature units regardless of which space chose the neighbors, for the same reason
+`knn.py`'s own `explain_row` does: an analyst needs raw-feature deviation, not a PCA loading.
 """
 
 from __future__ import annotations
@@ -60,11 +68,13 @@ import numpy as np
 import numpy.typing as npt
 from pyod.models.lof import LOF
 
+from app.detection.ml.dimensionality import FeatureSpace, PCAReduction, fit_pca_reduction
 from app.detection.ml.features import ENTITY_WINDOW_MODEL_FEATURES, sanitize_scores
 
-__all__ = ["LOF_ARTIFACT_FILENAME", "LOFArtifact"]
+__all__ = ["LOF_ARTIFACT_FILENAME", "LOF_PCA_ARTIFACT_FILENAME", "LOFArtifact"]
 
 LOF_ARTIFACT_FILENAME = "lof.joblib"
+LOF_PCA_ARTIFACT_FILENAME = "lof_pca.joblib"
 
 # pyod/sklearn default -- docs/04 does not specify a neighbor count for LOF, and 20 is the
 # standard default from the original LOF paper's own worked examples, not tuned against this
@@ -77,13 +87,20 @@ _TOP_K_EXPLANATION = 10
 @dataclass(slots=True)
 class LOFArtifact:
     """A fitted `pyod.models.lof.LOF` (`novelty=True` under the hood) plus the same benign
-    calibration sample every other L3 model in this package carries.
+    calibration sample every other L3 model in this package carries, plus the recorded full-space/
+    PCA choice — module docstring "Full-space vs. PCA".
     """
 
     model: LOF
     feature_names: tuple[str, ...]
     calibration_scores: npt.NDArray[np.float64]
     fit_seconds: float
+    space: FeatureSpace = "full"
+    pca: PCAReduction | None = None
+    # Only populated when `space == "pca"` — `explain_row` needs the original feature values to
+    # report an interpretable neighbor-mean deviation even when neighbors were chosen in PCA
+    # space (same reasoning as `knn.py`'s `KNNArtifact.train_x_full`).
+    train_x_full: npt.NDArray[np.float64] | None = None
 
     @classmethod
     def fit(
@@ -93,22 +110,39 @@ class LOFArtifact:
         *,
         feature_names: tuple[str, ...] = ENTITY_WINDOW_MODEL_FEATURES,
         n_neighbors: int = N_NEIGHBORS,
+        space: FeatureSpace = "full",
+        random_state: int = 42,
     ) -> LOFArtifact:
         t0 = time.perf_counter()
+        pca_reduction: PCAReduction | None = None
+        fit_x = x_train
+        train_x_full: npt.NDArray[np.float64] | None = None
+        if space == "pca":
+            pca_reduction = fit_pca_reduction(x_train, random_state=random_state)
+            fit_x = pca_reduction.transform(x_train)
+            train_x_full = x_train
+
         model = LOF(n_neighbors=n_neighbors, novelty=True)
-        model.fit(x_train)
+        model.fit(fit_x)
         fit_seconds = time.perf_counter() - t0
 
-        calib_scores = np.sort(_raw_scores(model, x_calibration))
+        calib_input = pca_reduction.transform(x_calibration) if pca_reduction else x_calibration
+        calib_scores = np.sort(_raw_scores(model, calib_input))
         return cls(
             model=model,
             feature_names=feature_names,
             calibration_scores=calib_scores,
             fit_seconds=fit_seconds,
+            space=space,
+            pca=pca_reduction,
+            train_x_full=train_x_full,
         )
 
+    def _project(self, x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+        return self.pca.transform(x) if self.pca is not None else x
+
     def raw_scores(self, x: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-        return _raw_scores(self.model, x)
+        return _raw_scores(self.model, self._project(x))
 
     def confidence(self, raw_scores: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         n = len(self.calibration_scores)
@@ -121,21 +155,26 @@ class LOFArtifact:
         """`{total_score, per_feature: [{feature, contribution}, ...]}` — `contribution` is this
         row's deviation from the *mean of its own k nearest training-set neighbors* on that
         feature (module docstring), sorted by `|contribution|` descending, capped to the top
-        `_TOP_K_EXPLANATION`. Unlike `ml.mahalanobis`'s quadratic decomposition, these terms are
-        not guaranteed to sum to `total_score` (the LOF density ratio is not an additive
-        function of per-feature deviations) — `total_score` is the model's own raw LOF score,
-        reported alongside as the actual operating quantity, not implied by the per-feature list.
+        `_TOP_K_EXPLANATION`. Always reported in original feature units, even when `space ==
+        "pca"` selected the neighbors by PCA-space distance (module docstring "Full-space vs.
+        PCA"). Unlike `ml.mahalanobis`'s quadratic decomposition, these terms are not guaranteed
+        to sum to `total_score` (the LOF density ratio is not an additive function of per-feature
+        deviations) — `total_score` is the model's own raw LOF score, reported alongside as the
+        actual operating quantity, not implied by the per-feature list.
         """
-        row = x_row.reshape(1, -1)
-        _, neighbor_idx = self.model.detector_.kneighbors(row, n_neighbors=N_NEIGHBORS)
-        neighbor_mean = self.model.detector_._fit_X[neighbor_idx[0]].mean(axis=0)
+        query = self._project(x_row.reshape(1, -1))
+        _, neighbor_idx = self.model.detector_.kneighbors(query, n_neighbors=N_NEIGHBORS)
+        reference = (
+            self.train_x_full if self.train_x_full is not None else self.model.detector_._fit_X
+        )
+        neighbor_mean = np.asarray(reference)[neighbor_idx[0]].mean(axis=0)
         deviation = x_row - np.asarray(neighbor_mean)
         order = np.argsort(-np.abs(deviation))[:_TOP_K_EXPLANATION]
         per_feature = [
             {"feature": self.feature_names[i], "contribution": float(deviation[i])} for i in order
         ]
         return {
-            "total_score": float(_raw_scores(self.model, row)[0]),
+            "total_score": float(_raw_scores(self.model, query)[0]),
             "per_feature": per_feature,
         }
 
@@ -147,6 +186,9 @@ class LOFArtifact:
                 "feature_names": self.feature_names,
                 "calibration_scores": self.calibration_scores,
                 "fit_seconds": self.fit_seconds,
+                "space": self.space,
+                "pca": self.pca,
+                "train_x_full": self.train_x_full,
             },
             path,
         )
@@ -159,6 +201,9 @@ class LOFArtifact:
             feature_names=tuple(payload["feature_names"]),
             calibration_scores=payload["calibration_scores"],
             fit_seconds=payload["fit_seconds"],
+            space=payload.get("space", "full"),
+            pca=payload.get("pca"),
+            train_x_full=payload.get("train_x_full"),
         )
 
 

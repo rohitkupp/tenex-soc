@@ -35,9 +35,11 @@ migrate: ## Apply database migrations
 revision: ## Autogenerate a migration: make revision m="add events"
 	$(BACKEND) alembic revision --autogenerate -m "$(m)"
 
-seed: ## Create the demo tenant, user, and seeded feedback history
+seed: ## Create the live tenant, demo user, seeded feedback history, Tier 2 peer signatures, and the historical baseline
 	$(BACKEND) python -m app.scripts.seed
 	$(BACKEND) python -m app.scripts.seed_feedback
+	$(BACKEND) python -m app.scripts.seed_tier2
+	$(BACKEND) python -m app.baseline.loader
 
 gen-data: ## Regenerate the 1000-file corpus + 6-month baseline (FILES=n to shrink)
 	$(BACKEND) python datagen/generate_corpus.py --out data --files $(FILES)
