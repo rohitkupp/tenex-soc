@@ -27,26 +27,56 @@ from __future__ import annotations
 import base64
 import binascii
 import uuid
+from collections import defaultdict
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, tuple_
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.orm import Session
 from starlette import status
 
+from app.agent.client import LiveCaller
+from app.agent.context import FIELD_TRUNCATE_LEN, log_citation_id
+from app.agent.orchestrator import (
+    MAX_SEMANTIC_DOMAINS_PER_CALL,
+    assess_domain_semantics,
+    narrate_analysis,
+)
+from app.api.incident_detail import analysis_timeline_phases
+from app.baseline.resolve import contact_counts, percentile_for
+from app.core.config import get_settings
 from app.core.db import get_db, get_engine
 from app.core.errors import ApiError
 from app.core.logging import get_logger
 from app.core.security import CurrentUser, require_user
+from app.detection.evidence.constants import SIGNAL_BEACONING, SIGNAL_DGA
+from app.graph.builder import REL_ACCESSED
 from app.models.analysis import Analysis
 from app.models.base import tenant_scope
 from app.models.dead_letter import DeadLetter
+from app.models.entity import Entity
+from app.models.entity_edge import EntityEdge
+from app.models.event import Event
+from app.models.incident import Incident
+from app.models.signal import Signal
+from app.models.triage_verdict import TriageVerdict
 from app.models.upload import Upload
 from app.pipeline import state
 from app.pipeline.messages import StageMessage
+from app.privacy.redact import redact_text
 from app.queue.publish import publish_stage_message
 from app.queue.topology import declare_topology, get_connection, work_queue
+from app.schemas.overview import (
+    AnalysisNarrateResponse,
+    AnalysisOverviewResponse,
+    BaselineComparisonOut,
+    DomainSemanticFinding,
+    LogOverview,
+    NotableDestination,
+    NotableUser,
+    PeriodicityOut,
+)
 from app.schemas.uploads import AnalysisListResponse, AnalysisOut, AnalysisRetryResponse
 
 router = APIRouter()
@@ -55,6 +85,21 @@ log = get_logger(__name__)
 
 def _not_found() -> ApiError:
     return ApiError(status_code=404, code="not_found", detail="Analysis not found.")
+
+
+def _no_api_key() -> ApiError:
+    # Mirrors `app.api.incidents._no_api_key` verbatim — same condition (`Settings.llm_enabled`),
+    # same remediation. Kept as its own copy here rather than imported, matching this codebase's
+    # established preference for a few duplicated lines over a cross-router import for something
+    # this small (see e.g. `app.api.incident_detail._incident_scope_and_window`'s own docstring).
+    return ApiError(
+        status_code=503,
+        code="anthropic_api_key_not_configured",
+        detail=(
+            "The Narrator requires ANTHROPIC_API_KEY to be configured. DEMO_MODE and the "
+            "no-key fallback have been removed — set the key and retry."
+        ),
+    )
 
 
 def _not_retryable(detail: str, *, status_code: int = 404) -> ApiError:
@@ -200,4 +245,675 @@ async def retry_analysis(
 
     return AnalysisRetryResponse(
         analysis_id=analysis_id, republished_to=work_queue(target_queue), retried_at=retried_at
+    )
+
+
+# =============================================================================================
+# GET /analyses/{id}/overview + POST /analyses/{id}/narrate — docs/v2_migration changes 8, 9,
+# 10, 14 Path A. See this module's own docstring split at the top... actually see
+# `app.schemas.overview`'s module docstring for why these are two routes, not one.
+# =============================================================================================
+
+# change 9: a user-window counts as "anomalous" for the notable-users view at this confidence
+# bar. `signals.confidence` is isotonic-calibrated on 0.0-1.0 (docs/04; see e.g.
+# `app.detection.ml.detect.SIGNAL_CONFIDENCE_THRESHOLD`, which gates a signal firing at all —
+# never 0-100 the way `incidents.anomaly_confidence` is, change 3's own rescaled field). 0.7 is
+# this view's own bar for "worth calling out on the ten-second overview", not a threshold reused
+# from elsewhere — there is no existing "notable window" concept in this codebase to match.
+ANOMALOUS_WINDOW_CONFIDENCE_THRESHOLD = 0.7
+
+# How many notable users/destinations change 9's overview surfaces, each. Unranked and uncapped
+# would mean every entity a single low-confidence signal ever touched shows up on "what happened
+# in ten seconds" — the opposite of the point (docs/09: "an analyst should understand the file in
+# ten seconds"). Ranked by top anomaly score (falling back to raw volume when no signal exists)
+# before the cut, so it drops the least notable entities first, never an arbitrary slice.
+NOTABLE_ENTITIES_LIMIT = 20
+
+# change 8's own selection rule: "a semantic pass over destinations flagged rare or first-seen."
+# `NotableDestination.first_observed` (org-wide zero prior contact) is the unambiguous case; this
+# extends "rare" to "contacted so few times org-wide it is practically first-seen" without
+# inventing a second rarity concept — reads the same `app.baseline.resolve.contact_counts` source
+# `_compute_notable_destinations.first_observed` already reads, just at a threshold above zero.
+RARE_ORG_CONTACT_THRESHOLD = 2
+# How many of a candidate domain's own log lines travel into the semantic-pass evidence bundle as
+# citable ids — CLAUDE.md rule 1 applied to one domain's own event count, not just the whole file.
+CANDIDATE_LOG_IDS_LIMIT = 10
+# How many events immediately preceding a user's first visit to a candidate domain are surfaced as
+# "preceding context" — change 8's own worked example ("github-update-security.com appearing
+# immediately after a GitHub credential event"). Small on purpose: this is the one preceding event
+# (or handful of them) that made the visit contextually notable, not a session replay.
+PRECEDING_CONTEXT_EVENTS = 3
+
+
+def _compute_log_overview(db: Session, tenant_id: uuid.UUID, analysis: Analysis) -> LogOverview:
+    """change 9: "computed in SQL, on every upload, whether or not anything is flagged. Do not
+    ask a model to count 83,241 rows." One aggregate query over `events`, no Python-side loop."""
+    with tenant_scope(db, tenant_id):
+        row = db.execute(
+            select(
+                func.count(Event.id),
+                func.count(func.distinct(Event.principal)),
+                func.count(func.distinct(Event.src_ip)),
+                func.count(func.distinct(Event.domain)),
+                func.count().filter(Event.action == "allowed"),
+                func.count().filter(Event.action == "blocked"),
+                func.coalesce(func.sum(Event.bytes_out), 0),
+                func.coalesce(func.sum(Event.bytes_in), 0),
+                func.min(Event.ts),
+                func.max(Event.ts),
+            ).where(Event.analysis_id == analysis.id)
+        ).one()
+    (
+        events,
+        users,
+        src_ips,
+        unique_domains,
+        allowed,
+        blocked,
+        bytes_out,
+        bytes_in,
+        period_start,
+        period_end,
+    ) = row
+    return LogOverview(
+        period_start=period_start,
+        period_end=period_end,
+        events=events,
+        users=users,
+        src_ips=src_ips,
+        unique_domains=unique_domains,
+        allowed=allowed,
+        blocked=blocked,
+        bytes_out=int(bytes_out),
+        bytes_in=int(bytes_in),
+        parse_failure_rate=analysis.parse_failure_rate,
+    )
+
+
+def _rank_key(score: float | None, volume: int) -> tuple[float, int]:
+    """Sort descending by top anomaly score, entities with no signal at all ranked below every
+    scored entity (not at 0 — a real zero-confidence signal should still outrank "never flagged"),
+    ties broken by raw volume. Returns a key `sorted(..., key=...)` can use directly (ascending
+    sort over negated values == descending sort over the originals)."""
+    return (-(score if score is not None else -1.0), -volume)
+
+
+def _compute_notable_users(
+    db: Session, tenant_id: uuid.UUID, analysis_id: uuid.UUID
+) -> list[NotableUser]:
+    """change 9: "notable users (anomalous windows, volume vs. baseline, first-seen domain
+    count, top anomaly score)." Deterministic composition over `entities`, `signals`,
+    `entity_edges`, and the baseline store (`app.baseline.resolve`) — no LLM involvement."""
+    with tenant_scope(db, tenant_id):
+        entities = (
+            db.execute(select(Entity).where(Entity.analysis_id == analysis_id)).scalars().all()
+        )
+        edges = (
+            db.execute(
+                select(EntityEdge).where(
+                    EntityEdge.analysis_id == analysis_id, EntityEdge.relation == REL_ACCESSED
+                )
+            )
+            .scalars()
+            .all()
+        )
+        top_score_rows = db.execute(
+            select(Signal.entity_value, func.max(Signal.confidence))
+            .where(Signal.analysis_id == analysis_id, Signal.entity_type == "user")
+            .group_by(Signal.entity_value)
+        ).all()
+        anomalous_window_rows = db.execute(
+            select(Signal.entity_value, func.count(func.distinct(Signal.window_start)))
+            .where(
+                Signal.analysis_id == analysis_id,
+                Signal.entity_type == "user",
+                Signal.confidence >= ANOMALOUS_WINDOW_CONFIDENCE_THRESHOLD,
+                Signal.window_start.is_not(None),
+            )
+            .group_by(Signal.entity_value)
+        ).all()
+
+    users = [e for e in entities if e.type == "user"]
+    if not users:
+        return []
+
+    # Plain loops, not `dict(rows)`/a dict comprehension: a SQLAlchemy `Row` isn't statically a
+    # `tuple` for either's type-checking (ruff's C416 "use dict()" and mypy disagree with each
+    # other here — `dict(rows)` satisfies the former and fails the latter), and a loop sidesteps
+    # both cleanly, with no lint suppression needed.
+    top_score_by_user: dict[str, float] = {}
+    for value, score in top_score_rows:
+        top_score_by_user[value] = score
+    anomalous_windows_by_user: dict[str, int] = {}
+    for value, n in anomalous_window_rows:
+        anomalous_windows_by_user[value] = n
+
+    by_id = {e.id: e for e in entities}
+    domains_by_user: dict[str, set[str]] = defaultdict(set)
+    for edge in edges:
+        src, dst = by_id.get(edge.src_entity_id), by_id.get(edge.dst_entity_id)
+        if src is not None and dst is not None and src.type == "user" and dst.type == "domain":
+            domains_by_user[src.value].add(dst.value)
+
+    ranked = sorted(
+        users,
+        key=lambda u: _rank_key(top_score_by_user.get(u.value), u.event_count),
+    )[:NOTABLE_ENTITIES_LIMIT]
+
+    notable: list[NotableUser] = []
+    for user in ranked:
+        baseline = percentile_for(
+            db, tenant_id, "user", user.value, "n_events", float(user.event_count)
+        )
+        first_seen_count = sum(
+            1
+            for domain in domains_by_user.get(user.value, ())
+            if contact_counts(db, tenant_id, user.value, domain).user.is_first_contact
+        )
+        notable.append(
+            NotableUser(
+                value=user.value,
+                anomalous_windows=anomalous_windows_by_user.get(user.value, 0),
+                volume_vs_baseline=BaselineComparisonOut(
+                    metric=baseline.metric,
+                    value=baseline.value,
+                    baseline_status=baseline.baseline_status,
+                    n_windows=baseline.n_windows,
+                    percentile=baseline.percentile,
+                    p50=baseline.p50,
+                    p95=baseline.p95,
+                    p99=baseline.p99,
+                ),
+                first_seen_domain_count=first_seen_count,
+                top_anomaly_score=top_score_by_user.get(user.value),
+            )
+        )
+    return notable
+
+
+def _compute_notable_destinations(
+    db: Session, tenant_id: uuid.UUID, analysis_id: uuid.UUID
+) -> list[NotableDestination]:
+    """change 9: "notable destinations (first-observed flag, distinct users, DGA score,
+    connection count, periodicity)." `dga_score`/`periodicity` are read straight off the
+    `signal.dga`/`signal.beaconing` rows already produced for this domain — this view never
+    recomputes an extractor, it only reads what was already calibrated and persisted."""
+    with tenant_scope(db, tenant_id):
+        entities = (
+            db.execute(select(Entity).where(Entity.analysis_id == analysis_id)).scalars().all()
+        )
+        edges = (
+            db.execute(
+                select(EntityEdge).where(
+                    EntityEdge.analysis_id == analysis_id, EntityEdge.relation == REL_ACCESSED
+                )
+            )
+            .scalars()
+            .all()
+        )
+        top_score_rows = db.execute(
+            select(Signal.entity_value, func.max(Signal.confidence))
+            .where(Signal.analysis_id == analysis_id, Signal.entity_type == "domain")
+            .group_by(Signal.entity_value)
+        ).all()
+        dga_rows = db.execute(
+            select(Signal.entity_value, Signal.explanation).where(
+                Signal.analysis_id == analysis_id,
+                Signal.entity_type == "domain",
+                Signal.detector_key == SIGNAL_DGA,
+            )
+        ).all()
+        beacon_rows = db.execute(
+            select(Signal.entity_value, Signal.explanation).where(
+                Signal.analysis_id == analysis_id,
+                Signal.entity_type == "domain",
+                Signal.detector_key == SIGNAL_BEACONING,
+            )
+        ).all()
+
+    domains = [e for e in entities if e.type == "domain"]
+    if not domains:
+        return []
+
+    top_score_by_domain: dict[str, float] = {}
+    for value, score in top_score_rows:
+        top_score_by_domain[value] = score
+
+    # `signal.dga`/`signal.beaconing` explanations are detector-authored JSONB
+    # (`app.detection.evidence.{dga,beaconing}`'s own payload shape) — read defensively, same
+    # "tolerant on purpose" policy `app.api.incident_detail._technique_ids` documents for the
+    # same reason (one malformed row should cost that row, not the whole overview).
+    dga_score_by_domain: dict[str, float] = {}
+    for value, explanation in dga_rows:
+        score = explanation.get("score") if isinstance(explanation, dict) else None
+        if isinstance(score, int | float):
+            dga_score_by_domain[value] = float(score)
+
+    periodicity_by_domain: dict[str, PeriodicityOut] = {}
+    for value, explanation in beacon_rows:
+        if not isinstance(explanation, dict):
+            continue
+        period = explanation.get("dominant_period_s")
+        strength = explanation.get("fft_peak_power_ratio")
+        if isinstance(period, int | float) and isinstance(strength, int | float):
+            periodicity_by_domain[value] = PeriodicityOut(
+                dominant_period_s=float(period), spectral_strength=float(strength)
+            )
+
+    by_id = {e.id: e for e in entities}
+    users_by_domain: dict[str, set[str]] = defaultdict(set)
+    for edge in edges:
+        src, dst = by_id.get(edge.src_entity_id), by_id.get(edge.dst_entity_id)
+        if src is not None and dst is not None and src.type == "user" and dst.type == "domain":
+            users_by_domain[dst.value].add(src.value)
+
+    ranked = sorted(
+        domains,
+        key=lambda d: _rank_key(top_score_by_domain.get(d.value), d.event_count),
+    )[:NOTABLE_ENTITIES_LIMIT]
+
+    notable: list[NotableDestination] = []
+    for domain in ranked:
+        # Only `.org` is used below — `contact_counts` also resolves user/department scope,
+        # neither meaningful for a domain-centric (not user-centric) view, so an empty `user`
+        # is passed deliberately rather than picking one of this domain's visitors arbitrarily.
+        org_contact = contact_counts(db, tenant_id, "", domain.value).org
+        notable.append(
+            NotableDestination(
+                value=domain.value,
+                first_observed=org_contact.is_first_contact,
+                distinct_users=len(users_by_domain.get(domain.value, ())),
+                dga_score=dga_score_by_domain.get(domain.value),
+                connection_count=domain.event_count,
+                periodicity=periodicity_by_domain.get(domain.value),
+            )
+        )
+    return notable
+
+
+# =============================================================================================
+# change 8 — LLM semantic domain analysis. This section is the deterministic half only: which
+# domains are candidates, and what citable evidence bundle each one carries. The LLM call and its
+# verifier are `app.agent.orchestrator.assess_domain_semantics` — out of this module's ownership
+# boundary, the same split `_narrator_overview_payload`/`narrate_analysis_route` already draws for
+# change 14 Path A.
+# =============================================================================================
+
+
+def _domain_semantic_candidate_selection(
+    db: Session, tenant_id: uuid.UUID, destinations: list[NotableDestination]
+) -> list[NotableDestination]:
+    """Which of this analysis's `notable_destinations` (already ranked/capped to
+    `NOTABLE_ENTITIES_LIMIT`) are "rare or first-seen" enough to earn a second, semantic look.
+    Ranked first-seen-first, then by ascending org contact count, and capped at
+    `MAX_SEMANTIC_DOMAINS_PER_CALL` *here* — before any of the per-candidate row lookups below run
+    — so the domains most worth the extra queries are the ones that survive the cut."""
+    ranked: list[tuple[int, NotableDestination]] = []
+    for d in destinations:
+        if d.first_observed:
+            ranked.append((0, d))
+            continue
+        org_count = contact_counts(db, tenant_id, "", d.value).org.contact_count
+        if 0 < org_count <= RARE_ORG_CONTACT_THRESHOLD:
+            ranked.append((org_count, d))
+    ranked.sort(key=lambda pair: pair[0])
+    return [d for _, d in ranked[:MAX_SEMANTIC_DOMAINS_PER_CALL]]
+
+
+def _first_event_for_domain(
+    db: Session, tenant_id: uuid.UUID, analysis_id: uuid.UUID, domain: str
+) -> Event | None:
+    with tenant_scope(db, tenant_id):
+        return db.execute(
+            select(Event)
+            .where(Event.analysis_id == analysis_id, Event.domain == domain)
+            .order_by(Event.ts.asc())
+            .limit(1)
+        ).scalar_one_or_none()
+
+
+def _preceding_events_payload(
+    db: Session,
+    tenant_id: uuid.UUID,
+    analysis_id: uuid.UUID,
+    principal: str,
+    before_ts: datetime,
+) -> list[dict[str, Any]]:
+    """Every event immediately before `before_ts`, for the same `principal` only — this is what
+    lets the semantic pass see "a GitHub credential event, then this domain" without needing to
+    know *who* made either request. Deliberately never includes `principal`/`src_ip`/`dst_ip` in
+    what it returns (CLAUDE.md rule 4, "pseudonymize before any external call") — the strongest
+    form of that rule is not sending the identifier at all, not minting a pseudonym for something
+    this pass has no use for. `url_path` is truncated + redacted the same way `app.agent.context.
+    AgentContext.sanitize_free_text` treats every other free-text field that reaches a prompt."""
+    with tenant_scope(db, tenant_id):
+        rows = db.execute(
+            select(Event.domain, Event.url_path, Event.action, Event.ts)
+            .where(
+                Event.analysis_id == analysis_id,
+                Event.principal == principal,
+                Event.ts < before_ts,
+            )
+            .order_by(Event.ts.desc())
+            .limit(PRECEDING_CONTEXT_EVENTS)
+        ).all()
+    payload: list[dict[str, Any]] = []
+    for domain, url_path, action, ts in rows:
+        truncated = (url_path or "")[:FIELD_TRUNCATE_LEN]
+        payload.append(
+            {
+                "domain": domain,
+                "url_path": redact_text(truncated).text or None,
+                "action": action,
+                "seconds_before": max(0.0, (before_ts - ts).total_seconds()),
+            }
+        )
+    return payload
+
+
+def _log_ids_for_domain(
+    db: Session, tenant_id: uuid.UUID, analysis_id: uuid.UUID, domain: str, limit: int
+) -> list[str]:
+    with tenant_scope(db, tenant_id):
+        raw_line_nos = (
+            db.execute(
+                select(Event.raw_line_no)
+                .where(Event.analysis_id == analysis_id, Event.domain == domain)
+                .order_by(Event.ts.asc())
+                .limit(limit)
+            )
+            .scalars()
+            .all()
+        )
+    return [log_citation_id(n) for n in raw_line_nos]
+
+
+def _compute_domain_semantic_candidates(
+    db: Session,
+    tenant_id: uuid.UUID,
+    analysis_id: uuid.UUID,
+    destinations: list[NotableDestination],
+) -> list[dict[str, Any]]:
+    """change 8's deterministic evidence bundle, one entry per selected candidate domain
+    (`_domain_semantic_candidate_selection`): rarity at org scope, the domain's own already-
+    computed DGA score (read straight off `NotableDestination.dga_score` — never recomputed,
+    never touched by this pass, `app.detection.evidence.dga` stays the single owner of that
+    number), a bounded set of citable `LOG-n` ids, and, when the first visit's own event carries a
+    `principal`, the events that immediately preceded it. Every field here is either already
+    computed elsewhere in this module or a small, targeted, `analysis_id`-scoped query — the same
+    "reduce before the next stage" discipline CLAUDE.md rule 1 applies everywhere else in this
+    pipeline, applied to a handful of domains rather than the whole file.
+    """
+    selected = _domain_semantic_candidate_selection(db, tenant_id, destinations)
+    candidates: list[dict[str, Any]] = []
+    for i, dest in enumerate(selected, start=1):
+        rarity = contact_counts(db, tenant_id, "", dest.value).org
+        first_event = _first_event_for_domain(db, tenant_id, analysis_id, dest.value)
+        preceding: list[dict[str, Any]] = []
+        if first_event is not None and first_event.principal:
+            preceding = _preceding_events_payload(
+                db, tenant_id, analysis_id, first_event.principal, first_event.ts
+            )
+        candidates.append(
+            {
+                "domain": dest.value,
+                "evidence_id": f"DOMAIN-{i}",
+                "rarity": {
+                    "org_contact_count": rarity.contact_count,
+                    "org_first_contact": rarity.is_first_contact,
+                },
+                "dga_score": dest.dga_score,
+                "connection_count": dest.connection_count,
+                "distinct_users": dest.distinct_users,
+                "log_ids": _log_ids_for_domain(
+                    db, tenant_id, analysis_id, dest.value, CANDIDATE_LOG_IDS_LIMIT
+                ),
+                "preceding_context": preceding,
+            }
+        )
+    return candidates
+
+
+def _compute_domain_semantic_findings(
+    db: Session,
+    tenant_id: uuid.UUID,
+    analysis_id: uuid.UUID,
+    destinations: list[NotableDestination],
+) -> list[DomainSemanticFinding]:
+    """Populates change 8's field on `AnalysisOverviewResponse` — see that schema's own docstring
+    for why it defaulted to `[]` before this function existed. Gated on `Settings.llm_enabled`
+    (an unconfigured key degrades to `[]`, exactly like an analysis with no rare/first-seen
+    destinations at all — never a 503, unlike `POST /narrate`: this is a `GET` route documented
+    as safe to call on every page load) and wrapped in a broad try/except (a timeout, a refusal,
+    or a schema-validation failure from the LLM call degrades to `[]` the same way `app.agent.
+    context._prior_analyst_decisions_block` degrades a failed memory lookup — a missing semantic
+    finding is a correct, reportable answer; a 500 on the whole overview page is not).
+
+    **Cost note**, spelled out rather than hidden: unlike every other field on this response, this
+    one can spend real tokens on every call when an analysis actually has rare/first-seen
+    destinations — `app.agent.orchestrator.assess_domain_semantics`'s own docstring covers why
+    that is an accepted tradeoff for now (there is nowhere to persist a computed-once result
+    without a schema migration, which is out of this milestone's ownership boundary) and what the
+    short-circuit for the common, zero-candidate case buys back.
+    """
+    settings = get_settings()
+    if not settings.llm_enabled:
+        return []
+
+    candidates = _compute_domain_semantic_candidates(db, tenant_id, analysis_id, destinations)
+    if not candidates:
+        return []
+
+    caller = LiveCaller(api_key=settings.anthropic_api_key.get_secret_value())
+    try:
+        result = assess_domain_semantics(
+            candidates=candidates, caller=caller, model=settings.anthropic_model
+        )
+    except Exception:
+        log.warning(
+            "analyses.domain_semantic_failed",
+            analysis_id=str(analysis_id),
+            n_candidates=len(candidates),
+            exc_info=True,
+        )
+        return []
+
+    log.info(
+        "analyses.domain_semantic_complete",
+        analysis_id=str(analysis_id),
+        n_candidates=len(candidates),
+        n_findings=len(result.findings),
+        citation_valid=result.citation_valid,
+        cost_usd=str(result.cost_usd),
+    )
+    return [
+        DomainSemanticFinding(
+            domain=f.domain,
+            assessment=f.assessment,
+            rationale=f.rationale,
+            evidence_id=f.evidence_id,
+        )
+        for f in result.findings
+    ]
+
+
+@router.get("/analyses/{analysis_id}/overview", response_model=AnalysisOverviewResponse)
+def get_analysis_overview(
+    analysis_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current: Annotated[CurrentUser, Depends(require_user)],
+) -> AnalysisOverviewResponse:
+    """change 9's deterministic log overview, always produced — works for an analysis that is
+    still `running` (partial counts) or has zero incidents (an empty `notable_users`/
+    `notable_destinations` is a correct answer, not an error). `executive_summary` is not part of
+    this response; see `POST /analyses/{id}/narrate` and this module's own docstring for why the
+    LLM half of change 10 Level 1 is a separate, explicit call.
+
+    `domain_semantic_findings` (change 8) is populated by `_compute_domain_semantic_findings`,
+    over the same `notable_destinations` this response already computed — an empty list remains a
+    correct, common answer (no rare/first-seen destination, no configured API key, or nothing the
+    pass flagged), not evidence the pass isn't wired.
+    """
+    with tenant_scope(db, current.tenant.id):
+        analysis = db.execute(
+            select(Analysis).where(Analysis.id == analysis_id)
+        ).scalar_one_or_none()
+        if analysis is None:
+            raise _not_found()
+        anomaly_count = db.execute(
+            select(func.count(Incident.id)).where(Incident.analysis_id == analysis_id)
+        ).scalar_one()
+
+    notable_destinations = _compute_notable_destinations(db, current.tenant.id, analysis_id)
+
+    return AnalysisOverviewResponse(
+        overview=_compute_log_overview(db, current.tenant.id, analysis),
+        anomaly_count=anomaly_count,
+        notable_users=_compute_notable_users(db, current.tenant.id, analysis_id),
+        notable_destinations=notable_destinations,
+        domain_semantic_findings=_compute_domain_semantic_findings(
+            db, current.tenant.id, analysis_id, notable_destinations
+        ),
+    )
+
+
+def _narrator_overview_payload(overview: LogOverview) -> dict[str, Any]:
+    """change 9's own JSON shape (`{"period": [start, end], "events": ..., ...}`) for the
+    Narrator prompt specifically — `AnalysisOverviewResponse.overview` uses `period_start`/
+    `period_end` (see that schema's docstring for why), but the migration doc's own worked
+    example for what the Narrator reads is a `period` pair; matching it here costs nothing and
+    keeps the prompt recognizable against the doc."""
+    return {
+        "period": [
+            overview.period_start.isoformat() if overview.period_start else None,
+            overview.period_end.isoformat() if overview.period_end else None,
+        ],
+        "events": overview.events,
+        "users": overview.users,
+        "src_ips": overview.src_ips,
+        "unique_domains": overview.unique_domains,
+        "allowed": overview.allowed,
+        "blocked": overview.blocked,
+        "bytes_out": overview.bytes_out,
+        "bytes_in": overview.bytes_in,
+        "parse_failure_rate": overview.parse_failure_rate,
+    }
+
+
+@router.post("/analyses/{analysis_id}/narrate", response_model=AnalysisNarrateResponse)
+def narrate_analysis_route(
+    analysis_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current: Annotated[CurrentUser, Depends(require_user)],
+) -> AnalysisNarrateResponse:
+    """change 14 Path A, wired to HTTP for the first time — `app.agent.orchestrator.
+    narrate_analysis` itself is unit-tested but was never called from an API surface before this
+    (that function's own docstring: wiring it in "is out of app/agent's ownership"). No
+    persistence, no idempotency — see this module's own docstring for why, and
+    `app.api.incidents.trigger_incident_triage` for the pattern this deliberately cannot fully
+    match yet.
+
+    Inputs are exactly change 14's three deterministic, pre-computed pieces:
+    `_compute_log_overview` (this file), the analysis's incidents (`incidents` table), and
+    `analysis_timeline_phases` (`app.api.incident_detail`, the same truncated, confidence-ranked
+    phase list `GET /analyses/{id}/timeline` serves) — the Narrator selects nothing, orders
+    nothing, and counts nothing; it only writes prose over numbers this handler already computed.
+    """
+    settings = get_settings()
+    with tenant_scope(db, current.tenant.id):
+        analysis = db.execute(
+            select(Analysis).where(Analysis.id == analysis_id)
+        ).scalar_one_or_none()
+        if analysis is None:
+            raise _not_found()
+
+        incident_rows = (
+            db.execute(select(Incident).where(Incident.analysis_id == analysis_id)).scalars().all()
+        )
+        verdicts_by_incident: dict[uuid.UUID, TriageVerdict] = {}
+        if incident_rows:
+            verdict_rows = (
+                db.execute(
+                    select(TriageVerdict)
+                    .where(TriageVerdict.incident_id.in_([i.id for i in incident_rows]))
+                    .order_by(TriageVerdict.incident_id, TriageVerdict.created_at.asc())
+                )
+                .scalars()
+                .all()
+            )
+            for v in verdict_rows:  # ascending order -> last write per incident wins (newest)
+                verdicts_by_incident[v.incident_id] = v
+
+    incidents_payload: list[dict[str, Any]] = [
+        {
+            "id": str(inc.id),
+            "title": inc.title,
+            "severity": inc.severity,
+            "fused_score": inc.fused_score,
+            "anomaly_confidence": inc.anomaly_confidence,
+            "disposition": verdicts_by_incident[inc.id].disposition
+            if inc.id in verdicts_by_incident
+            else None,
+        }
+        for inc in incident_rows
+    ]
+
+    phases, _total_phases, _truncated = analysis_timeline_phases(db, current.tenant.id, analysis_id)
+    all_event_ids = {eid for phase in phases for eid in phase.event_ids}
+    with tenant_scope(db, current.tenant.id):
+        line_rows = (
+            db.execute(
+                select(Event.id, Event.raw_line_no).where(
+                    Event.analysis_id == analysis_id, Event.id.in_(all_event_ids)
+                )
+            ).all()
+            if all_event_ids
+            else []
+        )
+    line_by_event_id: dict[int, int] = {}
+    for event_id, line_no in line_rows:
+        line_by_event_id[event_id] = line_no
+    timeline_payload: list[dict[str, Any]] = [
+        {
+            "phase_index": i,
+            "tactic": phase.tactic,
+            "summary": phase.summary,
+            "log_ids": [
+                log_citation_id(line_by_event_id[eid])
+                for eid in phase.event_ids
+                if eid in line_by_event_id
+            ],
+        }
+        for i, phase in enumerate(phases)
+    ]
+
+    overview = _compute_log_overview(db, current.tenant.id, analysis)
+
+    if not settings.llm_enabled:
+        raise _no_api_key()
+    caller = LiveCaller(api_key=settings.anthropic_api_key.get_secret_value())
+
+    result = narrate_analysis(
+        overview=_narrator_overview_payload(overview),
+        incidents=incidents_payload,
+        timeline_phases=timeline_payload,
+        caller=caller,
+        model=settings.anthropic_model,
+    )
+    log.info(
+        "analyses.narrated",
+        analysis_id=str(analysis_id),
+        citation_valid=result.citation_valid,
+        cost_usd=str(result.cost_usd),
+    )
+    return AnalysisNarrateResponse(
+        executive_summary=result.executive_summary,
+        phase_narratives=list(result.phase_narratives),
+        citation_valid=result.citation_valid,
+        invalid_citations=list(result.invalid_citations),
+        model=result.model,
+        tokens_in=result.tokens_in,
+        tokens_out=result.tokens_out,
+        cost_usd=result.cost_usd,
+        latency_ms=result.latency_ms,
     )

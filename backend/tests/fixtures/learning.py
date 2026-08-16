@@ -102,6 +102,36 @@ def learning_cleanup(tenant_cleanup: list[uuid.UUID]) -> Iterator[list[uuid.UUID
         conn.execute(
             text("DELETE FROM detector_stats WHERE tenant_id = ANY(:ids)"), {"ids": tenant_ids}
         )
+        # docs/v2_migration change 21's own tables: every one of these either FKs to
+        # `analyst_feedback` directly (which has no cascade of its own -- see that model's
+        # docstring) or is tenant-scoped state this milestone owns. All deleted before the
+        # `analyst_feedback` DELETE below for the same reason as the tables above it.
+        for table in (
+            "claim_feedback",
+            "evidence_relevance_feedback",
+            "reference_set_exclusions",
+            "dga_label_feedback",
+            "exemplar_bank_entries",
+            "learning_proposals",
+            "entity_threshold_overrides",
+            "entity_cohorts",
+            "retrieval_priors",
+            "evidence_profile_state",
+            "baseline_windows",
+        ):
+            conn.execute(
+                text(f"DELETE FROM {table} WHERE tenant_id = ANY(:ids)"),
+                {"ids": tenant_ids},
+            )
+        conn.execute(
+            text(
+                "DELETE FROM learning_events WHERE trigger_feedback_id IN "
+                "(SELECT af.id FROM analyst_feedback af "
+                "JOIN triage_verdicts tv ON af.verdict_id = tv.id "
+                "JOIN incidents i ON tv.incident_id = i.id WHERE i.tenant_id = ANY(:ids))"
+            ),
+            {"ids": tenant_ids},
+        )
         conn.execute(
             text(
                 "DELETE FROM analyst_feedback WHERE verdict_id IN "
@@ -124,6 +154,9 @@ def make_signal(
     entity_type: str = "src_ip",
     entity_value: str = "10.0.0.1",
     mitre_technique: str | None = "T1071.001",
+    window_start: datetime | None = None,
+    window_end: datetime | None = None,
+    explanation: dict[str, object] | None = None,
 ) -> Signal:
     """`detector_key` defaults to a fresh, call-unique value (`signal.beaconing.<hex>`), not a
     fixed literal. `detector_stats.detector_key` is a *global* primary key (docs/02, no
@@ -145,8 +178,10 @@ def make_signal(
             entity_type=entity_type,
             entity_value=entity_value,
             mitre_technique=mitre_technique,
+            window_start=window_start,
+            window_end=window_end,
             evidence_event_ids=[],
-            explanation={"test": True},
+            explanation=explanation if explanation is not None else {"test": True},
         )
         session.add(signal)
         session.flush()

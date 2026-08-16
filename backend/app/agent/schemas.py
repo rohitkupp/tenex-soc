@@ -76,6 +76,8 @@ __all__ = [
     "Assessment",
     "Claim",
     "Disposition",
+    "DomainAssessment",
+    "DomainSemanticOutput",
     "Finding",
     "HypothesisEvaluation",
     "JudgeDecision",
@@ -90,6 +92,7 @@ __all__ = [
     "TimelinePhaseNarrative",
     "ToolTraceEntry",
     "TriageVerdictOut",
+    "build_assess_domains_tool",
     "build_narrate_tool",
     "build_present_verdict_tool",
     "build_submit_analysis_tool",
@@ -563,6 +566,73 @@ class NarratorOutput(BaseModel):
         return _not_blank(v)
 
 
+# ---------------------------------------------------------------------------- change 8 (domain semantics)
+
+
+class DomainAssessment(BaseModel):
+    """One candidate domain's semantic assessment -- docs/v2_migration change 8:
+    `app.agent.orchestrator.assess_domain_semantics`'s single terminal-tool output, one entry per
+    destination the deterministic rarity/baseline layer already flagged rare or first-seen
+    (`app.api.analyses._compute_domain_semantic_candidates`).
+
+    Deliberately carries no notion of `app.schemas.overview.DomainSemanticFinding.label` at all.
+    That field is a UI/wire concept owned by `app.schemas.overview`, pinned to a `Literal` of
+    exactly `SEMANTIC_INSIGHT_LABEL` there -- this module never imports that schema (`app.agent`
+    has no dependency on `app.schemas` anywhere in this package), so there is no field here for a
+    caller to even copy the wrong label out of. The label-safety guarantee change 8 asks for
+    ("make it impossible for this pass to emit the ML label") therefore holds structurally, at
+    two independent layers: this model never represents a label at all, and `app.schemas.
+    overview.DomainSemanticFinding.label`'s `Literal` makes constructing it with any other string
+    a `pydantic.ValidationError`, not a runtime possibility.
+
+    `flagged` is the model's own yes/no on whether this domain earned a citable finding at all --
+    `assessment`/`rationale` are only required to be non-blank when `flagged` is true, so an
+    unflagged, ordinary rare domain never needs a strained justification, just a brief note on
+    why none of the three questions (brand impersonation, typosquatting, contextual relevance)
+    applied to it."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    domain: str
+    flagged: bool
+    assessment: str
+    rationale: str
+    evidence_ids: tuple[str, ...] = Field(default_factory=tuple)
+
+    @field_validator("domain")
+    @classmethod
+    def _domain_not_blank(cls, v: str) -> str:
+        return _not_blank(v)
+
+    @model_validator(mode="after")
+    def _flagged_requires_text(self) -> DomainAssessment:
+        if self.flagged and (not self.assessment.strip() or not self.rationale.strip()):
+            raise ValueError(
+                "a flagged domain assessment must include non-blank assessment and rationale "
+                "text -- flagged=true is a citable finding, not a placeholder"
+            )
+        return self
+
+
+class DomainSemanticOutput(BaseModel):
+    """change 8's single terminal tool call: one `DomainAssessment` per candidate domain the
+    caller supplied -- the model may not add, skip, or merge candidates. Mirrors `NarratorOutput.
+    phase_narratives`'s own "may not introduce a phase that was not in its input" contract; the
+    existence check itself (was every assessed domain actually one of the candidates supplied,
+    was every candidate actually assessed) is `app.agent.verifier.verify_domain_semantic_output`'s
+    job, in code, since a schema alone cannot know what candidates a given call was sent."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    assessments: tuple[DomainAssessment, ...]
+
+    @model_validator(mode="after")
+    def _assessments_non_empty(self) -> DomainSemanticOutput:
+        if not self.assessments:
+            raise ValueError("assessments must be non-empty -- one entry per candidate domain")
+        return self
+
+
 # ---------------------------------------------------------------------------- dynamic tool schemas
 
 
@@ -836,6 +906,47 @@ def build_narrate_tool() -> dict[str, Any]:
                 },
             },
             "required": ["executive_summary", "phase_narratives"],
+            "additionalProperties": False,
+        },
+    }
+
+
+# ---------------------------------------------------------------------------- change 8 tool schema
+
+
+def _domain_assessment_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": {
+            "domain": {"type": "string"},
+            "flagged": {"type": "boolean"},
+            "assessment": {"type": "string"},
+            "rationale": {"type": "string"},
+            "evidence_ids": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["domain", "flagged", "assessment", "rationale", "evidence_ids"],
+        "additionalProperties": False,
+    }
+
+
+def build_assess_domains_tool() -> dict[str, Any]:
+    """change 8's terminal tool. One `DomainAssessment` per candidate domain supplied, forced via
+    `tool_choice` exactly like `build_narrate_tool` -- no investigation tools, no judge, a single
+    reduced-data-in / structured-judgement-out call (`app.agent.orchestrator.assess_domain_
+    semantics`)."""
+    return {
+        "name": "assess_domains",
+        "description": (
+            "Submit your semantic assessment of every candidate domain you were given -- one "
+            "entry per domain, in any order, with flagged=true only for a domain where brand "
+            "impersonation, typosquatting intent, or contextual relevance gives a real, specific "
+            "answer. Do not add, skip, or merge candidates. Call this once."
+        ),
+        "strict": True,
+        "input_schema": {
+            "type": "object",
+            "properties": {"assessments": {"type": "array", "items": _domain_assessment_schema()}},
+            "required": ["assessments"],
             "additionalProperties": False,
         },
     }

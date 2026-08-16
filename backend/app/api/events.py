@@ -241,21 +241,14 @@ def list_events(
     return EventListResponse(items=items, next_cursor=next_cursor)
 
 
-@router.get("/events/{event_id}", response_model=EventOut)
-def get_event(
-    event_id: int,
-    db: Annotated[Session, Depends(get_db)],
-    current: Annotated[CurrentUser, Depends(require_user)],
-) -> EventOut:
-    with tenant_scope(db, current.tenant.id):
-        event = db.execute(select(Event).where(Event.id == event_id)).scalar_one_or_none()
-        if event is None:
-            raise _event_not_found()
-        # Single-event detail view: a per-event query here is fine (docs/09's "do not query
-        # per event" note is about the paged list, which can carry up to 500 rows). `[event.id]`
-        # is a bare Python list (`event.id` already loaded as a plain int, not a column
-        # expression here) — see `_signal_stats_for_page`'s docstring for why that must not be
-        # wrapped in `postgresql.array(...)`.
+def _event_out(db: Session, event: Event) -> EventOut:
+    """Shared by `get_event` and `get_event_by_line`: full OCSF + enrichment + every signal
+    citing this event. Single-event detail view — a per-event query here is fine (docs/09's "do
+    not query per event" note is about the paged list, which can carry up to 500 rows). `[event.
+    id]` is a bare Python list (`event.id` already loaded as a plain int, not a column expression
+    here) — see `_signal_stats_for_page`'s docstring for why that must not be wrapped in
+    `postgresql.array(...)`."""
+    with tenant_scope(db, event.tenant_id):
         signals = (
             db.execute(
                 select(Signal).where(
@@ -278,3 +271,39 @@ def get_event(
         detectors=sorted({s.detector_key for s in signals}),
         signals=[EventSignalOut.model_validate(s) for s in signals],
     )
+
+
+@router.get("/events/{event_id}", response_model=EventOut)
+def get_event(
+    event_id: int,
+    db: Annotated[Session, Depends(get_db)],
+    current: Annotated[CurrentUser, Depends(require_user)],
+) -> EventOut:
+    with tenant_scope(db, current.tenant.id):
+        event = db.execute(select(Event).where(Event.id == event_id)).scalar_one_or_none()
+        if event is None:
+            raise _event_not_found()
+    return _event_out(db, event)
+
+
+@router.get("/analyses/{analysis_id}/events/by-line/{raw_line_no}", response_model=EventOut)
+def get_event_by_line(
+    analysis_id: uuid.UUID,
+    raw_line_no: int,
+    db: Annotated[Session, Depends(get_db)],
+    current: Annotated[CurrentUser, Depends(require_user)],
+) -> EventOut:
+    """docs/v2_migration change 16: evidence cards show `contributing_line_numbers` — file line
+    numbers (`Event.raw_line_no`), not `events.id` — and must "click-to-expand into the raw log
+    rows". Nothing before this endpoint could resolve a raw line number back to an event without
+    the caller already knowing its database id, which the evidence layer never hands out (change
+    2's own module docstring: "the file's line numbers, not events.id"). Keyed on `(analysis_id,
+    raw_line_no)` rather than `raw_line_no` alone — line numbers restart at 1 for every uploaded
+    file, so they are only unique within one analysis."""
+    with tenant_scope(db, current.tenant.id):
+        event = db.execute(
+            select(Event).where(Event.analysis_id == analysis_id, Event.raw_line_no == raw_line_no)
+        ).scalar_one_or_none()
+        if event is None:
+            raise _event_not_found()
+    return _event_out(db, event)

@@ -16,10 +16,20 @@ from pydantic import BaseModel, ConfigDict
 # ---------------------------------------------------------------------------- feedback
 
 
+class DomainLabelCorrectionIn(BaseModel):
+    domain: str
+    is_dga: bool
+
+
 class FeedbackRequest(BaseModel):
     """`POST /api/incidents/{id}/feedback` body, docs/09 verbatim: `{agrees,
     corrected_disposition?, corrected_technique?, dismissal_reason?, mark_benign_baseline?,
-    note?}`."""
+    note?}`. `corrected_technique`, when set, must be one of the verdict's own retrieved
+    candidates plus `NO_KNOWN_MAPPING` (change 22) — enforced server-side in
+    `app.learning.feedback.record_feedback`. `dismissal_reason`, when set from the change-22
+    Dismiss control, is one of `app.learning.feedback.DISMISSAL_REASON_CATEGORIES`; the column
+    itself stays a plain string for backward compatibility with pre-migration callers.
+    `corrected_domain_labels` is change 21 mechanism 8's input hook, optional and additive."""
 
     agrees: bool
     corrected_disposition: str | None = None
@@ -27,6 +37,7 @@ class FeedbackRequest(BaseModel):
     dismissal_reason: str | None = None
     mark_benign_baseline: bool = False
     note: str | None = None
+    corrected_domain_labels: list[DomainLabelCorrectionIn] = []
 
 
 class DetectorWeightChangeOut(BaseModel):
@@ -67,6 +78,13 @@ class FeedbackResponse(BaseModel):
     suppression_candidates_generated: list[uuid.UUID]
     benign_baseline_entries_created: int
     retrain_attempt: RetrainAttemptOut | None
+    # docs/v2_migration change 21/22 additions -- what the frontend's confirmation toast (change
+    # 22: "naming the effect") names. `reference_set_mechanism` is `4` (added to the kNN/LOF
+    # reference set), `5` (excluded as a confirmed true positive), or `None` (neither fired --
+    # see `app.learning.feedback._reference_set_action`).
+    reference_set_mechanism: int | None = None
+    baseline_expansion_proposed: bool = False
+    exemplar_proposed: bool = False
 
 
 # ---------------------------------------------------------------------------- learning metrics
@@ -179,3 +197,76 @@ class ModelVersionOut(BaseModel):
 
 class ModelVersionsResponse(BaseModel):
     items: list[ModelVersionOut]
+
+
+# ---------------------------------------------------------------------------- change 21/22 additions
+
+
+class ClaimFeedbackRequest(BaseModel):
+    helpful: bool
+    note: str | None = None
+
+
+class ClaimFeedbackResponse(BaseModel):
+    id: int
+    incident_id: uuid.UUID
+    step: int
+    helpful: bool
+    verifier_rule_proposed: bool
+
+
+class EvidenceRelevanceRequest(BaseModel):
+    extractor: str
+    relevant: bool
+
+
+class EvidenceRelevanceResponse(BaseModel):
+    id: int
+    incident_id: uuid.UUID
+    evidence_id: str
+    relevant: bool
+    widening_proposed: bool
+
+
+class LearningEventOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    mechanism: int
+    mechanism_name: str
+    trigger_feedback_id: uuid.UUID | None
+    applied: bool
+    before_state: dict[str, Any] | None
+    after_state: dict[str, Any] | None
+    metric_delta: dict[str, Any] | None
+    created_at: datetime
+
+
+class LearningEventsResponse(BaseModel):
+    items: list[LearningEventOut]
+
+
+class LearningProposalOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    mechanism: int
+    mechanism_name: str
+    status: str
+    payload: dict[str, Any]
+    supporting_feedback_ids: list[uuid.UUID]
+    created_at: datetime
+    reviewed_at: datetime | None
+
+
+class LearningProposalsResponse(BaseModel):
+    items: list[LearningProposalOut]
+
+
+class LearningProposalDecisionResponse(BaseModel):
+    id: uuid.UUID
+    status: str
+    passed: bool
+    after_state: dict[str, Any]
+    metric_delta: dict[str, Any]
+    reason: str

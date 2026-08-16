@@ -62,6 +62,7 @@ from app.agent.schemas import (
     NO_KNOWN_MAPPING,
     AnalystOutput,
     Claim,
+    DomainSemanticOutput,
     Finding,
     HypothesisEvaluation,
     NarratorOutput,
@@ -91,6 +92,7 @@ __all__ = [
     "parse_verdict_payload",
     "verify_anomaly_confidence",
     "verify_citations",
+    "verify_domain_semantic_output",
     "verify_narrator_output",
     "verify_pass1",
     "verify_pass2",
@@ -863,6 +865,75 @@ def verify_narrator_output(
                 invalid.append(
                     {"section": f"phase_{phase_narrative.phase_index}", "mismatched_number": n.raw}
                 )
+
+    return not invalid, invalid
+
+
+# ---------------------------------------------------------------------------- change 8 verification
+#
+# `verify_domain_semantic_output` mirrors `verify_narrator_output`'s shape exactly, and for the
+# same reason: `candidates` is the exact, already-computed list `app.api.analyses` built and
+# handed to the single LLM turn (`app.agent.orchestrator.assess_domain_semantics`), so both
+# "does this citation exist" and "does this number match" resolve against data already in hand,
+# not a fresh DB lookup -- no `AgentContext` is needed here any more than Path A's verifier needs
+# one. Reuses change 7's own numeric-match machinery (`extract_numbers`/`numeric_leaves`/
+# `_numeric_match`) rather than a second implementation: a semantic judgement's hallucination risk
+# (a fabricated contact count, an invented connection count) is the same shape of risk change 7
+# already solves for the four-stage pipeline.
+
+
+def verify_domain_semantic_output(
+    *, candidates: list[dict[str, Any]], output: DomainSemanticOutput
+) -> tuple[bool, list[dict[str, Any]]]:
+    """Every flagged `DomainAssessment` is checked against the candidate it claims to be about:
+
+    1. **Existence / scope** -- the assessed `domain` must be one of the candidates actually
+       supplied, and every id in `evidence_ids` must be one of that specific candidate's own
+       `evidence_id` / `log_ids` -- never an id shown for a *different* candidate domain. This is
+       change 7 check 1 (existence) and check 4 (scope), applied to this pass's own, narrower
+       citation surface.
+    2. **Numeric match** -- change 7 check 2: every number written in `assessment`/`rationale`
+       must appear, or be a straightforward restatement of, a number already present somewhere in
+       that candidate's own evidence dict (`numeric_leaves(candidate)`).
+
+    Unflagged assessments (`flagged is False`) are not checked beyond the domain-existence check
+    -- an unflagged domain never reaches `app.schemas.overview.DomainSemanticFinding` at all
+    (`app.agent.orchestrator.assess_domain_semantics` only keeps `flagged=True` entries), so
+    there is nothing downstream a bad citation on an unflagged entry could ever mislead.
+    """
+    invalid: list[dict[str, Any]] = []
+    by_domain = {c["domain"]: c for c in candidates}
+
+    for a in output.assessments:
+        candidate = by_domain.get(a.domain)
+        if candidate is None:
+            invalid.append(
+                {"domain": a.domain, "issue": "domain was not among the candidates supplied"}
+            )
+            continue
+        if not a.flagged:
+            continue
+
+        allowed_ids = {candidate.get("evidence_id"), *(candidate.get("log_ids") or ())}
+        allowed_ids.discard(None)
+        out_of_scope = [cid for cid in a.evidence_ids if cid not in allowed_ids]
+        if out_of_scope:
+            invalid.append(
+                {
+                    "domain": a.domain,
+                    "issue": "cited id(s) outside this candidate's own scope",
+                    "ids": out_of_scope,
+                }
+            )
+
+        pool = numeric_leaves(candidate)
+        mismatched = [
+            n.raw
+            for n in (*extract_numbers(a.assessment), *extract_numbers(a.rationale))
+            if not _numeric_match(n, pool)
+        ]
+        if mismatched:
+            invalid.append({"domain": a.domain, "mismatched_numbers": mismatched})
 
     return not invalid, invalid
 

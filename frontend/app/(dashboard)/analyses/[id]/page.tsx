@@ -1,11 +1,17 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { fetchServer } from "@/lib/api/server";
-import type { AnalysisDetail, AnalysisTimelineResponse } from "@/lib/api/types";
-import { formatDate, formatPercent, formatUsd } from "@/lib/format";
+import type { AnalysisDetail, AnalysisOverviewResponse, AnalysisTimelineResponse } from "@/lib/api/types";
+import { formatDate, formatNumber, formatPercent, formatUsd } from "@/lib/format";
 import { FunnelProgress } from "@/components/pipeline/FunnelProgress";
 import { AnalysisTimeline } from "@/components/analyses/AnalysisTimeline";
 import { RetryButton } from "@/components/analyses/RetryButton";
+import { ExecutiveSummary } from "@/components/analyses/ExecutiveSummary";
+import { NotableUsersPanel } from "@/components/analyses/NotableUsersPanel";
+import { NotableDestinationsPanel } from "@/components/analyses/NotableDestinationsPanel";
+import { SemanticFindingsPanel } from "@/components/analyses/SemanticFindingsPanel";
+import { TrafficStatsPanel } from "@/components/analyses/TrafficStatsPanel";
+import { Panel } from "@/components/ui/Panel";
 
 export const metadata: Metadata = { title: "Analysis — Tenex SOC Analyst" };
 
@@ -24,9 +30,12 @@ export default async function AnalysisDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [analysis, timeline] = await Promise.all([
+  const [analysis, timeline, overview] = await Promise.all([
     fetchServer<AnalysisDetail>(`/api/analyses/${id}`),
     fetchServer<AnalysisTimelineResponse>(`/api/analyses/${id}/timeline`),
+    // change 9: deterministic, always produced — safe to fetch on every render, unlike the
+    // Narrator (`ExecutiveSummary`), which is an explicit, cost-bearing click.
+    fetchServer<AnalysisOverviewResponse>(`/api/analyses/${id}/overview`),
   ]);
 
   // fetchServer collapses "not found" and "API unreachable" to the same
@@ -53,9 +62,43 @@ export default async function AnalysisDetailPage({
 
   const funnel = <FunnelProgress analysisId={analysis.id} initial={analysis} />;
 
-  const overview = (
+  // docs/v2_migration change 10: "Summary · Timeline · Anomalies · Notable users · Notable
+  // destinations · Traffic statistics" — this page's section order below, extending the funnel
+  // page rather than replacing it (change 27). `overview` (change 9) is deterministic and safe
+  // to render on every load; the executive summary (`ExecutiveSummary`, change 14 Path A) is a
+  // separate, explicit, cost-bearing click within the Summary section.
+  const overviewSections = (
     <>
+      <Panel title="Summary" padding="tight">
+        <div className="flex flex-col gap-3 p-1">
+          {overview ? (
+            <>
+              <ExecutiveSummary analysisId={analysis.id} />
+              <Link
+                href={`/analyses/${analysis.id}/incidents`}
+                className="w-fit text-xs text-[var(--color-text-mid)] underline underline-offset-2 hover:text-[var(--color-text-hi)]"
+              >
+                {formatNumber(overview.anomaly_count)} anomal{overview.anomaly_count === 1 ? "y" : "ies"} found →
+              </Link>
+            </>
+          ) : (
+            <p className="text-sm text-[var(--color-text-mid)]">
+              Overview not available — the API is unreachable.
+            </p>
+          )}
+        </div>
+      </Panel>
+
       <AnalysisTimeline data={timeline} />
+
+      {overview && (
+        <>
+          <NotableUsersPanel users={overview.notable_users} />
+          <NotableDestinationsPanel destinations={overview.notable_destinations} />
+          <SemanticFindingsPanel findings={overview.domain_semantic_findings} />
+          <TrafficStatsPanel overview={overview.overview} />
+        </>
+      )}
 
       <dl className="grid grid-cols-2 gap-x-6 gap-y-4 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] p-5 text-sm sm:grid-cols-4">
         <div>
@@ -124,6 +167,12 @@ export default async function AnalysisDetailPage({
         >
           Events
         </Link>
+        <Link
+          href={`/analyses/${analysis.id}/evidence`}
+          className="border-b-2 border-transparent pb-2 text-[var(--color-text-mid)] transition-colors hover:border-[var(--color-text-hi)] hover:text-[var(--color-text-hi)]"
+        >
+          Evidence
+        </Link>
       </nav>
 
       {isFailed && (
@@ -143,11 +192,11 @@ export default async function AnalysisDetailPage({
       {isRunning || isFailed ? (
         <>
           {funnel}
-          {overview}
+          {overviewSections}
         </>
       ) : (
         <>
-          {overview}
+          {overviewSections}
           {funnel}
         </>
       )}

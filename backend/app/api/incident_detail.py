@@ -37,6 +37,7 @@ from __future__ import annotations
 import base64
 import binascii
 import uuid
+from datetime import datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
@@ -44,9 +45,16 @@ from sqlalchemy import and_, cast, or_, select
 from sqlalchemy.dialects.postgresql import REAL
 from sqlalchemy.orm import Session
 
+from app.agent.context import (
+    CITATION_TEMPORAL_SLACK,
+    AgentContextError,
+    build_agent_context,
+    compute_evidence_payloads,
+)
 from app.core.db import get_db
 from app.core.errors import ApiError
 from app.core.security import CurrentUser, require_user
+from app.detection.evidence.payload import EvidencePayload
 from app.graph.timeline import TimelinePhase, build_timeline
 from app.models.analysis import Analysis
 from app.models.base import tenant_scope
@@ -56,6 +64,12 @@ from app.models.incident import Incident
 from app.models.signal import Signal
 from app.models.triage_verdict import TriageVerdict
 from app.schemas.agent import TriageVerdictResponse
+from app.schemas.evidence import (
+    AnalysisEvidenceResponse,
+    IncidentEvidenceResponse,
+    evidence_payload_out,
+    highlight_line_violations,
+)
 from app.schemas.incident import (
     AnalysisTimelineResponse,
     EntityOut,
@@ -71,6 +85,13 @@ from app.schemas.incident import (
 )
 
 router = APIRouter()
+
+# `GET /api/analyses/{id}/evidence` (change 16, "including evidence that never formed an
+# incident") has no natural upper bound either — same CLAUDE.md rule 1 reasoning as
+# `MAX_ANALYSIS_TIMELINE_PHASES` above, applied to a browse table instead of an LLM prompt: an
+# unbounded page is not "browsable". `total`/`truncated` on the response tell the analyst how
+# much was cut, same contract as the analysis timeline.
+MAX_ANALYSIS_EVIDENCE_ITEMS = 500
 
 # Cap for `GET /api/analyses/{id}/timeline` — an analysis-wide timeline has no natural upper
 # bound the way one incident's does (docs/05 correlates "hundreds of signals" down to "a dozen
@@ -257,6 +278,44 @@ def _timeline_phase_out(phase: TimelinePhase) -> TimelinePhaseOut:
     )
 
 
+def analysis_timeline_phases(
+    db: Session, tenant_id: uuid.UUID, analysis_id: uuid.UUID
+) -> tuple[list[TimelinePhase], int, bool]:
+    """Every signal in the analysis, correlated into phases (`build_timeline`) and truncated to
+    `MAX_ANALYSIS_TIMELINE_PHASES` by confidence — the computation `get_analysis_timeline` below
+    serves over HTTP, factored out so `app.api.analyses`' change-14 Path A narrator route can feed
+    the Narrator the exact same, already-deterministically-selected phase list a client reading
+    `GET /api/analyses/{id}/timeline` would see (change 14: "*selection* of which phases matter is
+    deterministic and happens upstream ... never [in the Narrator]"). Returns `(phases,
+    total_phases, truncated)` — see `get_analysis_timeline`'s docstring for the truncation rule
+    and why `total_phases` is the pre-cut count.
+
+    Does not itself check the analysis exists — callers already resolve `analysis_id` through a
+    tenant-scoped `Analysis` lookup of their own (this function would otherwise 404 on the wrong
+    exception type for at least one of its two callers' response contracts).
+    """
+    with tenant_scope(db, tenant_id):
+        signals = (
+            db.execute(select(Signal).where(Signal.analysis_id == analysis_id)).scalars().all()
+        )
+
+    all_phases = build_timeline(list(signals))
+    total_phases = len(all_phases)
+    truncated = total_phases > MAX_ANALYSIS_TIMELINE_PHASES
+    if truncated:
+        keep_indices = {
+            i
+            for i, _ in sorted(
+                enumerate(all_phases),
+                key=lambda pair: (-pair[1].confidence, pair[0]),
+            )[:MAX_ANALYSIS_TIMELINE_PHASES]
+        }
+        phases = [p for i, p in enumerate(all_phases) if i in keep_indices]
+    else:
+        phases = all_phases
+    return phases, total_phases, truncated
+
+
 @router.get("/analyses/{analysis_id}/timeline", response_model=AnalysisTimelineResponse)
 def get_analysis_timeline(
     analysis_id: uuid.UUID,
@@ -288,30 +347,35 @@ def get_analysis_timeline(
         ).scalar_one_or_none()
         if analysis is None:
             raise _not_found("Analysis not found.")
-        signals = (
-            db.execute(select(Signal).where(Signal.analysis_id == analysis_id)).scalars().all()
-        )
 
-    all_phases = build_timeline(list(signals))
-    total_phases = len(all_phases)
-    truncated = total_phases > MAX_ANALYSIS_TIMELINE_PHASES
-    if truncated:
-        keep_indices = {
-            i
-            for i, _ in sorted(
-                enumerate(all_phases),
-                key=lambda pair: (-pair[1].confidence, pair[0]),
-            )[:MAX_ANALYSIS_TIMELINE_PHASES]
-        }
-        phases = [p for i, p in enumerate(all_phases) if i in keep_indices]
-    else:
-        phases = all_phases
-
+    phases, total_phases, truncated = analysis_timeline_phases(db, current.tenant.id, analysis_id)
     return AnalysisTimelineResponse(
         phases=[_timeline_phase_out(p) for p in phases],
         truncated=truncated,
         total_phases=total_phases,
     )
+
+
+def _verdict_for_incident(
+    db: Session, tenant_id: uuid.UUID, incident: Incident
+) -> TriageVerdict | None:
+    """This incident's own latest verdict, falling back to its parent's when it is itself a
+    recurrence with none yet (docs/05: a recurrence inherits its parent's verdict rather than
+    re-running the LLM) — so neither the case file nor the evidence view shows an empty state
+    for an incident the analyst has, in substance, already seen. Shared by `get_incident` and
+    `get_incident_evidence` so the two can never disagree about which verdict "this incident's
+    verdict" means.
+    """
+    verdict = _latest_verdicts(db, [incident.id]).get(incident.id)
+    if verdict is not None or incident.recurrence_of is None:
+        return verdict
+    with tenant_scope(db, tenant_id):
+        parent = db.execute(
+            select(Incident).where(Incident.id == incident.recurrence_of)
+        ).scalar_one_or_none()
+    if parent is None:
+        return None
+    return _latest_verdicts(db, [parent.id]).get(parent.id)
 
 
 @router.get("/incidents/{incident_id}", response_model=IncidentDetail)
@@ -343,17 +407,8 @@ def get_incident(
             .scalars()
             .all()
         )
-        verdict = _latest_verdicts(db, [incident.id]).get(incident.id)
 
-    # A recurrence inherits its parent's verdict (docs/05) — surface the parent's rather than
-    # showing an empty case file for an incident the analyst has, in substance, already seen.
-    if verdict is None and incident.recurrence_of is not None:
-        with tenant_scope(db, current.tenant.id):
-            parent = db.execute(
-                select(Incident).where(Incident.id == incident.recurrence_of)
-            ).scalar_one_or_none()
-            if parent is not None:
-                verdict = _latest_verdicts(db, [parent.id]).get(parent.id)
+    verdict = _verdict_for_incident(db, current.tenant.id, incident)
 
     return IncidentDetail(
         id=incident.id,
@@ -479,3 +534,195 @@ def get_incident_graph(
             )
         )
     return IncidentGraph(nodes=nodes, edges=edges)
+
+
+# ------------------------------------------------------------------ GET /incidents/{id}/evidence
+#                                                                     GET /analyses/{id}/evidence
+#                                                             docs/v2_migration changes 2, 11, 16
+
+
+@router.get("/incidents/{incident_id}/evidence", response_model=IncidentEvidenceResponse)
+def get_incident_evidence(
+    incident_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current: Annotated[CurrentUser, Depends(require_user)],
+) -> IncidentEvidenceResponse:
+    """change 16's primary evidence view: every `EvidencePayload` that contributed to this
+    incident (`app.agent.context.build_agent_context`'s own entity+window filtering — the exact
+    scope a triage run would have seen, so the evidence an analyst reviews here is byte-identical
+    to what the agent reasoned over). change 11's `highlight_lines` and `highlight_line_
+    violations` are derived from the same set, in this handler, never from the verdict's prose —
+    see `app.schemas.evidence`'s own module docstring for the full trace path and why this is a
+    route of its own rather than a field on `IncidentDetail`.
+    """
+    incident = _require_incident(db, current.tenant.id, incident_id)
+    try:
+        ctx = build_agent_context(db, current.tenant.id, incident.id)
+    except AgentContextError as exc:
+        raise _not_found(str(exc)) from exc
+
+    highlight_lines = sorted(
+        {line_no for p in ctx.evidence_payloads for line_no in p.contributing_line_numbers}
+    )
+    verdict = _verdict_for_incident(db, current.tenant.id, incident)
+    violations = highlight_line_violations(
+        verdict.narrative if verdict is not None else None, highlight_lines
+    )
+    items = [evidence_payload_out(p, incident_ids=[incident.id]) for p in ctx.evidence_payloads]
+    return IncidentEvidenceResponse(
+        items=items, highlight_lines=highlight_lines, highlight_line_violations=violations
+    )
+
+
+def _incident_scope_and_window(
+    db: Session, incident: Incident
+) -> tuple[frozenset[tuple[str, str]], datetime, datetime]:
+    """This incident's own (entity_type, entity_value) scope and time window, for matching
+    `EvidencePayload`s against it — the same rule `app.agent.context._entity_scope`/`_incident_
+    window` compute, duplicated here rather than imported. Those two helpers are private to
+    `app.agent.context` (leading underscore, absent from its `__all__`), and that module's own
+    `_incident_window` docstring makes the same call for a sibling case ("computed directly here
+    instead of importing `app.graph.timeline` ... duplicating ~10 lines of aggregation is cheaper
+    than a cross-milestone coupling") — the same tradeoff applies to reaching into another
+    package's private helpers.
+    """
+    scope: set[tuple[str, str]] = set()
+    if incident.entity_ids:
+        rows = db.execute(
+            select(Entity.type, Entity.value).where(Entity.id.in_(incident.entity_ids))
+        ).all()
+        scope.update((t, v) for t, v in rows)
+
+    starts: list[datetime] = []
+    ends: list[datetime] = []
+    if incident.signal_ids:
+        window_rows = db.execute(
+            select(Signal.window_start, Signal.window_end).where(Signal.id.in_(incident.signal_ids))
+        ).all()
+        for s_start, s_end in window_rows:
+            if s_start is not None:
+                starts.append(s_start)
+            if s_end is not None:
+                ends.append(s_end)
+        if not scope:
+            entity_rows = db.execute(
+                select(Signal.entity_type, Signal.entity_value).where(
+                    Signal.id.in_(incident.signal_ids)
+                )
+            ).all()
+            scope.update((t, v) for t, v in entity_rows)
+
+    window_start, window_end = (
+        (min(starts), max(ends)) if starts and ends else (incident.created_at, incident.created_at)
+    )
+    return frozenset(scope), window_start, window_end
+
+
+def _evidence_matches_incident(
+    payload: EvidencePayload,
+    *,
+    entity_scope: frozenset[tuple[str, str]],
+    window_start: datetime,
+    window_end: datetime,
+) -> bool:
+    """Same membership rule as `app.agent.context._filter_evidence_for_incident`: the payload's
+    own entity is one of the incident's entities, and its window overlaps the incident's window
+    padded by `CITATION_TEMPORAL_SLACK` on each side."""
+    pair = (payload.entity.get("type", ""), payload.entity.get("value", ""))
+    if pair not in entity_scope:
+        return False
+    lo = window_start - CITATION_TEMPORAL_SLACK
+    hi = window_end + CITATION_TEMPORAL_SLACK
+    p_start, p_end = payload.window
+    return p_start <= hi and lo <= p_end
+
+
+def _max_percentile(payload: EvidencePayload) -> float | None:
+    """The highest numeric `*percentile` value in this payload's `historical` dict (change 2's
+    `historical_from_percentile` always names its keys `{prefix}_percentile` or bare
+    `percentile`) — used only for `min_percentile` filtering below. `None` when every percentile
+    entry is cold-start (`baseline_status: "insufficient_history"` → `percentile: None`) or the
+    extractor carries no percentile at all (dga's probability is already the answer, per change
+    2's own table)."""
+    values = [
+        v
+        for k, v in payload.historical.items()
+        if k.endswith("percentile") and isinstance(v, int | float)
+    ]
+    return max(values) if values else None
+
+
+@router.get("/analyses/{analysis_id}/evidence", response_model=AnalysisEvidenceResponse)
+def get_analysis_evidence(
+    analysis_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current: Annotated[CurrentUser, Depends(require_user)],
+    extractor: str | None = None,
+    entity_type: str | None = None,
+    entity_value: str | None = None,
+    min_percentile: Annotated[float | None, Query(ge=0, le=100)] = None,
+    limit: Annotated[
+        int, Query(ge=1, le=MAX_ANALYSIS_EVIDENCE_ITEMS)
+    ] = MAX_ANALYSIS_EVIDENCE_ITEMS,
+) -> AnalysisEvidenceResponse:
+    """change 16's secondary evidence view: every `EvidencePayload` produced for the analysis —
+    "including evidence that never formed an incident. That residue is exactly what an analyst
+    wants when they suspect the pipeline missed something." Filterable by `extractor`,
+    `entity_type`/`entity_value`, and `min_percentile`; sorted by `evidence_id` (change 2's own
+    deterministic assignment order — extractor, then entity, then window) so the same query
+    returns the same page every time.
+    """
+    with tenant_scope(db, current.tenant.id):
+        analysis = db.execute(
+            select(Analysis).where(Analysis.id == analysis_id)
+        ).scalar_one_or_none()
+        if analysis is None:
+            raise _not_found("Analysis not found.")
+
+    all_evidence = compute_evidence_payloads(
+        db, analysis_id=analysis_id, tenant_id=current.tenant.id
+    )
+
+    def _meets_min_percentile(payload: EvidencePayload) -> bool:
+        if min_percentile is None:
+            return True
+        value = _max_percentile(payload)
+        # `value == 0.0` is a real, meets-the-bar percentile, not "no percentile" — must not
+        # fall through to the cold-start/absent case (a bare `value or ...` would do exactly
+        # that, since `0.0` is falsy in Python).
+        return value is not None and value >= min_percentile
+
+    filtered = [
+        p
+        for p in all_evidence
+        if (extractor is None or p.extractor == extractor)
+        and (entity_type is None or p.entity.get("type") == entity_type)
+        and (entity_value is None or p.entity.get("value") == entity_value)
+        and _meets_min_percentile(p)
+    ]
+    total = len(filtered)
+    truncated = total > limit
+    page = filtered[:limit]
+
+    with tenant_scope(db, current.tenant.id):
+        incidents = (
+            db.execute(select(Incident).where(Incident.analysis_id == analysis_id)).scalars().all()
+        )
+        incident_scopes = [
+            (incident.id, *_incident_scope_and_window(db, incident)) for incident in incidents
+        ]
+
+    items = [
+        evidence_payload_out(
+            p,
+            incident_ids=[
+                incident_id
+                for incident_id, scope, w_start, w_end in incident_scopes
+                if _evidence_matches_incident(
+                    p, entity_scope=scope, window_start=w_start, window_end=w_end
+                )
+            ],
+        )
+        for p in page
+    ]
+    return AnalysisEvidenceResponse(items=items, total=total, truncated=truncated)

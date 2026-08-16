@@ -1,11 +1,17 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { fetchServer } from "@/lib/api/server";
-import type { IncidentDetail, IncidentGraph, TimelinePhaseOut } from "@/lib/api/types";
+import type {
+  IncidentDetail,
+  IncidentEvidenceResponse,
+  IncidentGraph,
+  TimelinePhaseOut,
+} from "@/lib/api/types";
 import { CaseHeader } from "@/components/incidents/case/CaseHeader";
 import { NarrativeBlock } from "@/components/incidents/case/NarrativeBlock";
 import { ContradictingEvidence } from "@/components/incidents/case/ContradictingEvidence";
 import { TimelinePhases } from "@/components/incidents/case/TimelinePhases";
+import { EvidenceSection } from "@/components/incidents/case/EvidenceSection";
 import { SignalsSection } from "@/components/incidents/case/SignalsSection";
 import { EntityGraph } from "@/components/incidents/case/EntityGraph";
 import { InvestigationGuidance } from "@/components/incidents/case/InvestigationGuidance";
@@ -33,10 +39,11 @@ export default async function CaseFilePage({
 }) {
   const { id, iid } = await params;
 
-  const [incident, timeline, graph] = await Promise.all([
+  const [incident, timeline, graph, evidence] = await Promise.all([
     fetchServer<IncidentDetail>(`/api/incidents/${iid}`),
     fetchServer<TimelinePhaseOut[]>(`/api/incidents/${iid}/timeline`),
     fetchServer<IncidentGraph>(`/api/incidents/${iid}/graph`),
+    fetchServer<IncidentEvidenceResponse>(`/api/incidents/${iid}/evidence`),
   ]);
 
   if (incident === null) {
@@ -79,6 +86,8 @@ export default async function CaseFilePage({
         <NarrativeBlock
           narrative={incident.verdict?.narrative ?? []}
           invalidCitations={incident.verdict?.invalid_citations ?? []}
+          analysisId={id}
+          incidentId={incident.id}
         />
       </section>
 
@@ -91,34 +100,43 @@ export default async function CaseFilePage({
         <TimelinePhases phases={timeline ?? []} />
       </section>
 
-      {/* 6. Signals */}
+      {/* 6. Evidence — docs/v2_migration change 16, between Timeline and Signals */}
+      <section>
+        <SectionHeading>Evidence {evidence ? `(${evidence.items.length})` : ""}</SectionHeading>
+        <EvidenceSection data={evidence} analysisId={id} incidentId={iid} />
+      </section>
+
+      {/* 7. Signals */}
       <section>
         <SectionHeading>Signals ({incident.signals.length})</SectionHeading>
         <SignalsSection signals={incident.signals} />
       </section>
 
-      {/* 7. Entity graph */}
+      {/* 8. Entity graph */}
       <section>
         <SectionHeading>Entity graph</SectionHeading>
         <EntityGraph graph={graph ?? { nodes: [], edges: [] }} />
       </section>
 
-      {/* 8. Investigation guidance */}
+      {/* 9. Investigation guidance */}
       <section>
         <SectionHeading>Investigation guidance</SectionHeading>
         <InvestigationGuidance actions={incident.verdict?.recommended_actions} />
       </section>
 
-      {/* 9. Agent trace — collapsed by default */}
+      {/* 10. Agent trace — collapsed by default */}
       <section>
         <SectionHeading>Agent trace</SectionHeading>
         <AgentTrace verdict={incident.verdict} />
       </section>
 
-      {/* 10. Feedback */}
+      {/* 11. Feedback */}
       <section>
         <SectionHeading>Feedback</SectionHeading>
-        <FeedbackControls incidentId={incident.id} />
+        <FeedbackControls
+          incidentId={incident.id}
+          retrievedTechniques={incident.verdict?.mitre_techniques ?? []}
+        />
       </section>
     </div>
   );

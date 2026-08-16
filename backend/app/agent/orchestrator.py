@@ -73,12 +73,14 @@ from app.agent.context import (
 from app.agent.retrieval import RetrievalCandidate, retrieve_candidates
 from app.agent.schemas import (
     AnalystOutput,
+    DomainSemanticOutput,
     Finding,
     JudgeOutput,
     NarratorOutput,
     SchemaValidationError,
     ToolTraceEntry,
     TriageVerdictOut,
+    build_assess_domains_tool,
     build_narrate_tool,
     build_present_verdict_tool,
     build_submit_analysis_tool,
@@ -91,6 +93,7 @@ from app.agent.verifier import (
     Pass2Result,
     verify_anomaly_confidence,
     verify_citations,
+    verify_domain_semantic_output,
     verify_narrator_output,
     verify_pass1,
     verify_pass2,
@@ -116,11 +119,15 @@ except ImportError:  # pragma: no cover - integration point for when app/learnin
     _HAS_FEW_SHOT_MEMORY = False
 
 __all__ = [
+    "MAX_SEMANTIC_DOMAINS_PER_CALL",
     "AgentRefusalError",
     "AgentTimeoutError",
+    "DomainFinding",
+    "DomainSemanticResult",
     "InsufficientEvidenceError",
     "MissingAPIKeyError",
     "NarrationResult",
+    "assess_domain_semantics",
     "narrate_analysis",
     "triage_incident",
     "triage_top_incidents_for_analysis",
@@ -149,6 +156,16 @@ ANALYST_EFFORT = "medium"
 JUDGE_EFFORT = "medium"
 PRESENTER_EFFORT = "low"
 NARRATOR_EFFORT = "low"
+# change 8: no investigation tools, no judge, over already-reduced candidate data -- the same
+# "narrowest, most mechanical stage" bucket PRESENTER_EFFORT/NARRATOR_EFFORT occupy, not the
+# ANALYST_EFFORT/JUDGE_EFFORT bucket reserved for tool-orchestration and ten-item evidentiary
+# grading.
+DOMAIN_SEMANTIC_EFFORT = "low"
+# change 8 + CLAUDE.md rule 1 ("do not pass more than a few hundred events into a prompt") applied
+# to domains: capped well before that, and capped by `app.api.analyses._compute_domain_semantic_
+# candidates` *before* it does any of its own per-candidate row lookups, not just here -- this is
+# the single source of truth both sides import from so the two caps can never drift apart.
+MAX_SEMANTIC_DOMAINS_PER_CALL = 12
 
 
 class AgentTimeoutError(Exception):
@@ -1220,6 +1237,156 @@ def narrate_analysis(
     return NarrationResult(
         executive_summary=output.executive_summary,
         phase_narratives=tuple(p.model_dump(mode="json") for p in output.phase_narratives),
+        citation_valid=citation_valid,
+        invalid_citations=tuple(invalid_citations),
+        model=model,
+        tokens_in=usage.input_tokens,
+        tokens_out=usage.output_tokens,
+        cost_usd=estimate_cost_usd(usage),
+        latency_ms=elapsed_ms,
+    )
+
+
+# ---------------------------------------------------------------------------- change 8: domain semantics
+
+
+@dataclass(slots=True)
+class DomainFinding:
+    """One flagged domain from change 8's semantic pass. Deliberately carries no `label` field of
+    any kind -- see `app.agent.schemas.DomainAssessment`'s own docstring for the full reasoning.
+    `app.api.analyses` is the only caller that turns this into `app.schemas.overview.
+    DomainSemanticFinding` (the wire schema, owned outside this package), and that schema's
+    `label` is a `Literal` defaulted to `SEMANTIC_INSIGHT_LABEL` -- there is no field on *this*
+    dataclass a caller could copy the wrong value out of, because this dataclass never represents
+    a label at all."""
+
+    domain: str
+    assessment: str
+    rationale: str
+    evidence_id: str | None
+
+
+@dataclass(slots=True)
+class DomainSemanticResult:
+    """`app.agent.orchestrator.assess_domain_semantics`'s return value. `findings` already
+    excludes both unflagged assessments and any flagged assessment that failed `app.agent.
+    verifier.verify_domain_semantic_output` -- unlike Path A's `NarrationResult` (which surfaces
+    invalid citations but still returns the narrative they were attached to), this pass drops a
+    citation-invalid finding outright, because `app.schemas.overview.DomainSemanticFinding` (the
+    wire schema) has no field to carry a per-finding validity flag to the UI -- CLAUDE.md rule 6
+    ("unverified claims get flagged, not silently rendered") applied to a schema that has no way
+    to flag one: the safe reading is "not silently rendered", so an unverified finding is dropped,
+    not shown as if it had passed. `citation_valid`/`invalid_citations` remain on this result for
+    logging/eval/tests even though the current wire schema has nowhere to carry them forward."""
+
+    findings: tuple[DomainFinding, ...]
+    citation_valid: bool
+    invalid_citations: tuple[dict[str, Any], ...]
+    model: str
+    tokens_in: int
+    tokens_out: int
+    cost_usd: Decimal
+    latency_ms: int
+
+
+def assess_domain_semantics(
+    *,
+    candidates: list[dict[str, Any]],
+    caller: LLMCaller,
+    model: str,
+    timeout_seconds: float = 60.0,
+) -> DomainSemanticResult:
+    """change 8's LLM semantic domain-analysis pass: brand impersonation, typosquatting intent,
+    and contextual relevance for destinations the deterministic rarity/baseline layer already
+    flagged rare or first-seen -- the half the DGA classifier's lexical-randomness model cannot
+    catch. Does not replace that classifier (its score, when known, travels through in each
+    candidate's own `dga_score` field, read-only, never touched here) and never sets severity,
+    priority, or `anomaly_confidence` -- see `app.agent.prompts.DOMAIN_SEMANTIC_SYSTEM_PROMPT`.
+
+    `candidates` is a deterministic, pre-computed input the caller hands in, exactly like Path A's
+    `narrate_analysis` (`overview`/`incidents`/`timeline_phases`) -- this function does no SQL of
+    its own; gathering the candidate list (rarity/first-seen selection, contributing line ids, the
+    events that preceded a user's first visit) is `app.api.analyses._compute_domain_semantic_
+    candidates`'s job, out of this package's ownership boundary the same way `app.agent`'s own
+    module docstrings describe for every other piece of pipeline wiring.
+
+    ## Zero-candidate short-circuit
+
+    When `candidates` is empty -- the common case; most uploads have no rare/first-seen
+    destination at all -- this makes no LLM call and returns an empty result at zero cost. This
+    matters because, unlike the Narrator (called explicitly, once, from its own `POST /narrate`
+    route specifically *because* an LLM call is never free), this pass is wired into
+    `GET /analyses/{id}/overview` -- a route documented elsewhere as "safe to call on every page
+    load". The empty-candidate short-circuit is what keeps that promise true for the overwhelming
+    majority of analyses; `app.api.analyses`'s own module comments document the cost tradeoff that
+    remains on the non-empty path, which does spend real tokens on every call, same as any other
+    real LLM call in this system (CLAUDE.md/change 12: "cost is real per upload").
+
+    `candidates` is additionally bounded to `MAX_SEMANTIC_DOMAINS_PER_CALL` here as a second,
+    defensive cap even though the caller is expected to have already applied the same bound --
+    CLAUDE.md rule 1's "the LLM never sees raw log volume" is enforced at every stage that could
+    violate it, not only the first one.
+    """
+    if not candidates:
+        return DomainSemanticResult(
+            findings=(),
+            citation_valid=True,
+            invalid_citations=(),
+            model=model,
+            tokens_in=0,
+            tokens_out=0,
+            cost_usd=Decimal("0"),
+            latency_ms=0,
+        )
+
+    bounded = candidates[:MAX_SEMANTIC_DOMAINS_PER_CALL]
+    start = time.monotonic()
+    deadline = start + timeout_seconds
+    usage = _UsageAccumulator()
+
+    context_block = prompts.build_domain_semantic_context(candidates=bounded)
+    raw = _run_notool_role(
+        caller=caller,
+        role="domain_semantic",
+        system_prompt=prompts.DOMAIN_SEMANTIC_SYSTEM_PROMPT,
+        user_content=context_block,
+        terminal_tool=build_assess_domains_tool(),
+        model=model,
+        deadline=deadline,
+        usage=usage,
+        effort=DOMAIN_SEMANTIC_EFFORT,
+    )
+    try:
+        output = DomainSemanticOutput.model_validate(raw)
+    except ValidationError as exc:
+        raise SchemaValidationError(f"domain_semantic assess_domains invalid: {exc}") from exc
+
+    citation_valid, invalid_citations = verify_domain_semantic_output(
+        candidates=bounded, output=output
+    )
+    invalid_domains = {entry["domain"] for entry in invalid_citations if "domain" in entry}
+    findings = tuple(
+        DomainFinding(
+            domain=a.domain,
+            assessment=a.assessment,
+            rationale=a.rationale,
+            evidence_id=a.evidence_ids[0] if a.evidence_ids else None,
+        )
+        for a in output.assessments
+        if a.flagged and a.domain not in invalid_domains
+    )
+    elapsed_ms = int((time.monotonic() - start) * 1000)
+    log.info(
+        "agent.domain_semantic_complete",
+        n_candidates=len(bounded),
+        n_flagged=sum(1 for a in output.assessments if a.flagged),
+        n_findings=len(findings),
+        citation_valid=citation_valid,
+        cost_usd=str(estimate_cost_usd(usage)),
+        latency_ms=elapsed_ms,
+    )
+    return DomainSemanticResult(
+        findings=findings,
         citation_valid=citation_valid,
         invalid_citations=tuple(invalid_citations),
         model=model,

@@ -392,3 +392,73 @@ def test_get_event_404_for_another_tenants_event(
 
     response = client.get(f"/api/events/{other_event.id}")
     assert response.status_code == 404
+
+
+# ------------------------------------------------------------ lookup by raw line number
+#                                                        docs/v2_migration change 16
+
+
+def test_get_event_by_line_resolves_the_right_event(
+    client: TestClient, authed: tuple[Tenant, User]
+) -> None:
+    """change 16: evidence cards carry `contributing_line_numbers` (file line numbers, not
+    `events.id`) and must "click-to-expand into the raw log rows" — this is the lookup that
+    makes that possible."""
+    tenant, user = authed
+    analysis = _make_analysis(tenant.id, user.id)
+    _seed_events(analysis.id, tenant.id, 5)
+
+    response = client.get(f"/api/analyses/{analysis.id}/events/by-line/3")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["raw_line_no"] == 3
+    assert body["ocsf"] == {"idx": 3}
+
+
+def test_get_event_by_line_requires_authentication(client: TestClient) -> None:
+    response = client.get(f"/api/analyses/{uuid.uuid4()}/events/by-line/0")
+    assert response.status_code == 401
+
+
+def test_get_event_by_line_404_for_unknown_line(
+    client: TestClient, authed: tuple[Tenant, User]
+) -> None:
+    tenant, user = authed
+    analysis = _make_analysis(tenant.id, user.id)
+    _seed_events(analysis.id, tenant.id, 2)
+
+    response = client.get(f"/api/analyses/{analysis.id}/events/by-line/999")
+    assert response.status_code == 404
+    assert response.json()["code"] == "not_found"
+
+
+def test_get_event_by_line_404_for_another_tenants_analysis(
+    client: TestClient, authed: tuple[Tenant, User], tenant_cleanup: list[uuid.UUID]
+) -> None:
+    other_tenant = make_tenant(name="Other By-Line Tenant")
+    tenant_cleanup.append(other_tenant.id)
+    other_user = make_user(tenant_id=other_tenant.id, email="other-by-line@example.com")
+    other_analysis = _make_analysis(other_tenant.id, other_user.id)
+    _seed_events(other_analysis.id, other_tenant.id, 3)
+
+    response = client.get(f"/api/analyses/{other_analysis.id}/events/by-line/0")
+    assert response.status_code == 404
+    assert response.json()["code"] == "not_found"
+
+
+def test_get_event_by_line_numbers_are_scoped_per_analysis(
+    client: TestClient, authed: tuple[Tenant, User]
+) -> None:
+    """Line numbers restart at 1 for every uploaded file — line 0 in analysis A must never
+    resolve to line 0's event in analysis B."""
+    tenant, user = authed
+    analysis_a = _make_analysis(tenant.id, user.id, filename="a.log")
+    analysis_b = _make_analysis(tenant.id, user.id, filename="b.log")
+    _seed_events(analysis_a.id, tenant.id, 2, domain="a.example.com")
+    _seed_events(analysis_b.id, tenant.id, 2, domain="b.example.com")
+
+    body_a = client.get(f"/api/analyses/{analysis_a.id}/events/by-line/0").json()
+    body_b = client.get(f"/api/analyses/{analysis_b.id}/events/by-line/0").json()
+    assert body_a["domain"] == "a.example.com"
+    assert body_b["domain"] == "b.example.com"
+    assert body_a["id"] != body_b["id"]

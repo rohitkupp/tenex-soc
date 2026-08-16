@@ -17,7 +17,15 @@ docs/v2_migration change 1 ("Historical baseline store") adds `baseline_windows`
 `baseline_profiles`, and `baseline_contacts` -- the persistent per-tenant history every
 percentile and rarity lookup resolves against from here on, never the uploaded file. Loaded by
 `app.baseline.loader`, queried by `app.baseline.resolve`; see `app/models/baseline_window.py`
-for why none of the three carry a `tenants` FK."""
+for why none of the three carry a `tenants` FK.
+
+docs/v2_migration change 21 ("Continuous learning") adds `learning_events` (the ledger, matched
+verbatim to the task brief's schema) plus eight small supporting tables the 15 mechanisms need
+and docs/02 does not define: `entity_threshold_overrides` (3), `reference_set_exclusions` (5),
+`entity_cohorts` (7), `dga_label_feedback` (8), `exemplar_bank_entries` (10),
+`retrieval_priors` (13), `evidence_profile_state` (15), and `learning_proposals` (the shared
+staging table for every gated mechanism's propose/approve/reject cycle). See each model's own
+docstring and `app/learning/mechanisms.py` for the full 1-15 mapping."""
 
 from __future__ import annotations
 
@@ -34,14 +42,30 @@ from app.models.baseline_contact import BaselineContact
 from app.models.baseline_profile import BaselineProfile
 from app.models.baseline_window import BaselineWindow
 from app.models.benign_baseline_entry import BenignBaselineEntry
+from app.models.claim_feedback import ClaimFeedback
 from app.models.dead_letter import DeadLetter
 from app.models.detector_stats import DetectorStats
+from app.models.dga_label_feedback import DgaLabelFeedback
 from app.models.entity import Entity
+from app.models.entity_cohort import EntityCohort
 from app.models.entity_edge import EntityEdge
+from app.models.entity_threshold_override import ALL_DETECTORS, EntityThresholdOverride
 from app.models.eval_run import EvalRun
 from app.models.event import Event
+from app.models.evidence_profile_state import EvidenceProfileState
+from app.models.evidence_relevance_feedback import EvidenceRelevanceFeedback
+from app.models.exemplar_bank_entry import ExemplarBankEntry
 from app.models.incident import Incident
+from app.models.learning_event import LearningEvent
+from app.models.learning_proposal import (
+    STATUS_APPROVED,
+    STATUS_PENDING,
+    STATUS_REJECTED,
+    LearningProposal,
+)
 from app.models.model_version import ModelVersion
+from app.models.reference_set_exclusion import ReferenceSetExclusion
+from app.models.retrieval_prior import RetrievalPrior
 from app.models.signal import Signal
 from app.models.suppression_candidate import SuppressionCandidate
 from app.models.synthetic_seed_marker import SyntheticSeedMarker
@@ -52,22 +76,37 @@ from app.models.upload import Upload
 from app.models.user import User
 
 __all__ = [
+    "ALL_DETECTORS",
     "LIVE_TENANT_NAME",
+    "STATUS_APPROVED",
+    "STATUS_PENDING",
+    "STATUS_REJECTED",
     "Analysis",
     "AnalystFeedback",
     "BaselineContact",
     "BaselineProfile",
     "BaselineWindow",
     "BenignBaselineEntry",
+    "ClaimFeedback",
     "DeadLetter",
     "DetectorStats",
+    "DgaLabelFeedback",
     "Entity",
+    "EntityCohort",
     "EntityEdge",
+    "EntityThresholdOverride",
     "EvalRun",
     "Event",
+    "EvidenceProfileState",
+    "EvidenceRelevanceFeedback",
+    "ExemplarBankEntry",
     "Incident",
+    "LearningEvent",
+    "LearningProposal",
     "MissingTenantScopeError",
     "ModelVersion",
+    "ReferenceSetExclusion",
+    "RetrievalPrior",
     "Signal",
     "SuppressionCandidate",
     "SyntheticSeedMarker",

@@ -447,19 +447,41 @@ export interface MitreTechniqueRef {
   rationale: string;
 }
 
-/** docs/02 `triage_verdicts.narrative` — `[{step, claim, evidence_event_ids}]` */
+/**
+ * `triage_verdicts.narrative` — `app/agent/schemas.py::NarrativeStep`, matched exactly.
+ * `evidence_ids` (not the pre-migration `evidence_event_ids: number[]`) is docs/v2_migration
+ * change 7's dual-citation-namespace scheme: each entry is a citation *string*, one of
+ * `EVIDENCE-14` / `BASELINE-3` / `LOG-1291` / `MITRE-T1567.002` / `ZSCALER-KB-threat-cat` — never
+ * a bare event id. `NarrativeBlock` dispatches on the prefix: an `EVIDENCE-` chip scrolls to that
+ * card in the incident's Evidence section (change 16); everything else renders as a plain,
+ * non-interactive citation chip.
+ */
 export interface NarrativeStep {
   step: number;
   claim: string;
-  evidence_event_ids: number[];
+  evidence_ids: string[];
 }
 
-/** docs/07 "Citation verification" — existence/scope/temporal-plausibility failures recorded
- * here (best-effort field names; docs/07 describes the checks but not the exact JSON keys). */
+/**
+ * `app/agent/verifier.py::ClaimCheck.as_dict()` — one entry per narrative claim the verifier
+ * checked, not one per citation. `evidence_ids` is the claim's own citation list; `missing_ids`/
+ * `out_of_scope_ids` name specifically which of those citations failed which check.
+ * `NarrativeBlock` treats a citation as invalid when it appears in any of the three id arrays on
+ * an entry whose own checks did not all pass — tolerant of older recorded fixtures that may only
+ * carry a subset of these fields.
+ */
 export interface InvalidCitation {
-  step?: number;
-  evidence_event_id?: number;
-  reason: string;
+  claim?: string;
+  evidence_ids?: string[];
+  existence_ok?: boolean;
+  numeric_ok?: boolean;
+  retrieval_ok?: boolean;
+  scope_ok?: boolean | null;
+  missing_ids?: string[];
+  mismatched_numbers?: string[];
+  unretrieved_techniques?: string[];
+  out_of_scope_ids?: string[];
+  reason?: string;
 }
 
 /** docs/07 "Tools" — one entry per tool call in a triage run. */
@@ -579,6 +601,30 @@ export interface IncidentGraph {
 
 // ---- Feedback (learning loop entry point — router IS implemented, app/api/learning.py) ----
 
+/**
+ * docs/v2_migration change 22's five Dismiss reason categories, verbatim
+ * (`app.learning.feedback.DISMISSAL_REASON_CATEGORIES`) — the dropdown's own vocabulary, not
+ * free text. `analyst_feedback.dismissal_reason` (docs/02) stores whichever of these five was
+ * picked; the accompanying free-text elaboration goes in `note`, a separate field.
+ */
+export const DISMISSAL_REASON_CATEGORIES = [
+  "sanctioned_automation",
+  "known_business_process",
+  "expected_for_this_entity",
+  "insufficient_evidence",
+  "other",
+] as const;
+export type DismissalReasonCategory = (typeof DISMISSAL_REASON_CATEGORIES)[number];
+
+/** Change 5's mandatory "no forced attribution" value — always offered on top of a verdict's
+ * own retrieved candidates in the Override technique dropdown (change 22). */
+export const NO_KNOWN_MAPPING = "NO_KNOWN_MAPPING";
+
+export interface DomainLabelCorrectionIn {
+  domain: string;
+  is_dga: boolean;
+}
+
 export interface FeedbackRequest {
   agrees: boolean;
   corrected_disposition?: string;
@@ -586,6 +632,7 @@ export interface FeedbackRequest {
   dismissal_reason?: string;
   mark_benign_baseline?: boolean;
   note?: string;
+  corrected_domain_labels?: DomainLabelCorrectionIn[];
 }
 export interface DetectorWeightChangeOut {
   detector_key: string;
@@ -622,6 +669,11 @@ export interface FeedbackResponse {
   suppression_candidates_generated: string[];
   benign_baseline_entries_created: number;
   retrain_attempt: RetrainAttemptOut | null;
+  /** `4` (added to the kNN/LOF reference set), `5` (excluded as a confirmed true positive), or
+   * `null` — what the confirmation toast names (change 22). */
+  reference_set_mechanism: number | null;
+  baseline_expansion_proposed: boolean;
+  exemplar_proposed: boolean;
 }
 
 // Response plans (formerly M15, `backend/app/schemas/plans.py`) were removed in
@@ -748,6 +800,79 @@ export interface SuppressionAcceptResponse {
   written_path: string;
 }
 
+// ---- Continuous learning (docs/v2_migration changes 21/22, `backend/app/schemas/learning.py`) ----
+
+/** Change 22: "Per-claim thumbs on narrative claims, hover-revealed." */
+export interface ClaimFeedbackRequest {
+  helpful: boolean;
+  note?: string;
+}
+export interface ClaimFeedbackResponse {
+  id: number;
+  incident_id: string;
+  step: number;
+  helpful: boolean;
+  /** True the moment this thumbs-down completed a cluster of >= 3 similar corrections and
+   * mechanism 14 (verifier rule induction) staged a proposal — surfaced so the UI can name the
+   * effect, per change 22's toast requirement. */
+  verifier_rule_proposed: boolean;
+}
+
+/** Change 16/22's "per-evidence relevance toggle" — rendered inside the evidence section (a
+ * different milestone's ownership); this is the seam it POSTs through. */
+export interface EvidenceRelevanceRequest {
+  extractor: string;
+  relevant: boolean;
+}
+export interface EvidenceRelevanceResponse {
+  id: number;
+  incident_id: string;
+  evidence_id: string;
+  relevant: boolean;
+  /** True the moment this toggle completed mechanism 15's (evidence profile widening) sample
+   * threshold and a widening proposal was staged. */
+  widening_proposed: boolean;
+}
+
+/** The 15 mechanisms, `app.learning.mechanisms.MECHANISMS` mirrored — auto-apply ones log
+ * directly; gated ones only ever log through a reviewed `LearningProposalOut`. */
+export interface LearningEventOut {
+  id: number;
+  mechanism: number;
+  mechanism_name: string;
+  trigger_feedback_id: string | null;
+  applied: boolean;
+  before_state: Record<string, unknown> | null;
+  after_state: Record<string, unknown> | null;
+  metric_delta: Record<string, unknown> | null;
+  created_at: string;
+}
+export interface LearningEventsResponse {
+  items: LearningEventOut[];
+}
+
+export interface LearningProposalOut {
+  id: string;
+  mechanism: number;
+  mechanism_name: string;
+  status: "pending" | "approved" | "rejected";
+  payload: Record<string, unknown>;
+  supporting_feedback_ids: string[];
+  created_at: string;
+  reviewed_at: string | null;
+}
+export interface LearningProposalsResponse {
+  items: LearningProposalOut[];
+}
+export interface LearningProposalDecisionResponse {
+  id: string;
+  status: string;
+  passed: boolean;
+  after_state: Record<string, unknown>;
+  metric_delta: Record<string, unknown>;
+  reason: string;
+}
+
 // ---- Tier 2 (real schemas, `backend/app/schemas/tier2.py` verbatim) ----
 
 export interface IncidentTypeBreakdownOut {
@@ -853,4 +978,174 @@ export interface EventOut extends EventListItem {
   /** Why this event was flagged, one entry per detector — rendered through
    * `ExplanationRenderer` in `EventInspector`, never as raw JSON. */
   signals: EventSignalOut[];
+}
+
+// ---- Overview, notable users/destinations, semantic findings, Narrator (docs/v2_migration
+// changes 8, 9, 10, 14 Path A — `backend/app/schemas/overview.py` verbatim) ----
+
+/** `GET /api/analyses/{id}/overview`'s `overview` field — change 9's deterministic log
+ * overview, computed in SQL, always produced. `period_start`/`period_end` are `null` only for
+ * an analysis with zero events — a valid, reportable state, not an error. */
+export interface LogOverview {
+  period_start: string | null;
+  period_end: string | null;
+  events: number;
+  users: number;
+  src_ips: number;
+  unique_domains: number;
+  allowed: number;
+  blocked: number;
+  bytes_out: number;
+  bytes_in: number;
+  parse_failure_rate: number | null;
+}
+
+/** `app.baseline.resolve.PercentileResult`, serialised. Cold start must stay visible: when
+ * `baseline_status !== "ok"`, `percentile` is `null` — never a number computed from a thin
+ * history rendered as if it were trustworthy. */
+export interface BaselineComparisonOut {
+  metric: string;
+  value: number;
+  baseline_status: "ok" | "insufficient_history";
+  n_windows: number;
+  percentile: number | null;
+  p50: number | null;
+  p95: number | null;
+  p99: number | null;
+}
+
+/** change 9: "notable users (anomalous windows, volume vs. baseline, first-seen domain count,
+ * top anomaly score)". */
+export interface NotableUser {
+  value: string;
+  anomalous_windows: number;
+  volume_vs_baseline: BaselineComparisonOut;
+  first_seen_domain_count: number;
+  top_anomaly_score: number | null;
+}
+
+export interface PeriodicityOut {
+  dominant_period_s: number;
+  spectral_strength: number;
+}
+
+/** change 9: "notable destinations (first-observed flag, distinct users, DGA score, connection
+ * count, periodicity)". `dga_score` is `ML_ANOMALY_LABEL` territory — never relabelled. */
+export interface NotableDestination {
+  value: string;
+  first_observed: boolean;
+  distinct_users: number;
+  dga_score: number | null;
+  connection_count: number;
+  periodicity: PeriodicityOut | null;
+}
+
+/**
+ * change 8: findings from the LLM semantic domain-analysis pass — brand impersonation,
+ * typosquatting intent, contextual relevance — labelled distinctly from the ML/DGA pipeline's
+ * own findings, and this is not cosmetic (CLAUDE.md/change 8: "never let a semantic judgement
+ * inherit the statistical backing of a calibrated classifier"). `label` is pinned to
+ * `SEMANTIC_INSIGHT_LABEL` below by the backend schema's own `Literal` type — this interface
+ * mirrors that rather than widening it back to `string`, so a caller cannot accidentally render
+ * one of these with the ML badge.
+ *
+ * **Always `[]` today.** `AnalysisOverviewResponse.domain_semantic_findings` has no producer yet
+ * — the semantic LLM call belongs in `app/agent` (out of this milestone's ownership boundary;
+ * see `backend/app/schemas/overview.py::DomainSemanticFinding`'s own docstring). This type and
+ * `SemanticFindingBadge` exist so the UI renders correctly the moment that call lands.
+ */
+export interface DomainSemanticFinding {
+  domain: string;
+  label: typeof SEMANTIC_INSIGHT_LABEL;
+  assessment: string;
+  rationale: string;
+  evidence_id: string | null;
+}
+
+/** change 8's two labels, verbatim — never construct either as a free-form string elsewhere. */
+export const ML_ANOMALY_LABEL = "ML anomaly — high confidence" as const;
+export const SEMANTIC_INSIGHT_LABEL = "Analyst insight — requires validation" as const;
+
+/** `GET /api/analyses/{id}/overview` — change 10 Level 1 ("what happened"): overview stats +
+ * anomaly count + notable users/destinations. `executive_summary` is not part of this response
+ * — see `AnalysisNarrateResponse` and `ExecutiveSummary` for why that's a separate, explicit,
+ * cost-bearing call rather than inlined here. */
+export interface AnalysisOverviewResponse {
+  overview: LogOverview;
+  anomaly_count: number;
+  notable_users: NotableUser[];
+  notable_destinations: NotableDestination[];
+  domain_semantic_findings: DomainSemanticFinding[];
+}
+
+/** `POST /api/analyses/{id}/narrate` — change 14 Path A's `NarrationResult`, serialised. Not
+ * persisted server-side (see `backend/app/schemas/overview.py`'s module docstring): every call
+ * re-runs the Narrator and re-spends, so `ExecutiveSummary` calls this once per explicit click,
+ * never automatically on page load. */
+export interface PhaseNarrativeOut {
+  phase_index: number;
+  narrative: string;
+  cited_log_ids: string[];
+}
+export interface AnalysisNarrateResponse {
+  executive_summary: string;
+  phase_narratives: PhaseNarrativeOut[];
+  citation_valid: boolean;
+  invalid_citations: Record<string, unknown>[];
+  model: string;
+  tokens_in: number;
+  tokens_out: number;
+  cost_usd: number | string;
+  latency_ms: number;
+}
+
+// ---- Evidence (docs/v2_migration changes 2, 11, 16 — `backend/app/schemas/evidence.py`
+// verbatim) ----
+
+/**
+ * `app.detection.evidence.payload.EvidencePayload`, serialised. `historical` carries change 1's
+ * cold-start contract verbatim — keys ending in `_percentile`/`baseline_status`/`n_windows`
+ * (optionally namespaced by scope prefix, e.g. burst's `user_percentile`/`department_percentile`/
+ * `org_percentile`) — read defensively, the same "no rigid shared shape across detectors" policy
+ * `ExplanationRenderer` already holds for `SignalExplanation`.
+ */
+export interface EvidencePayloadOut {
+  evidence_id: string;
+  extractor: string;
+  entity_type: string;
+  entity_value: string;
+  window_start: string;
+  window_end: string;
+  measurements: Record<string, unknown>;
+  historical: Record<string, unknown>;
+  contributing_line_numbers: number[];
+  nominates_candidate: boolean;
+  nomination_score: number | null;
+  /** Which of this analysis's incidents this payload contributed to — `[]` is the common,
+   * expected case on the analysis-wide browser (change 16: "including evidence that never
+   * formed an incident"), not missing data. */
+  incident_ids: string[];
+}
+
+/**
+ * `GET /api/incidents/{id}/evidence` — change 16's primary evidence view + change 11's
+ * `highlight_lines`. `highlight_lines` is the union of every item's `contributing_line_numbers`
+ * — attribution-derived, never LLM-authored. `highlight_line_violations` is every `LOG-n`
+ * citation in this incident's verdict narrative that falls **outside** that set — a presenter
+ * citing a line the evidence layer never nominated, exactly the scope violation change 11 says
+ * must be caught, not silently rendered.
+ */
+export interface IncidentEvidenceResponse {
+  items: EvidencePayloadOut[];
+  highlight_lines: number[];
+  highlight_line_violations: number[];
+}
+
+/** `GET /api/analyses/{id}/evidence` — change 16's secondary, analysis-wide evidence browser.
+ * `truncated` marks that `total` exceeds what `items` carries (server-side cap, filterable by
+ * `extractor`/`entity_type`/`entity_value`/`min_percentile` query params). */
+export interface AnalysisEvidenceResponse {
+  items: EvidencePayloadOut[];
+  total: number;
+  truncated: boolean;
 }
