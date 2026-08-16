@@ -168,6 +168,10 @@ class StageWorker:
                         analysis_id=message.analysis_id,
                         tenant_id=message.tenant_id,
                         error=failure_reason,
+                        # This worker's own stage — the one that actually died. Without it the
+                        # column keeps the last *successful* stage and the funnel points at the
+                        # wrong box (change 27).
+                        stage=self.queue_name,
                     )
                     return get_counters(
                         conn, analysis_id=message.analysis_id, tenant_id=message.tenant_id

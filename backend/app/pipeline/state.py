@@ -251,7 +251,12 @@ def reopen_for_retry(conn: Connection, *, analysis_id: uuid.UUID, tenant_id: uui
 
 
 def mark_failed(
-    conn: Connection, *, analysis_id: uuid.UUID, tenant_id: uuid.UUID, error: str
+    conn: Connection,
+    *,
+    analysis_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    error: str,
+    stage: str | None = None,
 ) -> None:
     """Idempotent: only the first permanent failure sets `status`/`error`/`finished_at`
     (the `WHERE status NOT IN (...)` guard) — a second stage failing after the analysis
@@ -260,11 +265,25 @@ def mark_failed(
         text(
             """
             UPDATE analyses
-            SET status = 'failed', error = :error, finished_at = now()
+            SET status = 'failed',
+                error = :error,
+                -- The *failing* stage, not the last successful one. docs/v2_migration change 27
+                -- requires /analyses/[id] to render the failure "at the point in the funnel where
+                -- it occurred, so the analyst sees which stage died rather than a generic error".
+                -- This column previously kept whatever the last successful stage wrote, so a
+                -- triage failure displayed as a correlate failure — caught by opening the page,
+                -- since nothing asserts the two agree.
+                stage = COALESCE(:stage, stage),
+                finished_at = now()
             WHERE id = :analysis_id AND tenant_id = :tenant_id AND status NOT IN ('complete', 'failed')
             """
         ),
-        {"analysis_id": analysis_id, "tenant_id": tenant_id, "error": error[:2000]},
+        {
+            "analysis_id": analysis_id,
+            "tenant_id": tenant_id,
+            "error": error[:2000],
+            "stage": stage,
+        },
     )
 
 

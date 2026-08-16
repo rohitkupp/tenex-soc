@@ -420,3 +420,44 @@ async def test_repeated_worker_crashes_dead_letter_via_broker_delivery_limit(
             conn.execute(
                 text("DELETE FROM dead_letters WHERE analysis_id = :aid"), {"aid": analysis_id}
             )
+
+
+def test_mark_failed_records_the_failing_stage_not_the_last_successful_one(
+    tenant_cleanup: list[uuid.UUID],
+) -> None:
+    """docs/v2_migration change 27: `/analyses/[id]` must render the failure "at the point in the
+    funnel where it occurred, so the analyst sees which stage died rather than a generic error".
+
+    `mark_failed` set status/error/finished_at but never `stage`, so the column kept whatever the
+    last *successful* stage had written. A real local run failed in `triage` and recorded
+    `stage='correlate'` — the funnel would have blamed the wrong box. Found by opening the page,
+    because nothing asserted the two agree.
+    """
+    from sqlalchemy import text as _text
+
+    from app.core.db import get_engine
+    from app.pipeline.state import mark_failed
+    from tests.conftest import make_analysis, make_tenant, make_user
+
+    tenant = make_tenant(name="mark_failed stage test")
+    tenant_cleanup.append(tenant.id)
+    user = make_user(tenant_id=tenant.id, email=f"mf-{uuid.uuid4()}@test.local")
+    analysis = make_analysis(tenant_id=tenant.id, user_id=user.id)
+
+    with get_engine().begin() as conn:
+        conn.execute(
+            _text("UPDATE analyses SET status='running', stage='correlate' WHERE id = :a"),
+            {"a": analysis.id},
+        )
+        mark_failed(
+            conn, analysis_id=analysis.id, tenant_id=tenant.id, error="boom", stage="triage"
+        )
+        row = conn.execute(
+            _text("SELECT status, stage, error FROM analyses WHERE id = :a"), {"a": analysis.id}
+        ).one()
+
+    assert row.status == "failed"
+    assert row.stage == "triage", (
+        "the funnel must point at the stage that died, not the last one that worked"
+    )
+    assert "boom" in row.error
