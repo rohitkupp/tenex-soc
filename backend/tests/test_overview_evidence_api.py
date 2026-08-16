@@ -477,8 +477,38 @@ def test_overview_domain_semantic_findings_do_not_alter_the_dga_score(
     assert len(body["domain_semantic_findings"]) == 1
 
 
+@pytest.fixture
+def no_api_key(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Forces the real no-key branch, deterministically, in a container that has a live
+    `ANTHROPIC_API_KEY` (docker-compose passes one in; see `tests/test_config.py`'s own
+    docstring).
+
+    `get_settings` (`app.core.config`) is not wired through FastAPI's `Depends` anywhere in this
+    app -- grep the routers, there is no `Depends(get_settings)` and no
+    `app.dependency_overrides` entry to hang an override off of. It is a bare `@lru_cache`d
+    function that `app.api.analyses` calls directly inside each handler body
+    (`settings = get_settings()`), and the two tests using this fixture are deliberately
+    exercising *that* real, cached singleton -- unlike this file's other tests, which
+    monkeypatch `analyses_module.get_settings` with a `_FakeSettings` stand-in to test wiring,
+    these two are proving the actual no-key code path, so a fake would defeat the point.
+
+    That leaves monkeypatch-the-source-plus-clear-the-cache as the only way to force it: setting
+    `ANTHROPIC_API_KEY=""` overrides pydantic-settings' env-var source (which outranks its
+    dotenv source, so `backend/.env`'s own key never gets a chance to win), and `cache_clear()`
+    is required before AND after -- before, so the next `get_settings()` call rebuilds from the
+    patched environment instead of returning whatever this process cached first (`app.main`
+    calls `get_settings()` at import time); after, so a later test's `get_settings()` doesn't
+    keep returning this test's forced "no key" Settings once `monkeypatch` has reverted the env
+    var back to the real one (same lifecycle as `tests/conftest.py`'s
+    `_fresh_redis_client_per_test`)."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 def test_overview_domain_semantic_findings_empty_without_an_api_key(
-    client: TestClient, ctx: dict
+    client: TestClient, ctx: dict, no_api_key: None
 ) -> None:
     """This test environment has no `ANTHROPIC_API_KEY` configured, matching `test_narrate_
     returns_503_without_an_api_key`'s own assumption — but unlike `POST /narrate`, `GET /overview`
@@ -504,7 +534,9 @@ def test_overview_domain_semantic_findings_empty_without_an_api_key(
 # =================================================================================== narrate
 
 
-def test_narrate_returns_503_without_an_api_key(client: TestClient, ctx: dict) -> None:
+def test_narrate_returns_503_without_an_api_key(
+    client: TestClient, ctx: dict, no_api_key: None
+) -> None:
     """This test environment has no `ANTHROPIC_API_KEY` configured (CLAUDE.md: "recorded LLM
     responses, not live calls" — CI must never need a key), so this exercises the real
     no-key branch rather than a mocked one."""

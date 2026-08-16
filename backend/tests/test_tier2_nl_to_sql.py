@@ -27,7 +27,17 @@ from app.tier2.nl_to_sql import (
 from app.tier2.sql_validator import validate_and_prepare
 from app.tier2.views import ALLOWED_VIEWS
 
-_NO_KEY_SETTINGS = Settings(_env_file=None)
+# `_env_file=None` only disables pydantic-settings' dotenv source; the environment-variable
+# source still reads real process env vars, and init-supplied fields (highest priority) are
+# the only way to override that deterministically. Earlier this was `Settings(_env_file=None)`
+# with no `anthropic_api_key`, which meant "disabled" was inferred from the *absence* of
+# ANTHROPIC_API_KEY in the environment -- true in CI, false for any developer with a real key
+# exported (this sandbox's own `.env`, per this file's module docstring). That let a real key
+# leak into `llm_enabled`, so these "disabled" tests silently attempted the real LLM path (caught
+# only by `tests/conftest.py`'s `_forbid_live_anthropic_calls` net, which turned "canned" into
+# "canned_fallback"). Force it explicitly so disabled-ness is a property of this object, not of
+# whoever's environment runs the suite.
+_NO_KEY_SETTINGS = Settings(_env_file=None, anthropic_api_key="")
 _LLM_ENABLED_SETTINGS = Settings(_env_file=None, anthropic_api_key="sk-fake-test-key-not-real")
 
 

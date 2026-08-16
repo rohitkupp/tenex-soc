@@ -5,8 +5,9 @@ one that refuses to start, so this behaviour is tested rather than assumed.
 
 These tests assert Settings' *default* behaviour, so they must not read the
 developer's `.env`. Whether a contributor happens to have an ANTHROPIC_API_KEY
-configured locally is not allowed to change whether the suite passes — a test
-that is green on one machine and red on another tells you nothing.
+(or, since M15, SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY) configured locally is not
+allowed to change whether the suite passes — a test that is green on one machine
+and red on another tells you nothing.
 """
 
 from __future__ import annotations
@@ -35,7 +36,31 @@ REAL = {
 
 
 def make_settings(**overrides: Any) -> Settings:
-    """Construct Settings in isolation from any on-disk `.env`."""
+    """Construct Settings in isolation from any on-disk `.env` -- AND from this process's real
+    environment variables.
+
+    `_env_file=None` only disables pydantic-settings' dotenv source; the environment-variable
+    source still reads real process env vars, and docker-compose passes a live
+    ANTHROPIC_API_KEY into this container (see this module's own docstring). Init-supplied
+    fields are the only source that outranks env vars, so every caller gets an explicit
+    `anthropic_api_key=""` default here unless it says otherwise -- "no key configured" is what
+    every test in this file that doesn't ask for a real one means by "default settings". Same
+    defect, same fix, as `tests/test_tier2_nl_to_sql.py`'s `_NO_KEY_SETTINGS`.
+
+    `supabase_url`/`supabase_service_role_key` get the identical treatment and for the identical
+    reason: they gate a real, side-effecting Supabase call
+    (`app.core.verification.send_verification_email`, netted for the whole suite by
+    `tests/conftest.py`'s `_forbid_live_verification_email_calls`) the same way `anthropic_api_key`
+    gates a live LLM call, and this container's environment can carry real values for either.
+    Without this default, `test_email_verification_disabled_without_supabase_config` would be
+    reasoning from the ambient absence of `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` in
+    `backend/.env` rather than asserting a real default -- and would flip from green to enabled
+    (silently wrong, not merely flaky) the moment those two vars are ever set in this container to
+    test signup against a live Supabase project.
+    """
+    overrides.setdefault("anthropic_api_key", "")
+    overrides.setdefault("supabase_url", "")
+    overrides.setdefault("supabase_service_role_key", SecretStr(""))
     return Settings(_env_file=None, **overrides)
 
 
@@ -80,8 +105,12 @@ def test_llm_disabled_without_a_key() -> None:
 
 
 def test_email_verification_disabled_without_supabase_config() -> None:
-    """No `.env` in this repo sets `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` -- this
-    is the state the entire test suite (and a fresh `make up`) actually runs in."""
+    """`make_settings()` forces `supabase_url`/`supabase_service_role_key` to their empty
+    defaults by default (see that helper's docstring) the same way it already forces
+    `anthropic_api_key=""` -- so this holds regardless of what this container's ambient
+    environment happens to carry, not because `backend/.env` happens not to set those two vars
+    today. This is still, incidentally, the state the entire test suite (and a fresh `make up`)
+    actually runs in -- it just no longer has to be, for this assertion to be true."""
     assert make_settings(environment="local").email_verification_enabled is False
     assert (
         make_settings(
@@ -107,10 +136,14 @@ def test_cors_origins_accepts_a_comma_delimited_string() -> None:
 
 
 def test_settings_do_not_leak_the_developers_dotenv() -> None:
-    """Regression guard for the bug this file's docstring describes.
-
-    A real key in backend/.env previously made `llm_enabled` true, turning the
-    suite red for anyone who had configured one.
+    """Regression guard for the bug this file's docstring describes -- previously a hole itself:
+    it went through `make_settings()`, which (before that helper's own fix, above) only passed
+    `_env_file=None` and so still inherited a real key from this container's environment, the
+    exact leak this test exists to catch. It read green in CI (no key in the environment there)
+    and would have stayed green here too, on a container docker-compose hands a live
+    ANTHROPIC_API_KEY -- "regression guard" in name only. Now that `make_settings()` forces
+    `anthropic_api_key=""` by default, this assertion is a real guard on that contract: it goes
+    red the moment anyone drops that default, in every environment, key or no key.
     """
     assert make_settings(environment="local").anthropic_api_key.get_secret_value() == ""
 

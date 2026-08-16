@@ -16,6 +16,7 @@ from collections.abc import Iterator
 from datetime import UTC, datetime
 
 import anthropic
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
@@ -93,6 +94,44 @@ def _forbid_live_anthropic_calls(monkeypatch: pytest.MonkeyPatch) -> None:
         )
 
     monkeypatch.setattr(anthropic.resources.messages.Messages, "create", _blocked_create)
+
+
+@pytest.fixture(autouse=True)
+def _forbid_live_verification_email_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`_forbid_live_anthropic_calls` above nets the one live-LLM egress path in this codebase;
+    this is its sibling for the *other* one: `app.core.verification.send_verification_email`'s
+    `httpx.post` to Supabase's admin `/auth/v1/invite` endpoint (app/core/verification.py:78).
+    That call is real, side-effecting egress to a third party — it creates a row in Supabase's own
+    `auth.users` table and mails a genuine confirmation link — gated only on
+    `Settings.email_verification_enabled` (`bool(supabase_url) and bool(supabase_service_role_key)`,
+    app/core/config.py), which is a plain config flag, not a test seam. Every test in this suite
+    currently gets that flag for free as False only because `backend/.env` happens not to set
+    those two vars — reasoning from absence, exactly what `tests/test_auth_signup.py`'s own
+    docstring says it assumes. The day someone adds real Supabase credentials to `backend/.env` to
+    test signup locally, every test that reaches `app.api.auth.signup`/`resend_verification`
+    would silently start firing real invite emails to addresses like `newsignup@example.com` and
+    `taken@example.com` — before any assertion runs, because `send_verification_email` never
+    raises by design (see its own docstring). Unlike the Anthropic path, nothing here previously
+    blocked it. Blocked at `httpx.post` itself (the actual network boundary), not
+    `app.core.verification.send_verification_email`, so a future call site that reaches for
+    `httpx.post` directly is caught too, not just this one function.
+
+    `tests/test_auth_signup.py::test_signup_persists_user_even_when_the_verification_email_fails_
+    to_send` is this fixture's one legitimate opt-out, and it stays green under this net: it
+    monkeypatches `auth_module.get_settings` *and* `auth_module.send_verification_email` directly,
+    so the real `send_verification_email` — and therefore this patched `httpx.post` — is never
+    reached at all; only the fake `lambda email: False` runs.
+    """
+
+    def _blocked_post(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError(
+            "a test called the real httpx.post — CI must never fire a live Supabase invite email "
+            "(there is no upstream fixture for this the way anthropic calls have FixtureCaller); "
+            "monkeypatch get_settings and/or send_verification_email instead, the way "
+            "test_auth_signup.py's ...fails_to_send test does"
+        )
+
+    monkeypatch.setattr(httpx, "post", _blocked_post)
 
 
 @pytest.fixture
