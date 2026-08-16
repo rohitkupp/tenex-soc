@@ -1,0 +1,43 @@
+{
+  "splits": {
+    "train": {
+      "count": 105,
+      "org": "northwind",
+      "seed": 42,
+      "users": 262,
+      "dir": "data/corpus"
+    },
+    "val": {
+      "count": 30,
+      "org": "contoso",
+      "seed": 1337,
+      "users": 188,
+      "dir": "data/corpus"
+    },
+    "golden": {
+      "count": 15,
+      "org": "fabrikam",
+      "seed": 90210,
+      "users": 230,
+      "dir": "data/eval/golden"
+    }
+  },
+  "scenario_counts": {
+    "peer_group_deviation": 15,
+    "insider_mass_download": 14,
+    "benign": 24,
+    "off_hours_spike": 14,
+    "low_and_slow_exfil": 22,
+    "c2_beaconing": 12,
+    "benign_but_weird": 8,
+    "multi_domain_c2_failover": 11,
+    "prompt_injection_canary": 8,
+    "data_exfiltration": 15,
+    "web_shell_probing": 7
+  },
+  "baseline": {
+    "windows": 130837,
+    "profiles": 1048,
+    "contacts": 2252
+  }
+}

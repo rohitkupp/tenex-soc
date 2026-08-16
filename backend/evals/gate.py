@@ -105,7 +105,8 @@ def _check_regression(
                 current,
                 tolerance,
                 True,
-                "not measured — app/agent/ has no orchestrator/verifier yet (disclosed, not a regression); excluded from this run's gate",
+                "not measured — `evals.run` makes no LLM calls, so agent metrics have no value "
+                "this run (disclosed, not a regression); excluded from this run's gate",
             )
         return GateCheck(
             metric,
@@ -144,7 +145,8 @@ def evaluate_gate(current_metrics: dict[str, float | None]) -> tuple[bool, list[
                 None,
                 None,
                 True,
-                "not measured — app/agent/ has no orchestrator/verifier yet (disclosed, not a regression); excluded from this run's gate",
+                "not measured — `evals.run` makes no LLM calls, so agent metrics have no value "
+                "this run (disclosed, not a regression); excluded from this run's gate",
             )
         )
     else:
