@@ -263,3 +263,38 @@ compromises both. NIST SP 800-63B does not accept email as an out-of-band authen
 Auth's own MFA supports TOTP and phone, and pointedly not email. If MFA is added here it should be
 TOTP, which is stronger, needs no mail infrastructure on the login path, and is what a reader of
 this document would expect to find.
+
+
+## Shared workspace, single live tenant — `docs/v2_migration` change 23
+
+Every login lands in the same workspace and sees identical data. Authentication still exists —
+the brief requires it — but it no longer partitions data.
+
+**What changed:** signup used to mint a fresh `Tenant` per account, so two reviewers creating
+accounts would each land in an empty world and neither would see the other's uploads or feedback.
+Signup now joins the single live tenant, `northwind`, via `get_or_create_live_tenant`. `org_name`
+is still accepted and validated so the API contract is unchanged, but it no longer names anything.
+
+**What deliberately did NOT change:** `TenantScopedMixin`, `tenant_scope`, `bypass_tenant_scope`,
+and the `do_orm_execute` hook in `app/models/base.py` are untouched. This is not "tenant isolation
+removed" — it is "one tenant flowing through machinery that still enforces isolation structurally".
+The distinction is load-bearing: Tier 2 aggregates across tenants and needs `tenant_id` to mean
+something, and a test asserts a `contoso` row is still invisible to a `northwind`-scoped session.
+The migration is explicit that the column stays because it costs nothing and Tier 2 needs it.
+
+An audit of `app/api/*.py` found every route already scoped by `current.tenant.id` and never by
+`user_id`, so "two users see the same data" fell out for free once signup stopped creating a
+tenant per account — there was no per-user filtering to unpick.
+
+### Tier 2 peers
+
+`contoso` and `fabrikam` are seeded as `tier2_signatures` only — deterministic `(tenant_id, salt)`
+stand-ins with no `tenants` row, no user, and no login path. They exist to make cross-tenant
+indicator overlap demonstrable. The names match the corpus generator's val and golden split orgs,
+which is deliberate: the generator shares a campaign-domain pool across splits so the same
+indicators genuinely recur across orgs rather than being planted by the seeder alone.
+
+**Overlap is asserted, not hoped for.** `seed_tier2` calls `list_indicator_overlap` after writing
+and raises if the result is empty. A Tier 2 page rendering empty is the failure mode this guards,
+and it is the kind of thing that only shows up in a demo. Verified live: one overlapping
+indicator across three tenants.
