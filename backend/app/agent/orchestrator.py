@@ -490,9 +490,49 @@ def _run_tool_role(
     """Drives one role's turn loop until it calls its terminal tool, or raises `AgentTimeoutError` /
     `AgentRefusalError` / `SchemaValidationError`. Returns the terminal tool call's raw `input` dict.
     Used only by the Analyst -- the Judge and Presenter have no investigation tools and go through
-    `_run_notool_role` instead."""
+    `_run_notool_role` instead.
+
+    ## Prompt caching: why `first_user_content` gets a `cache_control` marker here, and only here
+
+    `first_user_content` is `_build_incident_context_block`'s output (plus the prior-decisions
+    block, when present) -- the tens-of-thousands-of-token block CLAUDE.md's "the LLM never sees
+    raw log volume" rule already forced to be reduced, computed once per incident in `_run_flow`
+    and unchanged for the rest of this loop. Every turn after the first re-sends `messages[0]`
+    verbatim as part of the growing history (tool calls and their results only ever *append*;
+    nothing here ever rewrites or removes it -- see `_truncate_oldest_tool_result`, which
+    collapses `tool_result` blocks and never touches this one). Marking it `cache_control:
+    {"type": "ephemeral"}` here means turn 1 pays the ~1.25x write premium and every subsequent
+    turn in *this same tool-calling loop* reads it back at ~0.1x instead of full price --
+    a real, repeated saving whenever the Analyst actually spends more than one turn investigating
+    (up to `agent_max_tool_calls` extra turns, `app.core.config.Settings`), and a wash (one write,
+    zero reads) on the common case of a single-turn Analyst that submits immediately.
+
+    This is deliberately **not** done for `_run_notool_role` (Judge, Presenter, Narrator,
+    domain-semantic): each of those makes exactly one call per incident, so there is no
+    subsequent turn in the same role to read the cache back, and the incident-context text they
+    embed cannot be served from *this* cache entry either -- caching is a strict prefix match
+    through tools -> system -> messages (`shared/prompt-caching.md`), Judge/Presenter/Narrator
+    each carry their own distinct `system_prompt` (`app.agent.prompts`), and a differing `system`
+    invalidates every cache tier that comes after it, incident-context bytes included, no matter
+    how identical those bytes are to what the Analyst wrote. Marking it there would only add the
+    write premium with nothing to read it back — see `app.agent.client.LiveCaller`'s own
+    docstring for the fuller version of this same reasoning, applied to the system+tools marker
+    every role *does* share the benefit of. `messages[0]` is wrapped as a one-block list purely
+    to carry the marker -- the text itself, and everything appended in later turns, is
+    unchanged."""
     terminal_name = terminal_tool["name"]
-    messages: list[dict[str, Any]] = [{"role": "user", "content": first_user_content}]
+    messages: list[dict[str, Any]] = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": first_user_content,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+        }
+    ]
 
     for _turn in range(MAX_ROLE_TURNS):
         if time.monotonic() >= deadline:

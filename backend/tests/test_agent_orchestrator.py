@@ -50,7 +50,17 @@ class _RecordingCaller:
         return message
 
     def user_content(self, call_index: int) -> str:
-        return self.calls[call_index]["messages"][0]["content"]
+        """The Analyst's own first turn (`_run_tool_role`) now sends `messages[0]["content"]` as
+        a one-block `[{"type": "text", "text": ..., "cache_control": {...}}]` list, not a bare
+        string -- see `app.agent.orchestrator._run_tool_role`'s own docstring for why (prompt
+        caching on the incident-context block, Analyst-only). Judge/Presenter/Narrator/
+        domain-semantic (`_run_notool_role`) are unchanged and still send a bare string. Handle
+        both so this helper keeps working for every call index without the caller needing to
+        know which shape a given role uses."""
+        content = self.calls[call_index]["messages"][0]["content"]
+        if isinstance(content, str):
+            return content
+        return "".join(block["text"] for block in content if block.get("type") == "text")
 
 
 def _tool_message(*, tool_name: str, tool_input: dict[str, Any]) -> Message:

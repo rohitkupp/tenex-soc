@@ -32,12 +32,13 @@ import json
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Final, Protocol, cast
 
 import anthropic
 from anthropic.types import Message
 
 __all__ = [
+    "MIN_CACHEABLE_PREFIX_TOKENS",
     "FixtureCaller",
     "FixtureExhaustedError",
     "LLMCaller",
@@ -49,14 +50,28 @@ __all__ = [
 # Claude Opus 5 pricing, per the claude-api skill's cached rate card (SKILL.md "Current Models"):
 # $5.00 / 1M input tokens, $25.00 / 1M output tokens. Cache write/read multipliers are the
 # standard ones documented in shared/prompt-caching.md (1.25x write for the default 5-minute
-# TTL, 0.1x read) — included even though this build does not set cache_control anywhere yet, so
-# the cost figure stays correct if caching is turned on later without anyone having to remember
-# to update this function.
+# TTL, 0.1x read). `LiveCaller.create` below now actually sets `cache_control` (see its own
+# docstring) -- these multipliers are what make `estimate_cost_usd` charge the real, cheaper
+# rate for the tokens that landed in cache instead of silently over-reporting cost at the full
+# input rate.
 _INPUT_RATE_PER_MTOK = Decimal("5.00")
 _OUTPUT_RATE_PER_MTOK = Decimal("25.00")
 _CACHE_WRITE_MULTIPLIER = Decimal("1.25")
 _CACHE_READ_MULTIPLIER = Decimal("0.1")
 _MTOK = Decimal(1_000_000)
+
+# claude-api skill, shared/prompt-caching.md: minimum cacheable prefix for claude-opus-5 is 512
+# tokens (down from 1024 on Opus 4.8) -- a `cache_control` marker on a shorter block is a silent
+# no-op (`cache_creation_input_tokens` stays 0, no error). Every one of `app.agent.prompts`'
+# five system prompts is 4.8k-7.4k chars -- at a deliberately conservative 5 chars/token estimate
+# (real English/JSON text runs closer to ~4, so this under-counts tokens, never over-counts) the
+# smallest still clears roughly 950 estimated tokens, comfortably above this floor before even
+# counting the tool schemas the same breakpoint also covers; the incident-context block Analyst
+# additionally caches (`app.agent.orchestrator._run_tool_role`) runs tens of thousands of chars.
+# See `tests/test_agent_prompt_caching.py::test_system_prompts_clear_min_cacheable_prefix`.
+MIN_CACHEABLE_PREFIX_TOKENS = 512
+
+_CACHE_CONTROL_EPHEMERAL: Final[dict[str, str]] = {"type": "ephemeral"}
 
 
 def estimate_cost_usd(usage: Any) -> Decimal:
@@ -96,7 +111,41 @@ class LiveCaller:
     relying on the SDK's ambient `ANTHROPIC_API_KEY` env-var resolution) so the orchestrator's
     own no-key check (`app.agent.orchestrator.MissingAPIKeyError`, gated on
     `app.core.config.Settings.llm_enabled`) is the only place that decides whether this class
-    is ever constructed at all."""
+    is ever constructed at all.
+
+    ## Prompt caching (`cache_control`)
+
+    Every one of the five roles (Analyst, Judge, Presenter, Narrator, domain-semantic) calls
+    this class with its own static `system` prompt (`app.agent.prompts`) and its own static
+    `tools` list -- both are Python module-level constants / pure functions of no per-call
+    input, byte-identical on every call for a given role, across every incident this process
+    ever triages. `create` below marks the `system` block `cache_control: {"type": "ephemeral"}`
+    (5-minute TTL), which — per the claude-api skill's caching docs, "render order is tools ->
+    system -> messages; a breakpoint on the last system block caches both tools and system
+    together" — caches the *entire* tools+system prefix as one unit for every role in one
+    marker. The first call for a given role within the TTL pays the ~1.25x cache-write premium;
+    every subsequent call for that same role (the Analyst's own next tool-loop turn, or the next
+    incident's Judge/Presenter/Narrator/domain-semantic call, or the next incident's Analyst
+    call) reads it back at ~0.1x instead of full price. `MIN_CACHEABLE_PREFIX_TOKENS` documents
+    why every one of these blocks is safely above the model's minimum cacheable size.
+
+    ## Why the incident-context block is *not* also marked here
+
+    The obvious next target is the large, literally-shared incident-context block
+    (`app.agent.orchestrator._build_incident_context_block`) that opens the Analyst's, Judge's,
+    and Presenter's first user turn for a given incident. It is **not** cached at this layer,
+    and deliberately not cached at all for Judge/Presenter/Narrator/domain-semantic — see
+    `app.agent.orchestrator._run_tool_role`'s own docstring for why (short version: caching is a
+    strict prefix match through tools -> system -> messages, each role's `system` differs, and a
+    differing `system` invalidates every cache tier after it — so the identical incident-context
+    bytes sitting behind Judge's or Presenter's own distinct `system` can never be served from
+    the Analyst's cache entry no matter how the marker is placed, without rewriting the prompts
+    themselves, which this change is not authorized to do). Marking it here anyway would only
+    add the write premium with no matching read for those two roles. The Analyst's own
+    tool-calling loop is the one place a repeat read is real, and that block lives in
+    `messages[0]`, which `app.agent.orchestrator._run_tool_role` — not this class — constructs;
+    see that function for the marker on the incident-context block itself.
+    """
 
     api_key: str
     _client: anthropic.Anthropic = field(init=False, repr=False)
@@ -118,7 +167,12 @@ class LiveCaller:
         kwargs: dict[str, Any] = {
             "model": model,
             "max_tokens": max_tokens,
-            "system": system,
+            # Wrapped as a one-block list, not the bare string, purely to carry `cache_control`
+            # — the text the model receives is unchanged either way (the Messages API treats a
+            # plain string and a single-block `[{"type": "text", "text": ...}]` list
+            # identically). See this class's own docstring for why this is the one marker set
+            # here, and why every role benefits from it even though `system` differs per role.
+            "system": [{"type": "text", "text": system, "cache_control": _CACHE_CONTROL_EPHEMERAL}],
             "messages": messages,
             # "medium" balances quality against CLAUDE.md's "use sparingly" budget discipline —
             # see orchestrator.py's module docstring for the per-role reasoning. Never
