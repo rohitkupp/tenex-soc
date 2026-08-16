@@ -131,3 +131,50 @@ required for triage to succeed; a missing key surfaces as a clear 503 from
 synthesized verdicts. `MAX_TRIAGE_INCIDENTS` remains the cost ceiling, and per-analysis spend
 (`analyses.llm_cost_usd`) accumulates from each triage verdict's real per-call cost and is
 exposed on `GET /api/analyses/{id}`.
+
+
+## Cloud Run topology — `docs/v2_migration` change 24
+
+Authored alongside the live single-VM path, not replacing it. `deploy/gcp/cloudrun/`.
+
+Every service on Cloud Run, Postgres on Cloud SQL, RabbitMQ on CloudAMQP (there is no managed
+RabbitMQ on GCP), object storage on Cloud Storage, Redis on Memorystore, secrets in Secret
+Manager, images in Artifact Registry, CI/CD through Cloud Build.
+
+### The Cloud Run trap, and why it is a check rather than a comment
+
+Cloud Run allocates CPU **only during request processing** by default. A background queue consumer
+is therefore throttled to near-zero between requests, and messages sit unconsumed. Every worker
+needs `--no-cpu-throttling` and `--min-instances=1`.
+
+The failure mode is what makes this worth designing against: the pipeline silently stalls, and it
+presents as a queue bug rather than a config bug. So the flags are hardcoded inside `deploy.sh`'s
+`deploy_worker` body rather than passed as arguments a new worker could omit, and
+`assert_worker_flags` reads them back off the **live revision** afterwards and fails the deploy if
+either did not stick. `api` and `web` deliberately skip both flags, and that asymmetry is
+commented at the point of divergence so nobody later "fixes" it into consistency.
+
+### Workers have no HTTP listener
+
+Found while authoring this: `app/workers/_entrypoint.py` is a pure asyncio consume loop with no
+server, but a Cloud Run *service* requires a listener to pass its startup probe. Every worker
+would have failed to start. Handled at the deploy layer with a shim that runs a trivial HTTP
+server alongside the consumer; the real fix is a small health endpoint in `_entrypoint.py`, noted
+as follow-up rather than done here because that file belonged to another change in flight.
+
+### Cloud Storage needs no application change
+
+Verified by reading the S3 calls `app/storage/` actually makes — `head_bucket`, `create_bucket`,
+`put_object`, the four-call multipart sequence, `get_object`. All are covered by GCS's
+S3-interoperability XML API, so `S3_ENDPOINT=https://storage.googleapis.com` plus HMAC keys is a
+drop-in swap. The bucket is pre-created during provisioning so the app's lazy `create_bucket`
+fallback is never exercised against GCS's differing creation semantics.
+
+### `learner` is listed but not deployed
+
+Change 24's table includes a `learner` worker; change 21 (which builds it) had not shipped when
+this was authored. `deploy.sh` enumerates it in a commented block rather than omitting it
+silently, so the gap is visible in the file that would deploy it.
+
+Local development is unaffected: `docker-compose.yml` still brings up the whole stack with MinIO
+and local RabbitMQ, verified byte-identical after this change.

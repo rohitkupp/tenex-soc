@@ -1,0 +1,74 @@
+# Cloud Build pipeline for the Cloud Run topology (docs/v2_migration change 24):
+# build both images -> push to Artifact Registry -> deploy every service.
+#
+# Triggered by the Cloud Build GitHub trigger cloudrun/provision.sh prints the command
+# for (push to main), or run by hand for a one-off deploy:
+#   gcloud builds submit --config=deploy/gcp/cloudrun/cloudbuild.yaml \
+#     --substitutions=_REGION=us-east4,_VPC_CONNECTOR=tenex-connector
+#
+# Not run by the assistant that authored this file — author-only, per the task that
+# produced it. The Cloud Build service account needs, in addition to its default
+# Editor-ish role: roles/run.admin (deploy), roles/iam.serviceAccountUser (act as
+# tenex-cloudrun), roles/secretmanager.secretAccessor (deploy.sh reads secret refs by
+# name only, but the *runtime* SA needs this — already granted by cloudrun/secrets.sh).
+#
+# The deploy step below calls the exact same deploy/gcp/cloudrun/deploy.sh a human runs
+# by hand — see that file's header for why: one place defines the worker contract
+# (image, command, --no-cpu-throttling, --min-instances=1), so a CI deploy and a manual
+# deploy cannot silently diverge.
+
+steps:
+  - id: build-backend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/tenex/backend:${SHORT_SHA}
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/tenex/backend:latest
+      - backend
+
+  - id: build-frontend
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/tenex/frontend:${SHORT_SHA}
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/tenex/frontend:latest
+      - frontend
+    waitFor: ["-"]  # runs in parallel with build-backend, independent contexts
+
+  - id: push-backend
+    name: gcr.io/cloud-builders/docker
+    args: ["push", "--all-tags", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/tenex/backend"]
+    waitFor: ["build-backend"]
+
+  - id: push-frontend
+    name: gcr.io/cloud-builders/docker
+    args: ["push", "--all-tags", "${_REGION}-docker.pkg.dev/${PROJECT_ID}/tenex/frontend"]
+    waitFor: ["build-frontend"]
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        chmod +x deploy/gcp/cloudrun/deploy.sh
+        PROJECT="${PROJECT_ID}" deploy/gcp/cloudrun/deploy.sh "${_REGION}" "${SHORT_SHA}"
+    waitFor: ["push-backend", "push-frontend"]
+
+substitutions:
+  _REGION: us-east4
+  _VPC_CONNECTOR: tenex-connector
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/tenex/backend:${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/tenex/backend:latest
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/tenex/frontend:${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/tenex/frontend:latest
+
+options:
+  logging: CLOUD_LOGGING_ONLY
