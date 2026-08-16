@@ -23,6 +23,10 @@ def test_baseline_migration_downgrade_then_upgrade_round_trips_cleanly() -> None
 
     cfg = Config("alembic.ini")
 
+    # Same defensive dispose as tests/test_tier2_migration.py's round trip: a pooled
+    # connection that ran a query against these tables before the DROP could otherwise hold
+    # a stale relation cache entry once they're recreated.
+    get_engine().dispose()
     command.downgrade(cfg, "bcc348df665e")
     try:
         with get_engine().connect() as conn:
@@ -35,6 +39,7 @@ def test_baseline_migration_downgrade_then_upgrade_round_trips_cleanly() -> None
         assert present == [], f"downgrade() left tables behind: {[r.table_name for r in present]}"
     finally:
         command.upgrade(cfg, "head")
+        get_engine().dispose()
 
     with get_engine().connect() as conn:
         found = {

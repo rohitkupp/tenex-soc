@@ -182,50 +182,13 @@ CREATE TABLE triage_verdicts (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE response_plans (
-  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  incident_id UUID NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
-  actions JSONB NOT NULL,          -- ordered [{action_id, target, preconditions, rollback}]
-  verification JSONB NOT NULL,     -- LLM safety pass result
-  status TEXT NOT NULL DEFAULT 'pending_approval',
-  approved_by UUID REFERENCES users(id),
-  approved_at TIMESTAMPTZ,
-  execution_log JSONB NOT NULL DEFAULT '[]',
-  outcome TEXT,                    -- contained|partially_contained|failed
-  outcome_detail JSONB
-);
-```
+-- REMOVED by docs/v2_migration change 20 (response action graph + enforcement plane):
+--   response_plans, enforcement_state, enforcement_journal.
+-- The agent stage now publishes directly to q.tier2, and the LLM's `recommended_actions`
+-- became free-text investigation guidance for a human analyst rather than action IDs from a
+-- catalog. Autonomous containment rate is gone as a metric; the learning loop is now the
+-- system's closing loop. Migration: bcc348df665e.
 
-## Enforcement plane (simulated, stateful)
-
-```sql
-CREATE TABLE enforcement_state (
-  id BIGSERIAL PRIMARY KEY,
-  tenant_id UUID NOT NULL,
-  resource_type TEXT NOT NULL,     -- proxy_policy|okta_session|okta_factor|host|api_key
-  resource_id TEXT NOT NULL,
-  state JSONB NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, resource_type, resource_id)
-);
-
-CREATE TABLE enforcement_journal (
-  id BIGSERIAL PRIMARY KEY,
-  plan_id UUID NOT NULL REFERENCES response_plans(id),
-  action_id TEXT NOT NULL,
-  before_state JSONB,
-  after_state JSONB,
-  succeeded BOOL NOT NULL,
-  precondition_failure TEXT,
-  executed_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
-
-The journal is what makes rollback real — reverse-iterate and restore `before_state`.
-
-## Learning
-
-```sql
 CREATE TABLE analyst_feedback (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   verdict_id UUID NOT NULL REFERENCES triage_verdicts(id),
@@ -302,3 +265,92 @@ CREATE TABLE eval_runs (
   passed BOOL NOT NULL
 );
 ```
+
+
+## Baseline store — `docs/v2_migration` change 1
+
+The single biggest change in the v2 migration. Percentiles, rarity, and deviations previously
+resolved against the uploaded file, which meant "unusual" was only ever "unusual relative to the
+last few hours we happened to be given". They now resolve against persistent per-tenant history,
+which is what makes a statement like *"Alice has contacted github.com 7,921 times and this domain
+zero times"* possible at all.
+
+```sql
+CREATE TABLE baseline_windows (
+  id BIGSERIAL PRIMARY KEY,
+  tenant_id UUID NOT NULL,
+  entity_type TEXT NOT NULL,          -- user|src_ip|department|org
+  entity_value TEXT NOT NULL,
+  window_start TIMESTAMPTZ NOT NULL,
+  features JSONB NOT NULL,
+  UNIQUE (tenant_id, entity_type, entity_value, window_start)
+);
+CREATE INDEX ON baseline_windows (tenant_id, entity_type, entity_value);
+
+CREATE TABLE baseline_profiles (
+  tenant_id UUID NOT NULL, entity_type TEXT NOT NULL, entity_value TEXT NOT NULL,
+  metric TEXT NOT NULL,
+  p50 DOUBLE PRECISION, p95 DOUBLE PRECISION, p99 DOUBLE PRECISION,
+  mean DOUBLE PRECISION, mad DOUBLE PRECISION,
+  n_windows INT NOT NULL,
+  PRIMARY KEY (tenant_id, entity_type, entity_value, metric)
+);
+
+CREATE TABLE baseline_contacts (
+  tenant_id UUID NOT NULL, scope TEXT NOT NULL, scope_value TEXT NOT NULL,
+  domain TEXT NOT NULL, contact_count BIGINT NOT NULL,
+  first_seen TIMESTAMPTZ NOT NULL, last_seen TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (tenant_id, scope, scope_value, domain)
+);
+CREATE INDEX ON baseline_contacts (tenant_id, domain);
+```
+
+Migration `744b82efc029`. Loaded by `app/baseline/loader.py` (idempotent via `ON CONFLICT DO
+UPDATE`, not a pre-check), read through `app/baseline/resolve.py`.
+
+### The feature vector actually stored — a three-way mismatch, recorded not smoothed over
+
+The migration's own SQL comment says `features` holds "the same ~50-feature vector as L3".
+`docs/v1/04-DETECTION.md` specifies roughly **40** named features across seven families. The
+delivered generator's `build_baseline()` emits exactly **nine**:
+
+`n_events` · `n_unique_domains` · `bytes_out` · `bytes_in` · `post_ratio` · `blocked_ratio` ·
+`off_hours_ratio` · `automation_ua_ratio` · `direct_ip_ratio`
+
+Those cover five of the seven families. **Session and most of Device are absent, and none of the
+entity-relative variants** (`_z_vs_own_history`, `_z_vs_cohort`) exist in the baseline — which is
+notable, because those were the features whose introduction falsified pre-registered prediction 2
+(see `AI_APPROACH.md`).
+
+The loader stores the nine that exist and fabricates nothing. Change 1 also says "L3 models train
+on `baseline_windows`" — so L3's input vector is bounded by what the baseline carries, and any
+detector that silently loses an input must be treated as a real regression rather than absorbed.
+Closing this gap means extending the generator, not the loader.
+
+### Cold start is a first-class return value
+
+An entity with `n_windows < 20` returns `baseline_status: "insufficient_history"` and **no
+percentile** — never a number computed from four windows. That is part of the resolver's return
+type rather than a caller's responsibility, so it cannot be forgotten at a call site.
+
+### Contact scope rollup
+
+The generator emits contacts at **user scope only**; the table and change 1 require user,
+department, and org. The loader derives the two higher scopes deterministically. Department comes
+from `app/baseline/org_directory.py`, which reconstructs the seeded org
+(`Org.build("northwind", 250, 12, random.Random(42))` — exactly what `build_baseline()` uses), and
+both the loader's rollup and the resolver's department lookup call that one function so they
+cannot drift apart. It is scoped to the single seeded live tenant (change 23), not a general
+identity directory.
+
+`baseline_contacts.json` carries no per-contact timestamps, so `first_seen`/`last_seen` are set to
+the min/max `window_start` actually loaded in that run — a true statement about the period rather
+than an invented date.
+
+### Percentiles from summary statistics
+
+`baseline_profiles` stores five summary numbers, not raw samples, so `percentile_for` reuses
+docs/04's robust-z (`0.6745 * (x - median) / MAD`) against the precomputed median and MAD and maps
+through the standard normal CDF. It diverges from `app.detection.features.robust_z` in one
+deliberate respect: it returns a **signed** infinity when `MAD == 0`, because a percentile needs a
+direction where a deviation magnitude does not.
