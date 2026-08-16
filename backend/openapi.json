@@ -1,0 +1,6497 @@
+{
+  "components": {
+    "schemas": {
+      "AlignmentPointOut": {
+        "properties": {
+          "alignment_pct": {
+            "title": "Alignment Pct",
+            "type": "number"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "period_end": {
+            "format": "date-time",
+            "title": "Period End",
+            "type": "string"
+          },
+          "period_start": {
+            "format": "date-time",
+            "title": "Period Start",
+            "type": "string"
+          },
+          "synthetic": {
+            "title": "Synthetic",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "period_start",
+          "period_end",
+          "alignment_pct",
+          "n",
+          "synthetic"
+        ],
+        "title": "AlignmentPointOut",
+        "type": "object"
+      },
+      "AnalysisEvidenceResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EvidencePayloadOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "items",
+          "total",
+          "truncated"
+        ],
+        "title": "AnalysisEvidenceResponse",
+        "type": "object"
+      },
+      "AnalysisListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AnalysisOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "AnalysisListResponse",
+        "type": "object"
+      },
+      "AnalysisNarrateResponse": {
+        "description": "`POST /api/analyses/{id}/narrate` \u2014 `app.agent.orchestrator.NarrationResult`, serialised.\nNot persisted (see module docstring); every call re-runs the Narrator and re-spends.",
+        "properties": {
+          "citation_valid": {
+            "title": "Citation Valid",
+            "type": "boolean"
+          },
+          "cost_usd": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Cost Usd",
+            "type": "string"
+          },
+          "executive_summary": {
+            "title": "Executive Summary",
+            "type": "string"
+          },
+          "invalid_citations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Invalid Citations",
+            "type": "array"
+          },
+          "latency_ms": {
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "phase_narratives": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Phase Narratives",
+            "type": "array"
+          },
+          "tokens_in": {
+            "title": "Tokens In",
+            "type": "integer"
+          },
+          "tokens_out": {
+            "title": "Tokens Out",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "executive_summary",
+          "phase_narratives",
+          "citation_valid",
+          "invalid_citations",
+          "model",
+          "tokens_in",
+          "tokens_out",
+          "cost_usd",
+          "latency_ms"
+        ],
+        "title": "AnalysisNarrateResponse",
+        "type": "object"
+      },
+      "AnalysisOut": {
+        "properties": {
+          "counters": {
+            "additionalProperties": true,
+            "title": "Counters",
+            "type": "object"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "llm_cost_usd": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Cost Usd"
+          },
+          "parse_failure_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parse Failure Rate"
+          },
+          "pending_parsers": {
+            "title": "Pending Parsers",
+            "type": "integer"
+          },
+          "progress": {
+            "title": "Progress",
+            "type": "number"
+          },
+          "stage": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stage"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "upload_id": {
+            "format": "uuid",
+            "title": "Upload Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "upload_id",
+          "status",
+          "stage",
+          "progress",
+          "pending_parsers",
+          "counters",
+          "parse_failure_rate",
+          "llm_cost_usd",
+          "error",
+          "started_at",
+          "finished_at"
+        ],
+        "title": "AnalysisOut",
+        "type": "object"
+      },
+      "AnalysisOverviewResponse": {
+        "description": "`GET /api/analyses/{id}/overview` \u2014 change 10 Level 1 (\"what happened\"): overview stats +\nexecutive summary + anomaly count. `executive_summary` is always `null` here \u2014 see this\nmodule's own docstring for why the Narrator call is a separate `POST /narrate`, not inlined\ninto this GET.",
+        "properties": {
+          "anomaly_count": {
+            "title": "Anomaly Count",
+            "type": "integer"
+          },
+          "domain_semantic_findings": {
+            "items": {
+              "$ref": "#/components/schemas/DomainSemanticFinding"
+            },
+            "title": "Domain Semantic Findings",
+            "type": "array"
+          },
+          "notable_destinations": {
+            "items": {
+              "$ref": "#/components/schemas/NotableDestination"
+            },
+            "title": "Notable Destinations",
+            "type": "array"
+          },
+          "notable_users": {
+            "items": {
+              "$ref": "#/components/schemas/NotableUser"
+            },
+            "title": "Notable Users",
+            "type": "array"
+          },
+          "overview": {
+            "$ref": "#/components/schemas/LogOverview"
+          }
+        },
+        "required": [
+          "overview",
+          "anomaly_count",
+          "notable_users",
+          "notable_destinations",
+          "domain_semantic_findings"
+        ],
+        "title": "AnalysisOverviewResponse",
+        "type": "object"
+      },
+      "AnalysisRetryResponse": {
+        "description": "`POST /api/analyses/{id}/retry` \u2014 docs/v2_migration change 27's replacement for\n`POST /api/ops/dead-letters/{id}/retry` (deleted along with the rest of `/ops`).\nSame republish semantics, just addressed by `analysis_id` instead of a dead-letter\nid, since the analyst-facing retry action starts from the failed analysis, not from\nan ops console the analyst never sees.",
+        "properties": {
+          "analysis_id": {
+            "format": "uuid",
+            "title": "Analysis Id",
+            "type": "string"
+          },
+          "republished_to": {
+            "title": "Republished To",
+            "type": "string"
+          },
+          "retried_at": {
+            "format": "date-time",
+            "title": "Retried At",
+            "type": "string"
+          }
+        },
+        "required": [
+          "analysis_id",
+          "republished_to",
+          "retried_at"
+        ],
+        "title": "AnalysisRetryResponse",
+        "type": "object"
+      },
+      "AnalysisTimelineResponse": {
+        "description": "`GET /api/analyses/{id}/timeline` \u2014 the take-home brief's \"summarized timeline of\nevents\", analysis-wide rather than nested inside one incident's case file. `phases` reuses\n`TimelinePhaseOut` verbatim (see that schema's docstring).\n\n`truncated` is `true` when the analysis produced more than the cap\n(`app.api.incident_detail.MAX_ANALYSIS_TIMELINE_PHASES`) worth of phases and the response\nwas cut down to the highest-confidence subset. `total_phases` is the count *before* that\ncut \u2014 without it the UI can say a truncation happened but not by how much, which is why\nthis field was added after the first pass at this endpoint shipped `{phases, truncated}`\nalone. `total_phases == len(phases)` exactly when `truncated` is `false`.",
+        "properties": {
+          "phases": {
+            "items": {
+              "$ref": "#/components/schemas/TimelinePhaseOut"
+            },
+            "title": "Phases",
+            "type": "array"
+          },
+          "total_phases": {
+            "title": "Total Phases",
+            "type": "integer"
+          },
+          "truncated": {
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "phases",
+          "truncated",
+          "total_phases"
+        ],
+        "title": "AnalysisTimelineResponse",
+        "type": "object"
+      },
+      "BaselineComparisonOut": {
+        "description": "`app.baseline.resolve.PercentileResult`, serialised. Cold start must stay visible\n(CLAUDE.md: \"a percentile from four windows must not look like one from six months\") \u2014\n`percentile` is `None` and `baseline_status == \"insufficient_history\"` together whenever\n`n_windows` is too thin to trust, exactly as `app.baseline.resolve.percentile_for` already\nguarantees; this schema does not add a second way to hide that.",
+        "properties": {
+          "baseline_status": {
+            "enum": [
+              "ok",
+              "insufficient_history"
+            ],
+            "title": "Baseline Status",
+            "type": "string"
+          },
+          "metric": {
+            "title": "Metric",
+            "type": "string"
+          },
+          "n_windows": {
+            "title": "N Windows",
+            "type": "integer"
+          },
+          "p50": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P50"
+          },
+          "p95": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95"
+          },
+          "p99": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P99"
+          },
+          "percentile": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Percentile"
+          },
+          "value": {
+            "title": "Value",
+            "type": "number"
+          }
+        },
+        "required": [
+          "metric",
+          "value",
+          "baseline_status",
+          "n_windows",
+          "percentile",
+          "p50",
+          "p95",
+          "p99"
+        ],
+        "title": "BaselineComparisonOut",
+        "type": "object"
+      },
+      "CalibrationResponse": {
+        "properties": {
+          "detectors": {
+            "items": {
+              "$ref": "#/components/schemas/DetectorCalibrationOut"
+            },
+            "title": "Detectors",
+            "type": "array"
+          },
+          "n_feedback_events": {
+            "title": "N Feedback Events",
+            "type": "integer"
+          },
+          "n_synthetic_feedback_events": {
+            "title": "N Synthetic Feedback Events",
+            "type": "integer"
+          },
+          "overall_brier_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overall Brier After"
+          },
+          "overall_brier_before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Overall Brier Before"
+          },
+          "refit_at": {
+            "format": "date-time",
+            "title": "Refit At",
+            "type": "string"
+          },
+          "synthetic": {
+            "title": "Synthetic",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "refit_at",
+          "n_feedback_events",
+          "n_synthetic_feedback_events",
+          "synthetic",
+          "overall_brier_before",
+          "overall_brier_after",
+          "detectors"
+        ],
+        "title": "CalibrationResponse",
+        "type": "object"
+      },
+      "ClaimFeedbackRequest": {
+        "properties": {
+          "helpful": {
+            "title": "Helpful",
+            "type": "boolean"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "helpful"
+        ],
+        "title": "ClaimFeedbackRequest",
+        "type": "object"
+      },
+      "ClaimFeedbackResponse": {
+        "properties": {
+          "helpful": {
+            "title": "Helpful",
+            "type": "boolean"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "incident_id": {
+            "format": "uuid",
+            "title": "Incident Id",
+            "type": "string"
+          },
+          "step": {
+            "title": "Step",
+            "type": "integer"
+          },
+          "verifier_rule_proposed": {
+            "title": "Verifier Rule Proposed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "incident_id",
+          "step",
+          "helpful",
+          "verifier_rule_proposed"
+        ],
+        "title": "ClaimFeedbackResponse",
+        "type": "object"
+      },
+      "DetectorCalibrationOut": {
+        "properties": {
+          "brier_after": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brier After"
+          },
+          "brier_before": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brier Before"
+          },
+          "brier_improvement": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Brier Improvement"
+          },
+          "detector_key": {
+            "title": "Detector Key",
+            "type": "string"
+          },
+          "fitted": {
+            "title": "Fitted",
+            "type": "boolean"
+          },
+          "n_positive": {
+            "title": "N Positive",
+            "type": "integer"
+          },
+          "n_samples": {
+            "title": "N Samples",
+            "type": "integer"
+          },
+          "reliability_after": {
+            "items": {
+              "$ref": "#/components/schemas/ReliabilityBinOut"
+            },
+            "title": "Reliability After",
+            "type": "array"
+          },
+          "reliability_before": {
+            "items": {
+              "$ref": "#/components/schemas/ReliabilityBinOut"
+            },
+            "title": "Reliability Before",
+            "type": "array"
+          },
+          "skip_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skip Reason"
+          }
+        },
+        "required": [
+          "detector_key",
+          "n_samples",
+          "n_positive",
+          "fitted",
+          "skip_reason",
+          "brier_before",
+          "brier_after",
+          "brier_improvement",
+          "reliability_before",
+          "reliability_after"
+        ],
+        "title": "DetectorCalibrationOut",
+        "type": "object"
+      },
+      "DetectorPrecisionPointOut": {
+        "properties": {
+          "detector_key": {
+            "title": "Detector Key",
+            "type": "string"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "period_end": {
+            "format": "date-time",
+            "title": "Period End",
+            "type": "string"
+          },
+          "period_start": {
+            "format": "date-time",
+            "title": "Period Start",
+            "type": "string"
+          },
+          "precision": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Precision"
+          },
+          "synthetic": {
+            "title": "Synthetic",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "detector_key",
+          "period_start",
+          "period_end",
+          "precision",
+          "n",
+          "synthetic"
+        ],
+        "title": "DetectorPrecisionPointOut",
+        "type": "object"
+      },
+      "DetectorWeightChangeOut": {
+        "properties": {
+          "changed": {
+            "title": "Changed",
+            "type": "boolean"
+          },
+          "detector_key": {
+            "title": "Detector Key",
+            "type": "string"
+          },
+          "false_positives": {
+            "title": "False Positives",
+            "type": "integer"
+          },
+          "precision": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Precision"
+          },
+          "true_positives": {
+            "title": "True Positives",
+            "type": "integer"
+          },
+          "weight_after": {
+            "title": "Weight After",
+            "type": "number"
+          },
+          "weight_before": {
+            "title": "Weight Before",
+            "type": "number"
+          }
+        },
+        "required": [
+          "detector_key",
+          "true_positives",
+          "false_positives",
+          "precision",
+          "weight_before",
+          "weight_after",
+          "changed"
+        ],
+        "title": "DetectorWeightChangeOut",
+        "type": "object"
+      },
+      "DomainLabelCorrectionIn": {
+        "properties": {
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "is_dga": {
+            "title": "Is Dga",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "domain",
+          "is_dga"
+        ],
+        "title": "DomainLabelCorrectionIn",
+        "type": "object"
+      },
+      "DomainSemanticFinding": {
+        "description": "change 8's LLM semantic domain-analysis pass: brand impersonation, typosquatting intent,\nand contextual relevance for destinations flagged rare or first-seen \u2014 the half the DGA\nclassifier's lexical-randomness model cannot catch (`microsoft-security-login-support.com`\nis linguistically ordinary).\n\n**Not produced by this endpoint.** The judgement itself is an LLM call, and every LLM call\nin this codebase lives in `app/agent` (prompts, verifier, citation infrastructure) \u2014 building\na second, parallel LLM call site inside `app/api` would duplicate that infrastructure outside\nthe module that owns it, which is exactly what the milestone's package boundaries (`app/api`,\n`app/schemas` only) are meant to prevent. This schema is change 8's plumbing on this side of\nthat boundary: `AnalysisOverviewResponse.domain_semantic_findings` always returns `[]` today.\nOnce an `app/agent` owner adds the semantic pass, wiring it in is exactly \"populate this\nfield from that call's output\" \u2014 the `Literal` on `label` already makes mislabelling it as\n`ML_ANOMALY_LABEL` a type error, not a future code-review nit, and the frontend badge\ncomponent already renders whichever label this schema sends.",
+        "properties": {
+          "assessment": {
+            "title": "Assessment",
+            "type": "string"
+          },
+          "domain": {
+            "title": "Domain",
+            "type": "string"
+          },
+          "evidence_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Id"
+          },
+          "label": {
+            "const": "Analyst insight \u2014 requires validation",
+            "default": "Analyst insight \u2014 requires validation",
+            "title": "Label",
+            "type": "string"
+          },
+          "rationale": {
+            "title": "Rationale",
+            "type": "string"
+          }
+        },
+        "required": [
+          "domain",
+          "assessment",
+          "rationale"
+        ],
+        "title": "DomainSemanticFinding",
+        "type": "object"
+      },
+      "EntityOut": {
+        "description": "docs/02's `entities` table.",
+        "properties": {
+          "attrs": {
+            "additionalProperties": true,
+            "title": "Attrs",
+            "type": "object"
+          },
+          "event_count": {
+            "title": "Event Count",
+            "type": "integer"
+          },
+          "first_seen": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "First Seen"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "last_seen": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Seen"
+          },
+          "risk_score": {
+            "title": "Risk Score",
+            "type": "number"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "value",
+          "first_seen",
+          "last_seen",
+          "event_count",
+          "risk_score",
+          "attrs"
+        ],
+        "title": "EntityOut",
+        "type": "object"
+      },
+      "EventListItem": {
+        "description": "One row in `GET /api/analyses/{id}/events` \u2014 hot columns only. Deliberately\nflat and without `ocsf`/`enrichment`: docs/09 keeps list shapes light because this\nview can page through 1M+ rows (docs/13 M3 acceptance), and the full payload is a\nclick away via `GET /api/events/{event_id}`.\n\n`signal_count`/`max_confidence`/`detectors` are the take-home brief's \"highlight the\nanomalous entries ... with a confidence score\" requirement, folded onto the list row\ncheaply: `app.api.events.list_events` computes them with exactly one extra query per\n*page* (never per event, never per row) and attaches them here via `model_copy`, so the\nfields default to the \"no signal touched this event\" values below rather than being\nrequired \u2014 that keeps `EventListItem.model_validate(event)` on a bare ORM row valid\nbefore the page-wide stats are folded in.",
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "analysis_id": {
+            "format": "uuid",
+            "title": "Analysis Id",
+            "type": "string"
+          },
+          "bytes_in": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes In"
+          },
+          "bytes_out": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes Out"
+          },
+          "detectors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Detectors",
+            "type": "array"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain"
+          },
+          "dst_ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dst Ip"
+          },
+          "event_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Key"
+          },
+          "http_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Http Method"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "max_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Confidence"
+          },
+          "ocsf_class_uid": {
+            "title": "Ocsf Class Uid",
+            "type": "integer"
+          },
+          "principal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Principal"
+          },
+          "raw_line_no": {
+            "title": "Raw Line No",
+            "type": "integer"
+          },
+          "signal_count": {
+            "default": 0,
+            "title": "Signal Count",
+            "type": "integer"
+          },
+          "source_type": {
+            "title": "Source Type",
+            "type": "string"
+          },
+          "src_ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Src Ip"
+          },
+          "status_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Code"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "url_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url Path"
+          },
+          "user_agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Agent"
+          }
+        },
+        "required": [
+          "id",
+          "analysis_id",
+          "ts",
+          "source_type",
+          "raw_line_no",
+          "ocsf_class_uid",
+          "principal",
+          "src_ip",
+          "dst_ip",
+          "domain",
+          "url_path",
+          "action",
+          "http_method",
+          "status_code",
+          "bytes_in",
+          "bytes_out",
+          "user_agent",
+          "event_key"
+        ],
+        "title": "EventListItem",
+        "type": "object"
+      },
+      "EventListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EventListItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "EventListResponse",
+        "type": "object"
+      },
+      "EventOut": {
+        "description": "`GET /api/events/{event_id}` \u2014 full OCSF + enrichment, used by citation\nexpansion in the UI (docs/09). `signals` carries every signal that cites this event\n(via `evidence_event_ids`), full explanation included \u2014 this is the single-event\ndetail view, so unlike the list endpoint a per-event query here is fine.",
+        "properties": {
+          "action": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Action"
+          },
+          "analysis_id": {
+            "format": "uuid",
+            "title": "Analysis Id",
+            "type": "string"
+          },
+          "bytes_in": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes In"
+          },
+          "bytes_out": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bytes Out"
+          },
+          "detectors": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Detectors",
+            "type": "array"
+          },
+          "domain": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Domain"
+          },
+          "dst_ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dst Ip"
+          },
+          "enrichment": {
+            "additionalProperties": true,
+            "title": "Enrichment",
+            "type": "object"
+          },
+          "event_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Key"
+          },
+          "http_method": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Http Method"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "max_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max Confidence"
+          },
+          "ocsf": {
+            "additionalProperties": true,
+            "title": "Ocsf",
+            "type": "object"
+          },
+          "ocsf_class_uid": {
+            "title": "Ocsf Class Uid",
+            "type": "integer"
+          },
+          "principal": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Principal"
+          },
+          "raw_line_no": {
+            "title": "Raw Line No",
+            "type": "integer"
+          },
+          "signal_count": {
+            "default": 0,
+            "title": "Signal Count",
+            "type": "integer"
+          },
+          "signals": {
+            "items": {
+              "$ref": "#/components/schemas/EventSignalOut"
+            },
+            "title": "Signals",
+            "type": "array"
+          },
+          "source_type": {
+            "title": "Source Type",
+            "type": "string"
+          },
+          "src_ip": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Src Ip"
+          },
+          "status_code": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Code"
+          },
+          "ts": {
+            "format": "date-time",
+            "title": "Ts",
+            "type": "string"
+          },
+          "url_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Url Path"
+          },
+          "user_agent": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Agent"
+          }
+        },
+        "required": [
+          "id",
+          "analysis_id",
+          "ts",
+          "source_type",
+          "raw_line_no",
+          "ocsf_class_uid",
+          "principal",
+          "src_ip",
+          "dst_ip",
+          "domain",
+          "url_path",
+          "action",
+          "http_method",
+          "status_code",
+          "bytes_in",
+          "bytes_out",
+          "user_agent",
+          "event_key",
+          "ocsf",
+          "enrichment"
+        ],
+        "title": "EventOut",
+        "type": "object"
+      },
+      "EventSignalOut": {
+        "description": "One `signals` row (docs/02) cited against this event \u2014 the take-home brief's \"brief\nexplanation of why the entry was flagged\" and \"confidence score\" requirements.\n\n`explanation` is the detector's own JSONB payload, passed through verbatim \u2014 same\nreasoning as `app.schemas.incident.SignalOut`: the UI dispatches on `detector_key` to\nrender it, so narrowing/reshaping it here would make the server a second place that has\nto learn about every new detector.",
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "detector_key": {
+            "title": "Detector Key",
+            "type": "string"
+          },
+          "detector_layer": {
+            "title": "Detector Layer",
+            "type": "string"
+          },
+          "explanation": {
+            "additionalProperties": true,
+            "title": "Explanation",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "mitre_technique": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mitre Technique"
+          },
+          "raw_score": {
+            "title": "Raw Score",
+            "type": "number"
+          },
+          "window_end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window End"
+          },
+          "window_start": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Start"
+          }
+        },
+        "required": [
+          "id",
+          "detector_key",
+          "detector_layer",
+          "confidence",
+          "raw_score",
+          "mitre_technique",
+          "explanation",
+          "window_start",
+          "window_end"
+        ],
+        "title": "EventSignalOut",
+        "type": "object"
+      },
+      "EvidencePayloadOut": {
+        "description": "`app.detection.evidence.payload.EvidencePayload`, serialised for the wire. `entity`/\n`window` are flattened from the dataclass's `dict`/`tuple` fields into `entity_type`/\n`entity_value`/`window_start`/`window_end` to match `SignalOut`/`EntityOut`'s own\nconvention elsewhere in `app.schemas.incident`.\n\n`historical` is passed through verbatim, not narrowed to a typed model \u2014 change 1's cold-\nstart contract (`{prefix}_baseline_status: \"insufficient_history\"`, `{prefix}_n_windows`,\n`app.detection.evidence.payload.historical_from_percentile`) lives inside it exactly as the\nextractor layer produced it. Narrowing this here would mean re-declaring six extractors'\nworth of different historical-context shapes (some single-scope, burst triple-namespaced by\n`user_`/`department_`/`org_` prefixes) for no gain over passing the dict straight through \u2014\nthe frontend's evidence cards already read it defensively, the same way every detector\nexplanation payload in this codebase is rendered (`ExplanationRenderer`, never raw JSON, but\nalso never assuming a rigid shared shape across detectors).",
+        "properties": {
+          "contributing_line_numbers": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Contributing Line Numbers",
+            "type": "array"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "entity_value": {
+            "title": "Entity Value",
+            "type": "string"
+          },
+          "evidence_id": {
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "extractor": {
+            "title": "Extractor",
+            "type": "string"
+          },
+          "historical": {
+            "additionalProperties": true,
+            "title": "Historical",
+            "type": "object"
+          },
+          "incident_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Incident Ids",
+            "type": "array"
+          },
+          "measurements": {
+            "additionalProperties": true,
+            "title": "Measurements",
+            "type": "object"
+          },
+          "nominates_candidate": {
+            "title": "Nominates Candidate",
+            "type": "boolean"
+          },
+          "nomination_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Nomination Score"
+          },
+          "window_end": {
+            "format": "date-time",
+            "title": "Window End",
+            "type": "string"
+          },
+          "window_start": {
+            "format": "date-time",
+            "title": "Window Start",
+            "type": "string"
+          }
+        },
+        "required": [
+          "evidence_id",
+          "extractor",
+          "entity_type",
+          "entity_value",
+          "window_start",
+          "window_end",
+          "measurements",
+          "historical",
+          "contributing_line_numbers",
+          "nominates_candidate",
+          "nomination_score",
+          "incident_ids"
+        ],
+        "title": "EvidencePayloadOut",
+        "type": "object"
+      },
+      "EvidenceRelevanceRequest": {
+        "properties": {
+          "extractor": {
+            "title": "Extractor",
+            "type": "string"
+          },
+          "relevant": {
+            "title": "Relevant",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "extractor",
+          "relevant"
+        ],
+        "title": "EvidenceRelevanceRequest",
+        "type": "object"
+      },
+      "EvidenceRelevanceResponse": {
+        "properties": {
+          "evidence_id": {
+            "title": "Evidence Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "incident_id": {
+            "format": "uuid",
+            "title": "Incident Id",
+            "type": "string"
+          },
+          "relevant": {
+            "title": "Relevant",
+            "type": "boolean"
+          },
+          "widening_proposed": {
+            "title": "Widening Proposed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "incident_id",
+          "evidence_id",
+          "relevant",
+          "widening_proposed"
+        ],
+        "title": "EvidenceRelevanceResponse",
+        "type": "object"
+      },
+      "FeedbackRequest": {
+        "description": "`POST /api/incidents/{id}/feedback` body, docs/09 verbatim: `{agrees,\ncorrected_disposition?, corrected_technique?, dismissal_reason?, mark_benign_baseline?,\nnote?}`. `corrected_technique`, when set, must be one of the verdict's own retrieved\ncandidates plus `NO_KNOWN_MAPPING` (change 22) \u2014 enforced server-side in\n`app.learning.feedback.record_feedback`. `dismissal_reason`, when set from the change-22\nDismiss control, is one of `app.learning.feedback.DISMISSAL_REASON_CATEGORIES`; the column\nitself stays a plain string for backward compatibility with pre-migration callers.\n`corrected_domain_labels` is change 21 mechanism 8's input hook, optional and additive.",
+        "properties": {
+          "agrees": {
+            "title": "Agrees",
+            "type": "boolean"
+          },
+          "corrected_disposition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrected Disposition"
+          },
+          "corrected_domain_labels": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/DomainLabelCorrectionIn"
+            },
+            "title": "Corrected Domain Labels",
+            "type": "array"
+          },
+          "corrected_technique": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Corrected Technique"
+          },
+          "dismissal_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dismissal Reason"
+          },
+          "mark_benign_baseline": {
+            "default": false,
+            "title": "Mark Benign Baseline",
+            "type": "boolean"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          }
+        },
+        "required": [
+          "agrees"
+        ],
+        "title": "FeedbackRequest",
+        "type": "object"
+      },
+      "FeedbackResponse": {
+        "properties": {
+          "baseline_expansion_proposed": {
+            "default": false,
+            "title": "Baseline Expansion Proposed",
+            "type": "boolean"
+          },
+          "benign_baseline_entries_created": {
+            "title": "Benign Baseline Entries Created",
+            "type": "integer"
+          },
+          "calibration_refit_triggered": {
+            "title": "Calibration Refit Triggered",
+            "type": "boolean"
+          },
+          "detector_weight_changes": {
+            "items": {
+              "$ref": "#/components/schemas/DetectorWeightChangeOut"
+            },
+            "title": "Detector Weight Changes",
+            "type": "array"
+          },
+          "exemplar_proposed": {
+            "default": false,
+            "title": "Exemplar Proposed",
+            "type": "boolean"
+          },
+          "feedback_id": {
+            "format": "uuid",
+            "title": "Feedback Id",
+            "type": "string"
+          },
+          "reference_set_mechanism": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reference Set Mechanism"
+          },
+          "retrain_attempt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RetrainAttemptOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "suppression_candidates_generated": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Suppression Candidates Generated",
+            "type": "array"
+          }
+        },
+        "required": [
+          "feedback_id",
+          "detector_weight_changes",
+          "calibration_refit_triggered",
+          "suppression_candidates_generated",
+          "benign_baseline_entries_created",
+          "retrain_attempt"
+        ],
+        "title": "FeedbackResponse",
+        "type": "object"
+      },
+      "GraphEdge": {
+        "properties": {
+          "event_count": {
+            "title": "Event Count",
+            "type": "integer"
+          },
+          "relation": {
+            "title": "Relation",
+            "type": "string"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "target": {
+            "title": "Target",
+            "type": "string"
+          },
+          "weight": {
+            "title": "Weight",
+            "type": "number"
+          }
+        },
+        "required": [
+          "source",
+          "target",
+          "relation",
+          "weight",
+          "event_count"
+        ],
+        "title": "GraphEdge",
+        "type": "object"
+      },
+      "GraphNode": {
+        "description": "`id` is `\"{type}:{value}\"`, not the database id \u2014 the UI keys edges by it, and a stable\ncomposite key survives the entity-id churn of a re-ingest.",
+        "properties": {
+          "event_count": {
+            "title": "Event Count",
+            "type": "integer"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "is_seed": {
+            "title": "Is Seed",
+            "type": "boolean"
+          },
+          "risk_score": {
+            "title": "Risk Score",
+            "type": "number"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "value",
+          "risk_score",
+          "event_count",
+          "is_seed"
+        ],
+        "title": "GraphNode",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
+        "type": "object"
+      },
+      "IncidentDetail": {
+        "description": "docs/09: \"Full detail: signals with explanations, entities, timeline, verdict, plan.\"\n\nTimeline and plan are their own routes (`/timeline`; `GET /api/incidents/{id}/plan` already\nexists in `app.api.plans`) \u2014 splitting them keeps this response bounded and lets the case\nfile's sections stream in independently, which is what `frontend/app/(dashboard)/analyses/\n[id]/incidents/[iid]` already does.\n\n`verdict` is `null` for an untriaged incident. A recurrence inherits its parent's verdict\n(docs/05), so it can be non-null even for an incident the agent never ran on directly.",
+        "properties": {
+          "analysis_id": {
+            "format": "uuid",
+            "title": "Analysis Id",
+            "type": "string"
+          },
+          "anomaly_confidence": {
+            "title": "Anomaly Confidence",
+            "type": "number"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "entities": {
+            "items": {
+              "$ref": "#/components/schemas/EntityOut"
+            },
+            "title": "Entities",
+            "type": "array"
+          },
+          "entity_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Entity Ids",
+            "type": "array"
+          },
+          "fused_score": {
+            "title": "Fused Score",
+            "type": "number"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "recurrence_of": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recurrence Of"
+          },
+          "recurrence_similarity": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recurrence Similarity"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          },
+          "signal_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Signal Ids",
+            "type": "array"
+          },
+          "signals": {
+            "items": {
+              "$ref": "#/components/schemas/SignalOut"
+            },
+            "title": "Signals",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TriageVerdictResponse"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "analysis_id",
+          "title",
+          "severity",
+          "fused_score",
+          "anomaly_confidence",
+          "status",
+          "entity_ids",
+          "signal_ids",
+          "recurrence_of",
+          "recurrence_similarity",
+          "created_at",
+          "entities",
+          "signals",
+          "verdict"
+        ],
+        "title": "IncidentDetail",
+        "type": "object"
+      },
+      "IncidentEvidenceResponse": {
+        "properties": {
+          "highlight_line_violations": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Highlight Line Violations",
+            "type": "array"
+          },
+          "highlight_lines": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Highlight Lines",
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EvidencePayloadOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items",
+          "highlight_lines",
+          "highlight_line_violations"
+        ],
+        "title": "IncidentEvidenceResponse",
+        "type": "object"
+      },
+      "IncidentGraph": {
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/GraphEdge"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/GraphNode"
+            },
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "nodes",
+          "edges"
+        ],
+        "title": "IncidentGraph",
+        "type": "object"
+      },
+      "IncidentListItem": {
+        "description": "The queue row. Deliberately flat and cheap: docs/09 wants a list endpoint an analyst can\npage through, so the expensive parts of the case file (signal explanations, entity rows, the\ngraph) are *not* here \u2014 `entity_count`/`signal_count` are array lengths, not joins.\n\n`disposition`, `citation_valid`, and `mitre_techniques` come from the incident's latest\nverdict and are `null`/`[]` when it has not been triaged (docs/07 triages only the top\n`MAX_TRIAGE_INCIDENTS`, so an untriaged incident is the normal case, not an error).",
+        "properties": {
+          "anomaly_confidence": {
+            "title": "Anomaly Confidence",
+            "type": "number"
+          },
+          "citation_valid": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation Valid"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "disposition": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disposition"
+          },
+          "entity_count": {
+            "title": "Entity Count",
+            "type": "integer"
+          },
+          "fused_score": {
+            "title": "Fused Score",
+            "type": "number"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "mitre_techniques": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Mitre Techniques",
+            "type": "array"
+          },
+          "needs_attention": {
+            "title": "Needs Attention",
+            "type": "boolean"
+          },
+          "recurrence_of": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Recurrence Of"
+          },
+          "severity": {
+            "title": "Severity",
+            "type": "string"
+          },
+          "signal_count": {
+            "title": "Signal Count",
+            "type": "integer"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "severity",
+          "fused_score",
+          "anomaly_confidence",
+          "disposition",
+          "citation_valid",
+          "mitre_techniques",
+          "entity_count",
+          "signal_count",
+          "recurrence_of",
+          "created_at",
+          "needs_attention"
+        ],
+        "title": "IncidentListItem",
+        "type": "object"
+      },
+      "IncidentTypeBreakdownOut": {
+        "properties": {
+          "avg_confidence": {
+            "title": "Avg Confidence",
+            "type": "number"
+          },
+          "incident_type": {
+            "title": "Incident Type",
+            "type": "string"
+          },
+          "signature_count": {
+            "title": "Signature Count",
+            "type": "integer"
+          },
+          "tenant_count": {
+            "title": "Tenant Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "incident_type",
+          "signature_count",
+          "tenant_count",
+          "avg_confidence"
+        ],
+        "title": "IncidentTypeBreakdownOut",
+        "type": "object"
+      },
+      "IncidentsListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IncidentListItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "next_cursor": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Cursor"
+          }
+        },
+        "required": [
+          "items",
+          "next_cursor"
+        ],
+        "title": "IncidentsListResponse",
+        "type": "object"
+      },
+      "IndicatorOverlapEntryOut": {
+        "properties": {
+          "first_observed_at": {
+            "format": "date-time",
+            "title": "First Observed At",
+            "type": "string"
+          },
+          "incident_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Incident Types",
+            "type": "array"
+          },
+          "indicator_hash": {
+            "title": "Indicator Hash",
+            "type": "string"
+          },
+          "last_observed_at": {
+            "format": "date-time",
+            "title": "Last Observed At",
+            "type": "string"
+          },
+          "signature_count": {
+            "title": "Signature Count",
+            "type": "integer"
+          },
+          "tenant_count": {
+            "title": "Tenant Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator_hash",
+          "signature_count",
+          "tenant_count",
+          "incident_types",
+          "first_observed_at",
+          "last_observed_at"
+        ],
+        "title": "IndicatorOverlapEntryOut",
+        "type": "object"
+      },
+      "IndicatorOverlapResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/IndicatorOverlapEntryOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "IndicatorOverlapResponse",
+        "type": "object"
+      },
+      "LearningEventOut": {
+        "properties": {
+          "after_state": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "After State"
+          },
+          "applied": {
+            "title": "Applied",
+            "type": "boolean"
+          },
+          "before_state": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Before State"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "mechanism": {
+            "title": "Mechanism",
+            "type": "integer"
+          },
+          "mechanism_name": {
+            "title": "Mechanism Name",
+            "type": "string"
+          },
+          "metric_delta": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Metric Delta"
+          },
+          "trigger_feedback_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Trigger Feedback Id"
+          }
+        },
+        "required": [
+          "id",
+          "mechanism",
+          "mechanism_name",
+          "trigger_feedback_id",
+          "applied",
+          "before_state",
+          "after_state",
+          "metric_delta",
+          "created_at"
+        ],
+        "title": "LearningEventOut",
+        "type": "object"
+      },
+      "LearningEventsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LearningEventOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "LearningEventsResponse",
+        "type": "object"
+      },
+      "LearningMetricsResponse": {
+        "properties": {
+          "alignment_pct": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Alignment Pct"
+          },
+          "alignment_trend": {
+            "items": {
+              "$ref": "#/components/schemas/AlignmentPointOut"
+            },
+            "title": "Alignment Trend",
+            "type": "array"
+          },
+          "computed_at": {
+            "format": "date-time",
+            "title": "Computed At",
+            "type": "string"
+          },
+          "detector_precision_trend": {
+            "items": {
+              "$ref": "#/components/schemas/DetectorPrecisionPointOut"
+            },
+            "title": "Detector Precision Trend",
+            "type": "array"
+          },
+          "n_feedback_events": {
+            "title": "N Feedback Events",
+            "type": "integer"
+          },
+          "n_synthetic_feedback_events": {
+            "title": "N Synthetic Feedback Events",
+            "type": "integer"
+          },
+          "synthetic": {
+            "title": "Synthetic",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "computed_at",
+          "n_feedback_events",
+          "n_synthetic_feedback_events",
+          "synthetic",
+          "alignment_pct",
+          "alignment_trend",
+          "detector_precision_trend"
+        ],
+        "title": "LearningMetricsResponse",
+        "type": "object"
+      },
+      "LearningProposalDecisionResponse": {
+        "properties": {
+          "after_state": {
+            "additionalProperties": true,
+            "title": "After State",
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "metric_delta": {
+            "additionalProperties": true,
+            "title": "Metric Delta",
+            "type": "object"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "boolean"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "passed",
+          "after_state",
+          "metric_delta",
+          "reason"
+        ],
+        "title": "LearningProposalDecisionResponse",
+        "type": "object"
+      },
+      "LearningProposalOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "mechanism": {
+            "title": "Mechanism",
+            "type": "integer"
+          },
+          "mechanism_name": {
+            "title": "Mechanism Name",
+            "type": "string"
+          },
+          "payload": {
+            "additionalProperties": true,
+            "title": "Payload",
+            "type": "object"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "supporting_feedback_ids": {
+            "items": {
+              "format": "uuid",
+              "type": "string"
+            },
+            "title": "Supporting Feedback Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "mechanism",
+          "mechanism_name",
+          "status",
+          "payload",
+          "supporting_feedback_ids",
+          "created_at",
+          "reviewed_at"
+        ],
+        "title": "LearningProposalOut",
+        "type": "object"
+      },
+      "LearningProposalsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/LearningProposalOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "LearningProposalsResponse",
+        "type": "object"
+      },
+      "LogOverview": {
+        "description": "change 9's JSON shape, verbatim field-for-field:\n\n    { \"period\": [...], \"events\": 83241, \"users\": 127, \"src_ips\": 139,\n      \"unique_domains\": 4921, \"allowed\": 78201, \"blocked\": 5040,\n      \"bytes_out\": ..., \"bytes_in\": ..., \"parse_failure_rate\": 0.0021 }\n\n`period_start`/`period_end` replace the doc's `period: [start, end]` pair (Pydantic has no\ntuple-as-array-of-two convenience over JSON that's nicer than two named fields; the wire\narray shape is illustrative, this is the same information). Both are `None` only when the\nanalysis has zero events \u2014 an empty file is a valid, reportable overview, not an error.",
+        "properties": {
+          "allowed": {
+            "title": "Allowed",
+            "type": "integer"
+          },
+          "blocked": {
+            "title": "Blocked",
+            "type": "integer"
+          },
+          "bytes_in": {
+            "title": "Bytes In",
+            "type": "integer"
+          },
+          "bytes_out": {
+            "title": "Bytes Out",
+            "type": "integer"
+          },
+          "events": {
+            "title": "Events",
+            "type": "integer"
+          },
+          "parse_failure_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parse Failure Rate"
+          },
+          "period_end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period End"
+          },
+          "period_start": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Period Start"
+          },
+          "src_ips": {
+            "title": "Src Ips",
+            "type": "integer"
+          },
+          "unique_domains": {
+            "title": "Unique Domains",
+            "type": "integer"
+          },
+          "users": {
+            "title": "Users",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "period_start",
+          "period_end",
+          "events",
+          "users",
+          "src_ips",
+          "unique_domains",
+          "allowed",
+          "blocked",
+          "bytes_out",
+          "bytes_in",
+          "parse_failure_rate"
+        ],
+        "title": "LogOverview",
+        "type": "object"
+      },
+      "LoginRequest": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "password": {
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "type": "object"
+      },
+      "LoginResponse": {
+        "properties": {
+          "user": {
+            "$ref": "#/components/schemas/UserOut"
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "title": "LoginResponse",
+        "type": "object"
+      },
+      "MeResponse": {
+        "properties": {
+          "tenant": {
+            "$ref": "#/components/schemas/TenantOut"
+          },
+          "user": {
+            "$ref": "#/components/schemas/UserOut"
+          }
+        },
+        "required": [
+          "user",
+          "tenant"
+        ],
+        "title": "MeResponse",
+        "type": "object"
+      },
+      "ModelVersionOut": {
+        "properties": {
+          "artifact_ref": {
+            "title": "Artifact Ref",
+            "type": "string"
+          },
+          "eval_scores": {
+            "additionalProperties": true,
+            "title": "Eval Scores",
+            "type": "object"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "model_key": {
+            "title": "Model Key",
+            "type": "string"
+          },
+          "promoted": {
+            "title": "Promoted",
+            "type": "boolean"
+          },
+          "trained_at": {
+            "format": "date-time",
+            "title": "Trained At",
+            "type": "string"
+          },
+          "version": {
+            "title": "Version",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "id",
+          "model_key",
+          "version",
+          "artifact_ref",
+          "trained_at",
+          "eval_scores",
+          "promoted"
+        ],
+        "title": "ModelVersionOut",
+        "type": "object"
+      },
+      "ModelVersionsResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ModelVersionOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "ModelVersionsResponse",
+        "type": "object"
+      },
+      "NotableDestination": {
+        "description": "change 9: \"notable destinations (first-observed flag, distinct users, DGA score,\nconnection count, periodicity)\".",
+        "properties": {
+          "connection_count": {
+            "title": "Connection Count",
+            "type": "integer"
+          },
+          "dga_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dga Score"
+          },
+          "distinct_users": {
+            "title": "Distinct Users",
+            "type": "integer"
+          },
+          "first_observed": {
+            "title": "First Observed",
+            "type": "boolean"
+          },
+          "periodicity": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PeriodicityOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          }
+        },
+        "required": [
+          "value",
+          "first_observed",
+          "distinct_users",
+          "dga_score",
+          "connection_count",
+          "periodicity"
+        ],
+        "title": "NotableDestination",
+        "type": "object"
+      },
+      "NotableUser": {
+        "description": "change 9: \"notable users (anomalous windows, volume vs. baseline, first-seen domain\ncount, top anomaly score)\". Computed deterministically in `app.api.analyses` from `entities`,\n`signals`, `entity_edges` and the baseline store (`app.baseline.resolve`) \u2014 no LLM\ninvolvement, see this module's own docstring on why `GET /overview` is a plain SQL route.",
+        "properties": {
+          "anomalous_windows": {
+            "title": "Anomalous Windows",
+            "type": "integer"
+          },
+          "first_seen_domain_count": {
+            "title": "First Seen Domain Count",
+            "type": "integer"
+          },
+          "top_anomaly_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top Anomaly Score"
+          },
+          "value": {
+            "title": "Value",
+            "type": "string"
+          },
+          "volume_vs_baseline": {
+            "$ref": "#/components/schemas/BaselineComparisonOut"
+          }
+        },
+        "required": [
+          "value",
+          "anomalous_windows",
+          "volume_vs_baseline",
+          "first_seen_domain_count",
+          "top_anomaly_score"
+        ],
+        "title": "NotableUser",
+        "type": "object"
+      },
+      "PeriodicityOut": {
+        "properties": {
+          "dominant_period_s": {
+            "title": "Dominant Period S",
+            "type": "number"
+          },
+          "spectral_strength": {
+            "title": "Spectral Strength",
+            "type": "number"
+          }
+        },
+        "required": [
+          "dominant_period_s",
+          "spectral_strength"
+        ],
+        "title": "PeriodicityOut",
+        "type": "object"
+      },
+      "ReliabilityBinOut": {
+        "properties": {
+          "bin_hi": {
+            "title": "Bin Hi",
+            "type": "number"
+          },
+          "bin_lo": {
+            "title": "Bin Lo",
+            "type": "number"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "observed_precision": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observed Precision"
+          },
+          "predicted_mean": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Predicted Mean"
+          }
+        },
+        "required": [
+          "bin_lo",
+          "bin_hi",
+          "predicted_mean",
+          "observed_precision",
+          "n"
+        ],
+        "title": "ReliabilityBinOut",
+        "type": "object"
+      },
+      "ResendVerificationRequest": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "ResendVerificationRequest",
+        "type": "object"
+      },
+      "RetrainAttemptOut": {
+        "properties": {
+          "attempted_at": {
+            "format": "date-time",
+            "title": "Attempted At",
+            "type": "string"
+          },
+          "baseline_version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Baseline Version"
+          },
+          "gate_comparisons": {
+            "items": {
+              "$ref": "#/components/schemas/RetrainGateComparisonOut"
+            },
+            "title": "Gate Comparisons",
+            "type": "array"
+          },
+          "gate_passed": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gate Passed"
+          },
+          "gate_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Gate Reason"
+          },
+          "n_training_rows": {
+            "title": "N Training Rows",
+            "type": "integer"
+          },
+          "promoted": {
+            "title": "Promoted",
+            "type": "boolean"
+          },
+          "skip_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Skip Reason"
+          },
+          "skipped": {
+            "title": "Skipped",
+            "type": "boolean"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          }
+        },
+        "required": [
+          "attempted_at",
+          "skipped",
+          "skip_reason",
+          "n_training_rows",
+          "version",
+          "promoted",
+          "baseline_version",
+          "gate_passed",
+          "gate_reason",
+          "gate_comparisons"
+        ],
+        "title": "RetrainAttemptOut",
+        "type": "object"
+      },
+      "RetrainGateComparisonOut": {
+        "properties": {
+          "baseline": {
+            "title": "Baseline",
+            "type": "number"
+          },
+          "candidate": {
+            "title": "Candidate",
+            "type": "number"
+          },
+          "delta": {
+            "title": "Delta",
+            "type": "number"
+          },
+          "metric": {
+            "title": "Metric",
+            "type": "string"
+          },
+          "regressed": {
+            "title": "Regressed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "metric",
+          "baseline",
+          "candidate",
+          "delta",
+          "regressed"
+        ],
+        "title": "RetrainGateComparisonOut",
+        "type": "object"
+      },
+      "SignalOut": {
+        "description": "docs/02's `signals` table. `explanation` is the detector's own payload, passed through\nverbatim \u2014 the UI dispatches on `detector_key` to render it (docs/13 M15: \"No raw JSON\nrendered anywhere in the UI\"), so narrowing it to a union here would only make the server\nthe second place that has to learn about every new detector.",
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "detector_key": {
+            "title": "Detector Key",
+            "type": "string"
+          },
+          "detector_layer": {
+            "title": "Detector Layer",
+            "type": "string"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "entity_value": {
+            "title": "Entity Value",
+            "type": "string"
+          },
+          "evidence_event_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Evidence Event Ids",
+            "type": "array"
+          },
+          "explanation": {
+            "additionalProperties": true,
+            "title": "Explanation",
+            "type": "object"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "mitre_technique": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mitre Technique"
+          },
+          "raw_score": {
+            "title": "Raw Score",
+            "type": "number"
+          },
+          "window_end": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window End"
+          },
+          "window_start": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Window Start"
+          }
+        },
+        "required": [
+          "id",
+          "detector_key",
+          "detector_layer",
+          "raw_score",
+          "confidence",
+          "entity_type",
+          "entity_value",
+          "window_start",
+          "window_end",
+          "mitre_technique",
+          "evidence_event_ids",
+          "explanation",
+          "created_at"
+        ],
+        "title": "SignalOut",
+        "type": "object"
+      },
+      "SignupRequest": {
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "org_name": {
+            "title": "Org Name",
+            "type": "string"
+          },
+          "password": {
+            "title": "Password",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password",
+          "org_name"
+        ],
+        "title": "SignupRequest",
+        "type": "object"
+      },
+      "SuppressionAcceptResponse": {
+        "properties": {
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "written_path": {
+            "title": "Written Path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "status",
+          "written_path"
+        ],
+        "title": "SuppressionAcceptResponse",
+        "type": "object"
+      },
+      "SuppressionCandidateOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "detector_key": {
+            "title": "Detector Key",
+            "type": "string"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "entity_value": {
+            "title": "Entity Value",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          },
+          "reviewed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reviewed At"
+          },
+          "rule_yaml": {
+            "title": "Rule Yaml",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "synthetic": {
+            "title": "Synthetic",
+            "type": "boolean"
+          },
+          "written_path": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Written Path"
+          }
+        },
+        "required": [
+          "id",
+          "detector_key",
+          "entity_type",
+          "entity_value",
+          "reason",
+          "rule_yaml",
+          "status",
+          "synthetic",
+          "created_at",
+          "reviewed_at",
+          "written_path"
+        ],
+        "title": "SuppressionCandidateOut",
+        "type": "object"
+      },
+      "SuppressionListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SuppressionCandidateOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "SuppressionListResponse",
+        "type": "object"
+      },
+      "TenantOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "created_at"
+        ],
+        "title": "TenantOut",
+        "type": "object"
+      },
+      "Tier2OverviewResponse": {
+        "properties": {
+          "by_incident_type": {
+            "items": {
+              "$ref": "#/components/schemas/IncidentTypeBreakdownOut"
+            },
+            "title": "By Incident Type",
+            "type": "array"
+          },
+          "total_overlapping_indicators": {
+            "title": "Total Overlapping Indicators",
+            "type": "integer"
+          },
+          "total_signatures": {
+            "title": "Total Signatures",
+            "type": "integer"
+          },
+          "total_tenants": {
+            "title": "Total Tenants",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_signatures",
+          "total_tenants",
+          "total_overlapping_indicators",
+          "by_incident_type"
+        ],
+        "title": "Tier2OverviewResponse",
+        "type": "object"
+      },
+      "Tier2QueryRequest": {
+        "properties": {
+          "question": {
+            "title": "Question",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question"
+        ],
+        "title": "Tier2QueryRequest",
+        "type": "object"
+      },
+      "Tier2QueryResponse": {
+        "description": "docs/09: `POST /api/tier2/query` -> `{sql, explanation, columns, rows, chart_hint}`,\nalways including `sql` \u2014 rejected or not (docs/09: \"especially then\").",
+        "properties": {
+          "chart_hint": {
+            "title": "Chart Hint",
+            "type": "string"
+          },
+          "columns": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Columns",
+            "type": "array"
+          },
+          "explanation": {
+            "title": "Explanation",
+            "type": "string"
+          },
+          "rejected": {
+            "title": "Rejected",
+            "type": "boolean"
+          },
+          "rejection_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejection Reason"
+          },
+          "rows": {
+            "items": {
+              "items": {},
+              "type": "array"
+            },
+            "title": "Rows",
+            "type": "array"
+          },
+          "sql": {
+            "title": "Sql",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sql",
+          "explanation",
+          "columns",
+          "rows",
+          "chart_hint",
+          "rejected",
+          "rejection_reason"
+        ],
+        "title": "Tier2QueryResponse",
+        "type": "object"
+      },
+      "TimelinePhaseOut": {
+        "description": "`app.graph.timeline.TimelinePhase`, serialised. `tactic_is_placeholder` is carried through\nrather than hidden: it tells the UI (and a reviewer) which phases carry a deterministic\nlookup-table tactic versus one the agent actually attributed.\n\n`detector_layer`/`confidence`/`mitre_technique` were added for the analysis-wide timeline\n(`AnalysisTimelineResponse` below, docs/09's \"summarized timeline of events\" +\n\"confidence score\" requirements) but are shared here rather than duplicated into a second\nphase schema: `TimelinePhase` (the dataclass this serialises) always carries them now, so\n`GET /api/incidents/{id}/timeline` gets them for free too \u2014 a strict superset of its\nprevious response, not a behaviour change for anything reading the fields it already had.",
+        "properties": {
+          "confidence": {
+            "title": "Confidence",
+            "type": "number"
+          },
+          "detector_key": {
+            "title": "Detector Key",
+            "type": "string"
+          },
+          "detector_layer": {
+            "title": "Detector Layer",
+            "type": "string"
+          },
+          "entity_type": {
+            "title": "Entity Type",
+            "type": "string"
+          },
+          "entity_value": {
+            "title": "Entity Value",
+            "type": "string"
+          },
+          "event_ids": {
+            "items": {
+              "type": "integer"
+            },
+            "title": "Event Ids",
+            "type": "array"
+          },
+          "mitre_technique": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mitre Technique"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "tactic": {
+            "title": "Tactic",
+            "type": "string"
+          },
+          "tactic_is_placeholder": {
+            "title": "Tactic Is Placeholder",
+            "type": "boolean"
+          },
+          "ts": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ts"
+          }
+        },
+        "required": [
+          "ts",
+          "tactic",
+          "tactic_is_placeholder",
+          "event_ids",
+          "summary",
+          "detector_key",
+          "detector_layer",
+          "entity_type",
+          "entity_value",
+          "confidence",
+          "mitre_technique"
+        ],
+        "title": "TimelinePhaseOut",
+        "type": "object"
+      },
+      "TimelineResponse": {
+        "properties": {
+          "phases": {
+            "items": {
+              "$ref": "#/components/schemas/TimelinePhaseOut"
+            },
+            "title": "Phases",
+            "type": "array"
+          }
+        },
+        "required": [
+          "phases"
+        ],
+        "title": "TimelineResponse",
+        "type": "object"
+      },
+      "TriageVerdictListResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TriageVerdictResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "TriageVerdictListResponse",
+        "type": "object"
+      },
+      "TriageVerdictResponse": {
+        "description": "Maps `app.models.triage_verdict.TriageVerdict` directly (docs/02's `triage_verdicts`\ntable, matched field for field) \u2014 `model_validate(row)` via `from_attributes`.",
+        "properties": {
+          "citation_valid": {
+            "title": "Citation Valid",
+            "type": "boolean"
+          },
+          "contradicting_evidence": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Contradicting Evidence"
+          },
+          "cost_usd": {
+            "anyOf": [
+              {
+                "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cost Usd"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "disposition": {
+            "title": "Disposition",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "incident_id": {
+            "format": "uuid",
+            "title": "Incident Id",
+            "type": "string"
+          },
+          "invalid_citations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Invalid Citations",
+            "type": "array"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "llm_severity_opinion": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Severity Opinion"
+          },
+          "mitre_techniques": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Mitre Techniques",
+            "type": "array"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "narrative": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Narrative",
+            "type": "array"
+          },
+          "recommended_actions": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Recommended Actions",
+            "type": "array"
+          },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "threat_confidence": {
+            "title": "Threat Confidence",
+            "type": "string"
+          },
+          "threat_confidence_reason": {
+            "title": "Threat Confidence Reason",
+            "type": "string"
+          },
+          "tokens_in": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens In"
+          },
+          "tokens_out": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tokens Out"
+          },
+          "tool_trace": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Tool Trace",
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "incident_id",
+          "disposition",
+          "threat_confidence",
+          "threat_confidence_reason",
+          "llm_severity_opinion",
+          "mitre_techniques",
+          "summary",
+          "narrative",
+          "contradicting_evidence",
+          "recommended_actions",
+          "tool_trace",
+          "citation_valid",
+          "invalid_citations",
+          "model",
+          "tokens_in",
+          "tokens_out",
+          "cost_usd",
+          "latency_ms",
+          "created_at"
+        ],
+        "title": "TriageVerdictResponse",
+        "type": "object"
+      },
+      "UploadCreateResponse": {
+        "properties": {
+          "analysis_id": {
+            "format": "uuid",
+            "title": "Analysis Id",
+            "type": "string"
+          },
+          "detected_sources": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Detected Sources",
+            "type": "array"
+          },
+          "upload_id": {
+            "format": "uuid",
+            "title": "Upload Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "upload_id",
+          "detected_sources",
+          "analysis_id"
+        ],
+        "title": "UploadCreateResponse",
+        "type": "object"
+      },
+      "UserOut": {
+        "properties": {
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "tenant_id": {
+            "format": "uuid",
+            "title": "Tenant Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "tenant_id",
+          "created_at"
+        ],
+        "title": "UserOut",
+        "type": "object"
+      },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
+      "VerificationSentResponse": {
+        "description": "Shared response shape for signup (201) and resend-verification (202) \u2014 both\nendpoints return this exact body regardless of whether the account already\nexisted or was already verified (docs/06's enumeration guarantee).",
+        "properties": {
+          "email": {
+            "title": "Email",
+            "type": "string"
+          },
+          "status": {
+            "const": "verification_sent",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "email"
+        ],
+        "title": "VerificationSentResponse",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "description": "Layered detection funnel over security telemetry: OCSF normalization \u2192 rules \u2192 signal processing \u2192 entity-window ML \u2192 sequence models \u2192 graph correlation \u2192 agentic triage.",
+    "title": "Tenex SOC Analyst API",
+    "version": "0.1.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/analyses": {
+      "get": {
+        "operationId": "list_analyses_api_analyses_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 100,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Analyses",
+        "tags": [
+          "analyses"
+        ]
+      }
+    },
+    "/api/analyses/{analysis_id}": {
+      "delete": {
+        "operationId": "delete_analysis_api_analyses__analysis_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Delete Analysis",
+        "tags": [
+          "analyses"
+        ]
+      },
+      "get": {
+        "operationId": "get_analysis_api_analyses__analysis_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Analysis",
+        "tags": [
+          "analyses"
+        ]
+      }
+    },
+    "/api/analyses/{analysis_id}/events": {
+      "get": {
+        "operationId": "list_events_api_analyses__analysis_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "principal",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Principal"
+            }
+          },
+          {
+            "in": "query",
+            "name": "domain",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Domain"
+            }
+          },
+          {
+            "in": "query",
+            "name": "src_ip",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Src Ip"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Action"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ts_from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ts From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "ts_to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Ts To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "has_signal",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Has Signal"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 100,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Events",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/api/analyses/{analysis_id}/events/by-line/{raw_line_no}": {
+      "get": {
+        "description": "docs/v2_migration change 16: evidence cards show `contributing_line_numbers` \u2014 file line\nnumbers (`Event.raw_line_no`), not `events.id` \u2014 and must \"click-to-expand into the raw log\nrows\". Nothing before this endpoint could resolve a raw line number back to an event without\nthe caller already knowing its database id, which the evidence layer never hands out (change\n2's own module docstring: \"the file's line numbers, not events.id\"). Keyed on `(analysis_id,\nraw_line_no)` rather than `raw_line_no` alone \u2014 line numbers restart at 1 for every uploaded\nfile, so they are only unique within one analysis.",
+        "operationId": "get_event_by_line_api_analyses__analysis_id__events_by_line__raw_line_no__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "raw_line_no",
+            "required": true,
+            "schema": {
+              "title": "Raw Line No",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Event By Line",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/api/analyses/{analysis_id}/evidence": {
+      "get": {
+        "description": "change 16's secondary evidence view: every `EvidencePayload` produced for the analysis \u2014\n\"including evidence that never formed an incident. That residue is exactly what an analyst\nwants when they suspect the pipeline missed something.\" Filterable by `extractor`,\n`entity_type`/`entity_value`, and `min_percentile`; sorted by `evidence_id` (change 2's own\ndeterministic assignment order \u2014 extractor, then entity, then window) so the same query\nreturns the same page every time.",
+        "operationId": "get_analysis_evidence_api_analyses__analysis_id__evidence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "extractor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Extractor"
+            }
+          },
+          {
+            "in": "query",
+            "name": "entity_type",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Entity Type"
+            }
+          },
+          {
+            "in": "query",
+            "name": "entity_value",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Entity Value"
+            }
+          },
+          {
+            "in": "query",
+            "name": "min_percentile",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 100,
+                  "minimum": 0,
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Min Percentile"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 500,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisEvidenceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Analysis Evidence",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/api/analyses/{analysis_id}/incidents": {
+      "get": {
+        "operationId": "list_incidents_api_analyses__analysis_id__incidents_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "severity",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Severity"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentsListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Incidents",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/api/analyses/{analysis_id}/narrate": {
+      "post": {
+        "description": "change 14 Path A, wired to HTTP for the first time \u2014 `app.agent.orchestrator.\nnarrate_analysis` itself is unit-tested but was never called from an API surface before this\n(that function's own docstring: wiring it in \"is out of app/agent's ownership\"). No\npersistence, no idempotency \u2014 see this module's own docstring for why, and\n`app.api.incidents.trigger_incident_triage` for the pattern this deliberately cannot fully\nmatch yet.\n\nInputs are exactly change 14's three deterministic, pre-computed pieces:\n`_compute_log_overview` (this file), the analysis's incidents (`incidents` table), and\n`analysis_timeline_phases` (`app.api.incident_detail`, the same truncated, confidence-ranked\nphase list `GET /analyses/{id}/timeline` serves) \u2014 the Narrator selects nothing, orders\nnothing, and counts nothing; it only writes prose over numbers this handler already computed.",
+        "operationId": "narrate_analysis_route_api_analyses__analysis_id__narrate_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisNarrateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Narrate Analysis Route",
+        "tags": [
+          "analyses"
+        ]
+      }
+    },
+    "/api/analyses/{analysis_id}/overview": {
+      "get": {
+        "description": "change 9's deterministic log overview, always produced \u2014 works for an analysis that is\nstill `running` (partial counts) or has zero incidents (an empty `notable_users`/\n`notable_destinations` is a correct answer, not an error). `executive_summary` is not part of\nthis response; see `POST /analyses/{id}/narrate` and this module's own docstring for why the\nLLM half of change 10 Level 1 is a separate, explicit call.\n\n`domain_semantic_findings` (change 8) is populated by `_compute_domain_semantic_findings`,\nover the same `notable_destinations` this response already computed \u2014 an empty list remains a\ncorrect, common answer (no rare/first-seen destination, no configured API key, or nothing the\npass flagged), not evidence the pass isn't wired.",
+        "operationId": "get_analysis_overview_api_analyses__analysis_id__overview_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisOverviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Analysis Overview",
+        "tags": [
+          "analyses"
+        ]
+      }
+    },
+    "/api/analyses/{analysis_id}/retry": {
+      "post": {
+        "operationId": "retry_analysis_api_analyses__analysis_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisRetryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Retry Analysis",
+        "tags": [
+          "analyses"
+        ]
+      }
+    },
+    "/api/analyses/{analysis_id}/stream": {
+      "get": {
+        "operationId": "stream_analysis_api_analyses__analysis_id__stream_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Analysis",
+        "tags": [
+          "analyses"
+        ]
+      }
+    },
+    "/api/analyses/{analysis_id}/timeline": {
+      "get": {
+        "description": "The take-home brief's \"summarized timeline of events\" \u2014 analysis-wide, not nested in one\nincident's case file. Reuses `build_timeline` (docs/05: \"Never let the model order events\")\nfed every signal in the analysis rather than one incident's `signal_ids`.\n\n**Truncation.** Capped at `MAX_ANALYSIS_TIMELINE_PHASES`, kept *by confidence* \u2014 \"keep the\nstrongest, then re-sort chronologically for output\" (docs/09). Concretely: `build_timeline`\nalready returns every phase in deterministic chronological order (window_start, falling back\nto the lowest evidence event id \u2014 see that module's docstring for why that fallback is\ncorrect and not arbitrary); when a cut is needed, this ranks phases by confidence (ties\nbroken by their position in that chronological list, for determinism) to pick the survivors,\nthen filters the *original* chronological list down to that surviving set instead of\nre-deriving order from `ts` from scratch. That sidesteps having a second, easy-to-drift\nreimplementation of `build_timeline`'s None/fallback ordering rule here, and produces exactly\nthe same output a from-scratch chronological re-sort of the survivors would.\n\n`total_phases` is the count *before* the cut, so the UI can render \"showing the 100\nhighest-confidence phases of N\" instead of a vaguer \"some were hidden\" \u2014 added after this\nendpoint's first pass shipped without it and the frontend had no way to say how much was cut.",
+        "operationId": "get_analysis_timeline_api_analyses__analysis_id__timeline_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisTimelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Analysis Timeline",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/api/analyses/{analysis_id}/triage": {
+      "post": {
+        "description": "docs/07 \"Scope discipline\": only the top `MAX_TRIAGE_INCIDENTS` by `fused_score` for this\nanalysis. Recurrences among them inherit their parent's verdict rather than re-running the\nLLM (`app.agent.orchestrator.triage_incident`).",
+        "operationId": "trigger_analysis_triage_api_analyses__analysis_id__triage_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Re-triage every incident even if already triaged.",
+            "in": "query",
+            "name": "force",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Re-triage every incident even if already triaged.",
+              "title": "Force",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriageVerdictListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trigger Analysis Triage",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "description": "Two failure modes, checked in a deliberate order. The password check runs\nfirst and stays generic (`invalid_credentials`, docs/06) for both an unknown email\nand a wrong password. The verification check runs *only after* that check passes:\nsomeone who doesn't own these credentials learns nothing beyond \"invalid\" either\nway, and someone who does has already proven it by supplying the right password \u2014\ntelling *them* their email isn't verified yet discloses nothing an attacker\nwithout the password could use. Reversing this order (checking verification before\nthe password) would leak account-existence-and-verification-state to anyone who\ncan merely guess an email.",
+        "operationId": "login_api_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Login",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "operationId": "logout_api_auth_logout_post",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Logout",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/me": {
+      "get": {
+        "operationId": "me_api_auth_me_get",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MeResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Me",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/resend-verification": {
+      "post": {
+        "description": "Always 202s with the same body \u2014 an unknown email, an already-verified\naccount, and a genuine resend are indistinguishable from the response\n(docs/06). Only the last of those actually triggers a Supabase call; the other\ntwo are silent no-ops that still report success.",
+        "operationId": "resend_verification_api_auth_resend_verification_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResendVerificationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationSentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Resend Verification",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/auth/signup": {
+      "post": {
+        "description": "Creates our own `User`, joined to the single live tenant\n(`app.models.tenant.get_or_create_live_tenant` \u2014 change 23, the same lookup\n`app.scripts.seed.seed` uses for the demo user) and, when Supabase is configured,\nasks it to email a confirmation link.\n\n`body.org_name` is still accepted and validated (the API contract and the\nfrontend's signup form are unchanged) but no longer names anything: it is not\npersisted anywhere, since there is no longer a per-signup tenant for it to name.\n\nReturns the *same* 201 body whether or not `body.email` was already registered\n(docs/06: never disclose account existence) \u2014 on a collision this creates nothing\nand sends nothing, it just reports the same success shape a genuine signup would.\n\n**The `email_verification_enabled is False` branch below is a deliberate local/CI\nfallback, not an accidental bypass.** With no Supabase project configured there is\nnothing to send a confirmation link through and no upstream row `login` could ever\nread as confirmed \u2014 refusing every signup until someone provisions Supabase would\nmake `make up` (and this entire test suite) unusable out of the box. So instead:\nstamp `email_verified_at` immediately and log loudly that verification is\ndisabled, so this is grep-able and impossible to mistake for the real, upstream\nverified path in a review of logs or code.",
+        "operationId": "signup_api_auth_signup_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignupRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/VerificationSentResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Signup",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/events/{event_id}": {
+      "get": {
+        "operationId": "get_event_api_events__event_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "title": "Event Id",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventOut"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Event",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/api/health": {
+      "get": {
+        "operationId": "health_api_health_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Health Api Health Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Health",
+        "tags": [
+          "ops"
+        ]
+      }
+    },
+    "/api/incidents/{incident_id}": {
+      "get": {
+        "operationId": "get_incident_api_incidents__incident_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentDetail"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Incident",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/api/incidents/{incident_id}/claims/{step}/feedback": {
+      "post": {
+        "description": "Change 22: \"Per-claim thumbs on narrative claims, hover-revealed.\" Independent of the\nprimary Confirm/Override/Dismiss bar \u2014 feeds mechanism 14 (verifier rule induction).",
+        "operationId": "submit_claim_feedback_api_incidents__incident_id__claims__step__feedback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "step",
+            "required": true,
+            "schema": {
+              "title": "Step",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClaimFeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClaimFeedbackResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Claim Feedback",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/incidents/{incident_id}/evidence": {
+      "get": {
+        "description": "change 16's primary evidence view: every `EvidencePayload` that contributed to this\nincident (`app.agent.context.build_agent_context`'s own entity+window filtering \u2014 the exact\nscope a triage run would have seen, so the evidence an analyst reviews here is byte-identical\nto what the agent reasoned over). change 11's `highlight_lines` and `highlight_line_\nviolations` are derived from the same set, in this handler, never from the verdict's prose \u2014\nsee `app.schemas.evidence`'s own module docstring for the full trace path and why this is a\nroute of its own rather than a field on `IncidentDetail`.",
+        "operationId": "get_incident_evidence_api_incidents__incident_id__evidence_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentEvidenceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Incident Evidence",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/api/incidents/{incident_id}/evidence/{evidence_id}/relevance": {
+      "post": {
+        "description": "Change 16/22's \"per-evidence relevance toggle\" \u2014 the seam the evidence section (rendered\nby a different milestone's frontend work, `app/api/incident_detail.py`'s\n`GET /incidents/{id}/evidence`) writes through. Feeds mechanism 15 (evidence profile\nwidening); see `app.models.evidence_relevance_feedback`'s docstring for a documented reading\nof a cross-reference discrepancy in the migration doc itself.",
+        "operationId": "submit_evidence_relevance_api_incidents__incident_id__evidence__evidence_id__relevance_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "evidence_id",
+            "required": true,
+            "schema": {
+              "title": "Evidence Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvidenceRelevanceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvidenceRelevanceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Evidence Relevance",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/incidents/{incident_id}/feedback": {
+      "post": {
+        "operationId": "submit_feedback_api_incidents__incident_id__feedback_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Submit Feedback",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/incidents/{incident_id}/graph": {
+      "get": {
+        "description": "Seed entities plus their 1-hop neighbourhood, capped at `MAX_GRAPH_NEIGHBOURS` by edge\nweight. Edges are returned only between nodes that are actually present, so the client never\nhas to handle a dangling endpoint.",
+        "operationId": "get_incident_graph_api_incidents__incident_id__graph_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IncidentGraph"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Incident Graph",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/api/incidents/{incident_id}/timeline": {
+      "get": {
+        "description": "Ordering is a database fact, not a model output \u2014 docs/05: \"Never let the model order\nevents.\" `app.graph.timeline.build_timeline` is the same function the agent's context builder\nuses, called here on the same rows, so the timeline an analyst reads is byte-identical to the\none the agent reasoned over.",
+        "operationId": "get_incident_timeline_api_incidents__incident_id__timeline_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TimelineResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Incident Timeline",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/api/incidents/{incident_id}/triage": {
+      "post": {
+        "description": "Idempotent by default (`app.agent.orchestrator.triage_incident`'s own docstring): a\nsecond call with `force=false` (the default) returns the existing verdict rather than\nspending on a second LLM run. `force=true` re-triages regardless.",
+        "operationId": "trigger_incident_triage_api_incidents__incident_id__triage_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Re-triage even if a verdict already exists.",
+            "in": "query",
+            "name": "force",
+            "required": false,
+            "schema": {
+              "default": false,
+              "description": "Re-triage even if a verdict already exists.",
+              "title": "Force",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriageVerdictResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trigger Incident Triage",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/api/incidents/{incident_id}/verdict": {
+      "get": {
+        "operationId": "get_incident_verdict_api_incidents__incident_id__verdict_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "incident_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Incident Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TriageVerdictResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Incident Verdict",
+        "tags": [
+          "incidents"
+        ]
+      }
+    },
+    "/api/learning/events": {
+      "get": {
+        "description": "docs/10 `/learning` section 5, \"learning events\" \u2014 the change-21 feed. Not tenant-scoped\non the query (`learning_events` carries no `tenant_id`, per its own schema \u2014 change 23's\nshared single-tenant workspace), ordered newest first.",
+        "operationId": "list_learning_events_api_learning_events_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "mechanism",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mechanism"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningEventsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Learning Events",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/learning/metrics": {
+      "get": {
+        "operationId": "get_learning_metrics_api_learning_metrics_get",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningMetricsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Learning Metrics",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/learning/proposals": {
+      "get": {
+        "description": "docs/10 `/learning` section 6, \"what your feedback changed\" \u2014 `status_filter` defaults to\n`pending` (the review queue); pass `?status_filter=approved` or `?status_filter=rejected` for\nthe change-21 \"keep the rejection history\" record.",
+        "operationId": "list_learning_proposals_api_learning_proposals_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status_filter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status Filter"
+            }
+          },
+          {
+            "in": "query",
+            "name": "mechanism",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Mechanism"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningProposalsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Learning Proposals",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/learning/proposals/{proposal_id}/accept": {
+      "post": {
+        "description": "The human-approval gate for all eight gated mechanisms (change 21: \"requires human\napproval ... auto-suppression is how you miss a breach\"). Runs the mechanism's own\ngolden-set (or support) gate; a regressing candidate is rejected and the incumbent stays\nlive, with the rejection retained on this same row \u2014 see `app.learning.mechanisms.\ndecide_proposal`'s module docstring.",
+        "operationId": "accept_learning_proposal_api_learning_proposals__proposal_id__accept_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposal_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Proposal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningProposalDecisionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Accept Learning Proposal",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/learning/proposals/{proposal_id}/reject": {
+      "post": {
+        "description": "A human declining a proposal outright, without running the gate \u2014 the analyst's own\njudgment is itself a sufficient reason not to apply a candidate. Distinct from a *gate*\nrejection (`accept_learning_proposal` when the candidate regresses a metric): both land the\nproposal in `STATUS_REJECTED` and keep the row (change 21: \"keep the rejection history\"),\nbut this path never mutates anything the candidate would have changed.",
+        "operationId": "reject_learning_proposal_api_learning_proposals__proposal_id__reject_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "proposal_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Proposal Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LearningProposalDecisionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Reject Learning Proposal",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/learning/suppressions": {
+      "get": {
+        "description": "`status_filter` defaults to `pending` (docs/09: \"pending candidates\") \u2014 pass e.g.\n`?status_filter=accepted` to see the review history instead.",
+        "operationId": "list_suppression_candidates_api_learning_suppressions_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status_filter",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status Filter"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuppressionListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Suppression Candidates",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/learning/suppressions/{candidate_id}/accept": {
+      "post": {
+        "description": "The **only** code path in this milestone that writes a `.yml` file under\n`app/detection/rules/suppressions/` \u2014 see `app.learning.suppression`'s module docstring for\nwhy that is a hard rule, not a convenience. Requires a human to hit this endpoint; there is\nno automated caller anywhere in this codebase.",
+        "operationId": "accept_suppression_candidate_api_learning_suppressions__candidate_id__accept_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "candidate_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Candidate Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuppressionAcceptResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Accept Suppression Candidate",
+        "tags": [
+          "learning"
+        ]
+      }
+    },
+    "/api/models/calibration": {
+      "get": {
+        "description": "Refits live (docs/04's isotonic calibrator per detector, `app.learning.calibration`) and\nreturns the reliability diagram plus Brier score for every detector with enough labeled\nfeedback to fit \u2014 always current as of the latest `analyst_feedback` row, never a stale\ncached figure. `persist=True` (the default) also writes the calibrator artifacts this fetch\njust computed, so a page load doubles as a refit rather than only a read.",
+        "operationId": "get_calibration_api_models_calibration_get",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalibrationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Calibration",
+        "tags": [
+          "models"
+        ]
+      }
+    },
+    "/api/models/versions": {
+      "get": {
+        "description": "`model_versions` is not tenant-scoped (docs/02 \u2014 models are versioned globally, see\n`app.models.model_version`'s docstring); `require_user` still gates the route (every non-auth\nroute does, docs/09), it just does not filter the query. Every attempt is included, promoted\nor not \u2014 docs/08's \"Retrain gate\": \"Record every attempt, promoted or not \u2014 the rejection\nhistory is the evidence the gate works,\" which this endpoint is the one place that evidence\nsurfaces.",
+        "operationId": "list_model_versions_api_models_versions_get",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelVersionsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "List Model Versions",
+        "tags": [
+          "models"
+        ]
+      }
+    },
+    "/api/tier2/indicator-overlap": {
+      "get": {
+        "operationId": "get_indicator_overlap_api_tier2_indicator_overlap_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "min_tenants",
+            "required": false,
+            "schema": {
+              "default": 2,
+              "maximum": 1000,
+              "minimum": 2,
+              "title": "Min Tenants",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndicatorOverlapResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Indicator Overlap",
+        "tags": [
+          "tier2"
+        ]
+      }
+    },
+    "/api/tier2/overview": {
+      "get": {
+        "operationId": "get_tier2_overview_api_tier2_overview_get",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tier2OverviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Tier2 Overview",
+        "tags": [
+          "tier2"
+        ]
+      }
+    },
+    "/api/tier2/query": {
+      "post": {
+        "operationId": "query_tier2_api_tier2_query_post",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Tier2QueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Tier2QueryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Query Tier2",
+        "tags": [
+          "tier2"
+        ]
+      }
+    },
+    "/api/uploads": {
+      "post": {
+        "operationId": "create_upload_api_uploads_post",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "file": {
+                    "format": "binary",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadCreateResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Create Upload",
+        "tags": [
+          "uploads"
+        ]
+      }
+    }
+  }
+}

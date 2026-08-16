@@ -2,24 +2,32 @@
 (`invalid_citations / total_citations`), `citation_density`, `severity_disagreement`.
 
 docs/12: agent evaluation replays recorded LLM responses from `tests/fixtures/llm/` by default, so
-CI needs no API key. **This milestone's brief is explicit that `app/agent/` is developed
-concurrently and may be incomplete, and that this harness must "emit these as 'not measured'
-rather than fabricating them or crashing."** This module checks, at call time, for the three
-things a real run needs — in order, so the reported reason is the first one actually missing:
+CI needs no API key. This module checks, at call time, for the two things a real run needs — in
+order, so the reported reason is the first one actually missing:
 
-1. `app.agent.orchestrator` — the module that would actually drive the three-role
-   (Investigator -> Devil's Advocate -> Reporter) flow and return a `TriageVerdictOut`
-   (docs/07). Does not exist in this checkout as of this harness's own build.
-2. `app.agent.verifier` — the citation verifier (`hallucination_rate`'s anti-hallucination
-   guarantee, docs/07 "Citation verification"). Does not exist either.
-3. `tests/fixtures/llm/*.json` — recorded fixtures (docs/12's own "recorded LLM responses ...
-   by default"). None have been recorded yet (nothing has produced a real verdict to record).
+1. `app.agent.orchestrator` / `app.agent.verifier` — the modules that drive the four-stage
+   Analyst -> Judge -> Verifier -> Presenter flow (docs/07, docs/v2_migration change 6) and
+   return a `TriageVerdictOut`. Both exist now (`app/agent/orchestrator.py`,
+   `app/agent/verifier.py`) — this check is kept as a defensive guard against a checkout that
+   predates them, not because it is expected to trip in this repo anymore.
+2. `tests/fixtures/llm/*.json` — recorded fixtures (docs/12's own "recorded LLM responses ...
+   by default"). **This is the actual blocker today.** Recording one requires a live
+   `ANTHROPIC_API_KEY` call per golden scenario (there is no other way to produce a genuine
+   "this is what Claude said" artifact) — a one-time, out-of-band task nobody with API access has
+   run yet. CI deliberately never holds that key (`.github/workflows/ci.yml`'s top-level `env`
+   comment), so this harness cannot record them itself, and must not fabricate a fixture that
+   only *looks* recorded.
 
-If and when all three exist, `run()` attempts a real replay-driven measurement (calling the
-orchestrator once per golden incident with `FixtureCaller`, verifying citations, comparing
+If and when fixtures exist, `run()` attempts a real replay-driven measurement (calling the
+orchestrator once per golden incident with a fixture-backed caller, verifying citations, comparing
 `disposition`/`mitre_techniques`/`llm_severity_opinion` against each scenario's `expected_
 disposition` from `.labels.json`) rather than silently staying in the "not measured" branch
-forever once the concurrent agent work lands — see `_try_live_measurement`'s docstring.
+forever — see `_try_live_measurement`'s docstring. In the meantime, the one metric change 25 names
+explicitly as a hard CI gate (`injection_resistance == 1.0`) does not wait on this: it is enforced
+directly, live, in `tests/test_agent_orchestrator.py::
+test_injection_resistance_across_all_canary_styles_is_1_0`, which needs no recorded fixture at
+all — every stage output there is scripted deterministically, the same technique this whole test
+suite already uses everywhere else the CLAUDE.md "no live LLM calls in tests" rule applies.
 """
 
 from __future__ import annotations
@@ -53,11 +61,15 @@ def _module_exists(dotted: str) -> bool:
 
 def _missing_prerequisite() -> str | None:
     if not _module_exists("app.agent.orchestrator"):
-        return "app.agent.orchestrator does not exist yet — no code path drives the three-role flow"
+        return "app.agent.orchestrator does not exist — no code path drives the four-stage flow"
     if not _module_exists("app.agent.verifier"):
-        return "app.agent.verifier does not exist yet — hallucination_rate has no verifier to run"
+        return "app.agent.verifier does not exist — hallucination_rate has no verifier to run"
     if not _FIXTURES_DIR.exists() or not any(_FIXTURES_DIR.glob("*.json")):
-        return f"no recorded LLM fixtures at {_FIXTURES_DIR} — nothing to replay"
+        return (
+            f"no recorded LLM fixtures at {_FIXTURES_DIR} — nothing to replay (a one-time, "
+            "out-of-band recording task needing a live ANTHROPIC_API_KEY nobody has run yet; "
+            "orchestrator/verifier themselves both already exist)"
+        )
     return None
 
 
@@ -73,21 +85,26 @@ def _not_measured(reason: str) -> dict[str, Any]:
 def _try_live_measurement() -> dict[str, Any]:
     """Only reached once `app.agent.orchestrator`, `app.agent.verifier`, and recorded fixtures all
     exist. Deliberately conservative: any failure here degrades to "not measured" with the
-    exception recorded, rather than letting a half-finished concurrent module crash `make eval`
-    for everyone (the ownership boundary in this milestone's brief: `app/agent/**` is not owned by
-    this harness, and a bug there should not fail this harness's build)."""
+    exception recorded, rather than letting a bug in `app/agent/**` crash `make eval` for
+    everyone — this harness's job is to report agent quality, not to gate on agent code being
+    perfect."""
     try:
         from app.agent import orchestrator, verifier  # type: ignore[import-not-found]  # noqa: F401
 
-        # A real implementation would: load each golden scenario's incident + expected_disposition
-        # (docs/11 ground truth), run `orchestrator.triage(...)` with a `FixtureCaller` bound to
-        # tests/fixtures/llm/<scenario>.json, verify citations via `verifier.verify(...)`, and
-        # aggregate disposition/technique/citation/severity-disagreement stats across the set.
-        # Deferred until those modules exist — there is nothing to call yet, and guessing at a
-        # signature here would be worse than reporting "not measured" honestly.
+        # Their real signatures are known now (`orchestrator.triage_incident(session, tenant_id,
+        # incident_id, *, caller, evidence_payloads)`, `tests/test_agent_orchestrator.py`'s scripted
+        # `_RecordingCaller` pattern) — what's still missing is the fixture *data* itself
+        # (`tests/fixtures/llm/*.json`, gated on `_missing_prerequisite` above), not knowledge of
+        # how to call the orchestrator. A real implementation would: load each golden scenario's
+        # incident + expected_disposition (docs/11 ground truth), run `triage_incident(...)` with a
+        # fixture-backed caller replaying the recorded Analyst/Judge/Presenter messages for that
+        # scenario, verify citations via `app.agent.verifier`, and aggregate disposition/technique/
+        # citation/severity-disagreement stats across the set. Deferred until fixtures exist to
+        # replay — writing the plumbing against data nobody can yet produce would be exercised by
+        # nothing and would be worse than reporting "not measured" honestly.
         return _not_measured(
-            "app.agent.orchestrator/verifier exist but this harness has not been extended to call "
-            "them yet — update evals/metrics/agent.py once their real signatures are known"
+            "app.agent.orchestrator/verifier exist and their call signature is known, but no "
+            "tests/fixtures/llm/*.json recordings exist yet to replay — see _missing_prerequisite"
         )
     except Exception as exc:
         log.warning("agent_metrics.live_measurement_failed", exc_info=True)

@@ -13,20 +13,27 @@ DELETE alike.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 
 import pytest
-from sqlalchemy import delete, select, update
+from sqlalchemy import Select, delete, func, select, update
+from sqlalchemy.orm import Session
 
 from app.core.db import get_session_factory
+from app.models.analyst_feedback import AnalystFeedback
 from app.models.base import (
     MissingTenantScopeError,
     bypass_tenant_scope,
     tenant_scope,
     tenant_session,
 )
+from app.models.incident import Incident
+from app.models.triage_verdict import TriageVerdict
 from app.models.upload import Upload
 from app.models.user import User
-from tests.conftest import make_tenant, make_user
+from tests.conftest import make_analysis, make_tenant, make_user
+from tests.fixtures.learning import learning_cleanup  # noqa: F401
+from tests.fixtures.response import make_incident, make_triage_verdict
 
 
 @pytest.fixture
@@ -206,3 +213,170 @@ def test_bulk_delete_is_scoped_too(tenant_cleanup: list[uuid.UUID]) -> None:
 
     assert remaining_a == []
     assert len(remaining_b) == 1
+
+
+# ---------------------------------------------------------------------------- the aggregate/JOIN-only class of gap
+#
+# `_touches_tenant_scoped_table` (app/models/base.py) decides whether to attach
+# `with_loader_criteria` by walking `ORMExecuteState.all_mappers` — which SQLAlchemy derives from
+# each *top-level selected column*'s owning entity, not from every mapper the statement's FROM/JOIN
+# clause happens to touch. A tenant-scoped table that is only ever a JOIN target — never itself
+# selected — is invisible to that walk, so it gets no automatic filter at all, silently.
+#
+# This produced two real cross-tenant leaks (both since fixed): `app.learning.metrics.
+# compute_learning_metrics` (a bare `select(AnalystFeedback)` — `AnalystFeedback` carries no
+# `tenant_id` and mixes in no `TenantScopedMixin`; isolation was meant to be transitive through
+# `verdict_id -> triage_verdicts -> incidents`, but nothing enforced that) and
+# `app.learning.feedback._tenant_feedback_count` (`select(func.count(AnalystFeedback.id))
+# .join(TriageVerdict, ...).join(Incident, ...)` — `Incident` *is* tenant-scoped, but only ever
+# appears in a `.join()`, never in the selected columns, so it too was invisible to the hook).
+#
+# The tests below guard the *shape*, not those two call sites: they build the dangerous query
+# directly against the ORM, independent of `app.learning.metrics`/`app.learning.feedback`'s own
+# code, so any present or future function written in this shape is covered, not just the two
+# that happened to get caught. `test_join_only_shape_leaks_without_an_explicit_filter` documents
+# the boundary is real and permanent (a SQLAlchemy semantics fact, not a bug this module can fix);
+# `test_join_only_shape_is_isolated_with_an_explicit_filter` proves the codebase's actual
+# mitigation — an explicit `.where(<ScopedModel>.tenant_id == tenant_id)` alongside the join — is
+# what makes this shape safe, for both an aggregate and a bare non-aggregate select.
+
+
+def _seed_feedback(tenant_id: uuid.UUID, *, n: int) -> None:
+    """One (analysis, incident, verdict) chain per feedback row, all under `tenant_id` —
+    `AnalystFeedback` is reachable only by joining through `triage_verdicts` -> `incidents`
+    (see this module's docstring above), so a realistic fixture has to build the whole chain,
+    not just insert an `AnalystFeedback` row directly."""
+    user = make_user(tenant_id=tenant_id, email=f"join-only-{uuid.uuid4()}@test.local")
+    user_id = user.id
+
+    analysis = make_analysis(tenant_id=tenant_id, user_id=user_id)
+    for _ in range(n):
+        incident = make_incident(tenant_id=tenant_id, analysis_id=analysis.id)
+        verdict = make_triage_verdict(incident_id=incident.id, recommended_actions=[])
+        session = get_session_factory()()
+        try:
+            feedback = AnalystFeedback(verdict_id=verdict.id, user_id=user_id, agrees=True)
+            session.add(feedback)
+            session.commit()
+        finally:
+            session.close()
+
+
+@pytest.fixture
+def two_tenants_with_feedback(
+    learning_cleanup: list[uuid.UUID],  # noqa: F811
+) -> tuple[uuid.UUID, uuid.UUID]:
+    """Tenant A gets 3 `analyst_feedback` rows, tenant B gets 5 — different counts so a leaked
+    aggregate is unmistakable (never coincidentally equal to the correctly-scoped one).
+    `analyst_feedback` has no cascading delete of its own (see that model's docstring), hence
+    `learning_cleanup` here rather than plain `tenant_cleanup` — it deletes `analyst_feedback`
+    explicitly before tearing down the tenants these rows transitively belong to."""
+    tenant_a = make_tenant(name="Join-Only A")
+    tenant_b = make_tenant(name="Join-Only B")
+    learning_cleanup.extend([tenant_a.id, tenant_b.id])
+    _seed_feedback(tenant_a.id, n=3)
+    _seed_feedback(tenant_b.id, n=5)
+    return tenant_a.id, tenant_b.id
+
+
+def _aggregate_query_no_filter() -> Select[tuple[int]]:
+    """The exact shape `_tenant_feedback_count` used to compile: an aggregate over the
+    non-scoped entity, `Incident` (tenant-scoped) present only as a JOIN target."""
+    return (
+        select(func.count(AnalystFeedback.id))
+        .join(TriageVerdict, AnalystFeedback.verdict_id == TriageVerdict.id)
+        .join(Incident, TriageVerdict.incident_id == Incident.id)
+    )
+
+
+def _bare_columns_query_no_filter() -> Select[tuple[uuid.UUID]]:
+    """The non-aggregate sibling of the same shape: still only `AnalystFeedback.id` in the
+    selected columns, `Incident` still only a JOIN target."""
+    return (
+        select(AnalystFeedback.id)
+        .join(TriageVerdict, AnalystFeedback.verdict_id == TriageVerdict.id)
+        .join(Incident, TriageVerdict.incident_id == Incident.id)
+    )
+
+
+def _count_seen(build_query: Callable[[], Select[tuple[object]]], session: Session) -> int:
+    """`func.count(...)` returns one row holding the aggregate; a bare column select returns
+    one row per match. Either way, this is "how many `analyst_feedback` rows did this query
+    actually see" — the number both test functions below compare against."""
+    stmt = build_query()
+    is_aggregate = "count" in str(stmt.selected_columns[0]).lower()
+    result = session.execute(stmt)
+    if is_aggregate:
+        return int(result.scalar_one())
+    return len(result.scalars().all())
+
+
+@pytest.mark.parametrize(
+    "build_query",
+    [_aggregate_query_no_filter, _bare_columns_query_no_filter],
+    ids=["aggregate(count)", "bare-columns"],
+)
+def test_join_only_shape_leaks_without_an_explicit_filter(
+    two_tenants_with_feedback: tuple[uuid.UUID, uuid.UUID],
+    build_query: Callable[[], Select[tuple[object]]],
+) -> None:
+    """Characterizes the known, permanent boundary (app/models/base.py's own docstring): a
+    tenant-bound session alone does **not** protect this query shape. Under tenant A's session,
+    with no explicit `.where(Incident.tenant_id == ...)`, the naive query still sees tenant B's
+    rows too — proof that relying on `tenant_session`/`with_loader_criteria` alone for a
+    JOIN-only tenant-scoped entity is unsound by construction, not a bug that could be patched
+    here. This is exactly why `compute_learning_metrics`/`_tenant_feedback_count` need (and now
+    have) an explicit filter, and why every future function of this shape needs one too."""
+    tenant_a, _tenant_b = two_tenants_with_feedback
+    session = tenant_session(tenant_a)
+    try:
+        seen = _count_seen(build_query, session)
+    finally:
+        session.close()
+
+    # Tenant A alone has 3 rows; if the query were actually scoped it could return at most 3.
+    # Seeing all 8 (3 + 5) proves both tenants' rows came back.
+    assert seen == 8, (
+        f"expected the unfiltered join-only query to leak both tenants' rows (8 total), got "
+        f"{seen} — either the fixture changed or SQLAlchemy's all_mappers semantics did"
+    )
+
+
+def _aggregate_query_explicit_filter(tenant_id: uuid.UUID) -> Select[tuple[int]]:
+    return _aggregate_query_no_filter().where(Incident.tenant_id == tenant_id)
+
+
+def _bare_columns_query_explicit_filter(tenant_id: uuid.UUID) -> Select[tuple[uuid.UUID]]:
+    return _bare_columns_query_no_filter().where(Incident.tenant_id == tenant_id)
+
+
+@pytest.mark.parametrize(
+    "build_query",
+    [_aggregate_query_explicit_filter, _bare_columns_query_explicit_filter],
+    ids=["aggregate(count)", "bare-columns"],
+)
+def test_join_only_shape_is_isolated_with_an_explicit_filter(
+    two_tenants_with_feedback: tuple[uuid.UUID, uuid.UUID],
+    build_query: Callable[[uuid.UUID], Select[tuple[object]]],
+) -> None:
+    """The mitigation this codebase actually requires for a JOIN-only tenant-scoped entity — an
+    explicit `.where(<ScopedModel>.tenant_id == tenant_id)` alongside the automatic hook, exactly
+    the idiom `app.learning.metrics`/`app.learning.feedback` now use — does isolate correctly,
+    for both an aggregate and a bare non-aggregate select. This is the "guard the class" half:
+    any query of this shape that follows the required idiom is provably safe, regardless of
+    which function it lives in."""
+    tenant_a, tenant_b = two_tenants_with_feedback
+
+    session = tenant_session(tenant_a)
+    try:
+        seen_a = _count_seen(lambda: build_query(tenant_a), session)
+    finally:
+        session.close()
+    assert seen_a == 3
+
+    session = tenant_session(tenant_b)
+    try:
+        seen_b = _count_seen(lambda: build_query(tenant_b), session)
+    finally:
+        session.close()
+    assert seen_b == 5

@@ -15,6 +15,7 @@ import uuid
 from collections.abc import Iterator
 from datetime import UTC, datetime
 
+import anthropic
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
@@ -45,6 +46,36 @@ def _reset_rate_limits() -> None:
     reports the same source address — without this, an earlier test's login/upload
     calls would trip a later test's rate-limit assertions."""
     limiter.reset()
+
+
+@pytest.fixture(autouse=True)
+def _forbid_live_anthropic_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """change 25's LLM row: "recorded fixtures, zero live calls in CI" — a structural guarantee
+    for the whole suite, not an absence-of-evidence claim. `app.agent.client.LiveCaller` is the
+    only thing in this codebase that ever constructs `anthropic.Anthropic`, reached from three,
+    all API-key-gated, production call sites (`app.agent.orchestrator.triage_incident`'s
+    `caller or LiveCaller(...)` fallback, `app.api.analyses`'s two narrate/triage routes) — every
+    test in this suite instead injects a scripted caller (`tests/test_agent_orchestrator.py`'s
+    `_RecordingCaller`, `app.agent.client.FixtureCaller`/`RecordingCaller`) or monkeypatches the
+    higher-level function around it (`tests/test_overview_evidence_api.py`'s `_fake_narrate`/
+    `_fake_assess`). A few of those tests *do* legitimately construct a real `LiveCaller` (with a
+    fake key, exercising the `llm_enabled=True` wiring) without ever calling it — so this blocks
+    the actual network boundary, `Messages.create` (what `LiveCaller.create` calls), not
+    `Anthropic.__init__` itself, which does no I/O on its own. A test (or a future change to any
+    of those three call sites) that slips past every mock and reaches a real `.messages.create(
+    )` fails immediately and loudly, everywhere, rather than this guarantee resting on "nothing
+    has tried it yet". Scoped to this one SDK method (not a blanket socket block, unlike
+    `test_agent_mitre.py::test_no_network_calls_at_runtime`) because plenty of legitimate traffic
+    — Postgres, RabbitMQ, Redis, MinIO — shares this same process during the suite."""
+
+    def _blocked_create(self: object, *_args: object, **_kwargs: object) -> None:
+        raise AssertionError(
+            "a test called the real anthropic Messages.create — CI must never make a live LLM "
+            "call (CLAUDE.md rule 7); inject a scripted caller (FixtureCaller/RecordingCaller/"
+            "_RecordingCaller) or monkeypatch the higher-level function around it instead"
+        )
+
+    monkeypatch.setattr(anthropic.resources.messages.Messages, "create", _blocked_create)
 
 
 @pytest.fixture

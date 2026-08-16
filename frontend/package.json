@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "gen:api": "openapi-typescript ${NEXT_PUBLIC_API_URL:-http://localhost:8000}/api/openapi.json -o lib/api/schema.d.ts"
+    "gen:api": "openapi-typescript ../backend/openapi.json -o lib/api/schema.d.ts",
+    "verify:api-contract": "openapi-typescript ../backend/openapi.json -o /tmp/schema-check.d.ts && diff -u lib/api/schema.d.ts /tmp/schema-check.d.ts && rm -f /tmp/schema-check.d.ts"
   },
   "dependencies": {
     "next": "^15.1.0",

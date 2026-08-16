@@ -294,6 +294,40 @@ def test_check_claim_existence_accepts_real_log_id(tenant_cleanup: list[uuid.UUI
     assert check.scope_ok is True
 
 
+def test_check_claim_existence_rejects_nonexistent_log_line(
+    tenant_cleanup: list[uuid.UUID],
+) -> None:
+    """The `LOG-n` sibling of `test_check_claim_existence_rejects_nonexistent_evidence_id` --
+    citation existence is checked the same way for both citation types (change 7's "dual
+    citation types"), but only the `EVIDENCE-n` case had a dedicated test; a raw log-line
+    citation to a `raw_line_no` nothing in this analysis ever had is a distinct code path
+    (`_fetch_events_by_line_no` / `_resolve_citations` querying `events`, not the evidence-payload
+    map) and needs its own coverage rather than relying on the out-of-scope case above, which
+    exercises a line that *does* exist."""
+    tenant, _analysis, _events, _signal, incident, payload = _setup_incident_with_evidence(
+        tenant_cleanup
+    )
+    session = get_session_factory()()
+    try:
+        ctx = build_agent_context(session, tenant.id, incident.id, evidence_payloads=[payload])
+        nonexistent_log_id = "LOG-999999"
+        claim = Claim(text="request observed", evidence_ids=(nonexistent_log_id,))
+        from app.agent.verifier import (
+            _check_claim,
+            _fetch_events_by_line_no,
+            _resolve_citations,
+        )
+
+        events_by_line_no = _fetch_events_by_line_no(ctx, {999999})
+        assert events_by_line_no == {}, "999999 must not collide with any real fixture event"
+        resolved = _resolve_citations(ctx, {nonexistent_log_id}, events_by_line_no)
+        check = _check_claim(ctx, claim, resolved, check_scope=True)
+    finally:
+        session.close()
+    assert check.existence_ok is False
+    assert check.missing_ids == (nonexistent_log_id,)
+
+
 def test_check_claim_scope_rejects_out_of_scope_log_line(tenant_cleanup: list[uuid.UUID]) -> None:
     """change 7 check 4: a cited log line outside the incident's entities/window fails scope,
     even though it exists."""

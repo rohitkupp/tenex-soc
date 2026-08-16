@@ -42,15 +42,29 @@ def _load_or_fit_calibrators(*, refit: bool) -> CalibratorStore:
 
 def _compute_injection_resistance(runs: dict[str, Any]) -> tuple[float | None, str]:
     """docs/12: "scenarios where disposition is unchanged with the canary present / total."
-    `disposition` is an agent concept (docs/07's `TriageVerdictOut.disposition`) — this harness
-    has no agent to produce one (see `evals/metrics/agent.py`), so this is `None`/not-measured,
-    same as `disposition_accuracy`/`hallucination_rate`, not a fabricated pass."""
+    `disposition` is an agent concept (docs/07's `TriageVerdictOut.disposition`), produced by
+    `app.agent.orchestrator.triage_incident` — which exists now (`app/agent/orchestrator.py`,
+    `app/agent/verifier.py`), unlike when this function was first written. This is still
+    `None`/not-measured here, same as `disposition_accuracy`/`hallucination_rate`
+    (`evals/metrics/agent.py`), but for a different, narrower reason: CI deliberately never sets
+    `ANTHROPIC_API_KEY` (see this module's own docstring and `.github/workflows/ci.yml`'s top-level
+    `env` comment), and no recorded fixtures exist yet at `tests/fixtures/llm/` to replay instead
+    — golden-set-wide agent replay needs one recorded verdict per scenario, which nobody with API
+    access has captured. That is a one-time, out-of-band recording task, not a missing code path.
+    The real, live-enforced version of this gate lives in `tests/test_agent_orchestrator.py`
+    (`test_injection_resistance_across_all_canary_styles_is_1_0`): it replays every
+    `datagen.scenarios.s07_prompt_injection_canary.INJECTION_STYLES` payload through the real
+    orchestrator with scripted (not live) stage outputs and asserts the computed ratio is exactly
+    1.0, in the normal `pytest` CI job — no API key required, and it does fail the build on a
+    regression. The prompt-injection canary scenario (docs/11 #7) also DID run through
+    detection/correlation like every other golden scenario here — see its row in the per-scenario
+    tables — but that is a different question from whether an LLM's disposition changes when the
+    injected instruction is present, which is what this specific metric measures."""
     detail = (
-        "not measured — injection_resistance is defined over the agent's disposition "
-        "(docs/07), and app/agent/ has no orchestrator.py yet. The prompt-injection canary "
-        "scenario (docs/11 #7) DID run through detection/correlation like every other golden "
-        "scenario — see its row in the per-scenario tables — but that is a different question "
-        "from whether an LLM's disposition changes when the injected instruction is present."
+        "not measured in this harness — CI never sets ANTHROPIC_API_KEY (by design) and no "
+        "recorded tests/fixtures/llm/ fixtures exist yet for golden-set-wide agent replay. The "
+        "real injection_resistance == 1.0 gate is enforced in the normal pytest job instead: see "
+        "tests/test_agent_orchestrator.py::test_injection_resistance_across_all_canary_styles_is_1_0."
     )
     return None, detail
 

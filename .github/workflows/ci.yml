@@ -82,6 +82,13 @@ jobs:
 
       - run: npm run lint
       - run: npm run typecheck
+      # change 25 Contract row: "schema drift fails CI." Regenerates lib/api/schema.d.ts from
+      # the committed backend/openapi.json (a checked-out file, not a live server — this job has
+      # no Postgres/backend running) and diffs it against the committed one; fails the build if
+      # a route changed without `python -m app.scripts.export_openapi` + `npm run gen:api` both
+      # having been re-run. backend/tests/test_contract_openapi_schema.py is this check's other
+      # half — it guards that backend/openapi.json itself hasn't drifted from app.main.app.
+      - run: npm run verify:api-contract
       - run: npm run build
 
   # Enabled at M16. A regression beyond tolerance fails the build — see docs/12. Needs a live
@@ -89,6 +96,12 @@ jobs:
   # backend/evals/pipeline.py's module docstring) but never an ANTHROPIC_API_KEY: agent metrics
   # degrade to "not measured" (backend/evals/metrics/agent.py) rather than attempting a live
   # call, because no key is configured here either (see this workflow's top-level `env`).
+  # `app/agent/orchestrator.py`/`verifier.py` exist; the gap is recorded tests/fixtures/llm/
+  # fixtures to replay (a one-time task needing a live key, out of scope for CI) — see
+  # evals/metrics/agent.py's module docstring. The one agent-dependent metric change 25 names as
+  # a hard gate, injection_resistance == 1.0, does not wait on that: it is enforced live, with no
+  # API key, in the `backend` job's own `pytest` step — see
+  # backend/tests/test_agent_orchestrator.py::test_injection_resistance_across_all_canary_styles_is_1_0.
   eval-gate:
     runs-on: ubuntu-latest
     defaults:

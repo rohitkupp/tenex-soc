@@ -37,6 +37,33 @@ Hand-written `text()` SQL or queries against a Core `Table` object (not a mapped
 class) bypass it, same as `bypass_tenant_scope` does. The application does not do
 that; if a future change introduces raw SQL against a tenant-scoped table, it must
 add its own `tenant_id` predicate by hand and say so in a comment.
+
+There are two more, narrower shapes that bypass it silently, both real bugs found and fixed
+during this codebase's build (`app.learning.metrics.compute_learning_metrics`,
+`app.learning.feedback._tenant_feedback_count` — see git history), and both guarded by a
+regression test (`tests/test_tenant_isolation.py`, the "aggregate/JOIN-only class of gap"
+section) rather than by code here, because neither is fixable in this module: `_touches_
+tenant_scoped_table` decides whether to attach `with_loader_criteria` by walking
+`ORMExecuteState.all_mappers`, which SQLAlchemy derives from the *top-level selected
+columns'* owning entities, not from every mapper the statement's FROM/JOIN clause touches.
+
+* **A bare select of a non-tenant-scoped, transitively-isolated table** (docs/02: `analyst_
+  feedback`, `triage_verdicts`, `entity_edges` all carry no `tenant_id` column by design —
+  isolation is meant to come from a join to a tenant-scoped parent). `select(AnalystFeedback)`
+  alone has no tenant-scoped mapper anywhere in the statement — nothing to filter on, and no
+  exception either, since `_touches_tenant_scoped_table` correctly reports "no", not "unsafe".
+* **An aggregate or bare-column select whose *only* tenant-scoped table is a JOIN target.**
+  `select(func.count(AnalystFeedback.id)).join(TriageVerdict, ...).join(Incident, ...)` compiles
+  fine and even looks scoped (`Incident` is right there in the `.join()`), but `Incident` never
+  appears in a *selected column*, so `all_mappers` never sees it and no filter gets attached.
+  Wrapping the same column in `func.count(...)` does **not** trigger this — `func.count(Event.id)`
+  is safe, because `Event.id`'s owning entity (`Event`, tenant-scoped) *is* the selected column's
+  entity. The dangerous shape is specifically "the only tenant-scoped mapper is join-only."
+
+Both require an explicit `.where(<ScopedModel>.tenant_id == tenant_id)` written by hand, same as
+raw `text()` SQL does — there is no way to make the hook catch either shape without also being
+able to see inside a query's FROM/JOIN clause, which `ORMExecuteState.all_mappers` deliberately
+does not expose (see its docstring: "involved at the top level," i.e. the result-row columns).
 """
 
 from __future__ import annotations
