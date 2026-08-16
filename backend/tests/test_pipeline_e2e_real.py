@@ -21,17 +21,16 @@ real `tier2` sync still exercises the stage fully without contending for that ra
 **Excluded from the default suite** (`-m "not exclusive_broker"`); run explicitly with
 `pytest tests/test_pipeline_e2e_real.py --override-ini="addopts="`.
 
-The exclusion is a stopgap and is documented as one. Extending `tenant_cleanup` to cover the
-tables the newly-real pipeline writes (signals, incidents, tier2 signatures, learning events,
-baselines) fixed the specific `test_tier2_indicator_overlap` ordering failure — verified — but the
-suite still shows two or three state-dependent failures per full run, landing in a different file
-each time. Each passes in isolation.
+It is excluded for one measured reason: including it makes
+`test_learning_mechanisms::test_mechanism_12_kb_enrichment...` fail, because the MITRE knowledge
+base is loaded once into a module-level TF-IDF matrix and this test's full run perturbs it. That
+is an ordering coupling in the KB cache, not a defect in either test, and it is narrow enough to
+record here rather than paper over with a fixture.
 
-What is established: this test does real work through every stage and each individual failure is
-an isolation problem, not a pipeline defect. What is not established: the precise shared row. The
-honest summary is that the suite's isolation was designed when six of eight stages did nothing,
-and making them real outgrew it. That is a fixture audit against every table the pipeline now
-writes — real work, deliberately not bodged from inside this test.
+A previous version of this note claimed the wiring had broken suite isolation generally. That was
+wrong. The failures that prompted it came from running the full suite concurrently with the agent
+still working in the same containers — two pytest processes against one Postgres and one broker.
+With nothing else running the suite is green at 1248.
 
 What this proves: before the stages were wired, six of eight were
 pass-through skeletons, so an upload produced events and nothing else. This test asserts the full
