@@ -196,7 +196,10 @@ def score_incident(signals: list[FusionInput], *, community_signal_density: floa
     strongest_by_detector: dict[str, FusionInput] = {}
     for sig in signals:
         best = strongest_by_detector.get(sig.detector_key)
-        if best is None or sig.confidence * sig.fusion_weight > best.confidence * best.fusion_weight:
+        if (
+            best is None
+            or sig.confidence * sig.fusion_weight > best.confidence * best.fusion_weight
+        ):
             strongest_by_detector[sig.detector_key] = sig
     contributing = list(strongest_by_detector.values())
 

@@ -950,3 +950,51 @@ def parse_verdict_payload(raw: dict[str, Any]) -> TriageVerdictOut:
         return TriageVerdictOut.model_validate(raw)
     except ValidationError as exc:
         raise SchemaValidationError(str(exc)) from exc
+
+
+def verify_event_timeline_output(
+    *, windows: list[dict[str, Any]], output: Any
+) -> tuple[bool, list[dict[str, Any]]]:
+    """Same contract as `verify_narrator_output`, applied per event window.
+
+    Each window's prose is checked against *that window's own* numeric leaves, not the union of
+    all of them — otherwise a model could quote window 3's event count while describing window 7
+    and pass. The overview sentence is checked against the union, since it is explicitly about
+    the whole period.
+    """
+    invalid: list[dict[str, Any]] = []
+    windows_by_index = {w.get("window_index"): w for w in windows}
+
+    overview_pool = numeric_leaves(windows)
+    for n in extract_numbers(output.overview):
+        if not _numeric_match(n, overview_pool):
+            invalid.append({"section": "overview", "mismatched_number": n.raw})
+
+    for w in output.windows:
+        window = windows_by_index.get(w.window_index)
+        if window is None:
+            invalid.append(
+                {
+                    "section": f"window_{w.window_index}",
+                    "issue": "window_index was not among the windows supplied",
+                }
+            )
+            continue
+
+        allowed = set(window.get("log_ids") or [])
+        out_of_scope = [cid for cid in w.cited_log_ids if cid not in allowed]
+        if out_of_scope:
+            invalid.append(
+                {
+                    "section": f"window_{w.window_index}",
+                    "issue": "cited id(s) outside this window's own scope",
+                    "ids": out_of_scope,
+                }
+            )
+
+        pool = numeric_leaves(window)
+        for n in extract_numbers(w.summary):
+            if not _numeric_match(n, pool):
+                invalid.append({"section": f"window_{w.window_index}", "mismatched_number": n.raw})
+
+    return (not invalid), invalid

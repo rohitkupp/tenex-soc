@@ -136,6 +136,18 @@
             ],
             "title": "Error"
           },
+          "event_timeline_summary": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Timeline Summary"
+          },
           "finished_at": {
             "anyOf": [
               {
@@ -1117,6 +1129,149 @@
           "window_end"
         ],
         "title": "EventSignalOut",
+        "type": "object"
+      },
+      "EventTimelineSummaryResponse": {
+        "description": "`POST /analyses/{id}/event-timeline/summary`. `citation_valid` false means at least one\nnumber in the prose did not match the window it described (CLAUDE.md rule 6) \u2014 the UI shows\nthe count rather than hiding it.",
+        "properties": {
+          "citation_valid": {
+            "title": "Citation Valid",
+            "type": "boolean"
+          },
+          "cost_usd": {
+            "pattern": "^(?!^[-+.]*$)[+-]?0*\\d*\\.?\\d*$",
+            "title": "Cost Usd",
+            "type": "string"
+          },
+          "invalid_citation_count": {
+            "title": "Invalid Citation Count",
+            "type": "integer"
+          },
+          "latency_ms": {
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "model": {
+            "title": "Model",
+            "type": "string"
+          },
+          "overview": {
+            "title": "Overview",
+            "type": "string"
+          },
+          "windows": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Windows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "overview",
+          "windows",
+          "citation_valid",
+          "invalid_citation_count",
+          "model",
+          "cost_usd",
+          "latency_ms"
+        ],
+        "title": "EventTimelineSummaryResponse",
+        "type": "object"
+      },
+      "EventTimelineWindow": {
+        "description": "One deterministic time bucket of events, with every figure the summariser is allowed to\nquote. Computed in SQL (`app.api.events._window_aggregates`) \u2014 the LLM never counts.",
+        "properties": {
+          "allowed": {
+            "title": "Allowed",
+            "type": "integer"
+          },
+          "blocked": {
+            "title": "Blocked",
+            "type": "integer"
+          },
+          "bytes_in": {
+            "title": "Bytes In",
+            "type": "integer"
+          },
+          "bytes_out": {
+            "title": "Bytes Out",
+            "type": "integer"
+          },
+          "distinct_domains": {
+            "title": "Distinct Domains",
+            "type": "integer"
+          },
+          "distinct_users": {
+            "title": "Distinct Users",
+            "type": "integer"
+          },
+          "end": {
+            "format": "date-time",
+            "title": "End",
+            "type": "string"
+          },
+          "events": {
+            "title": "Events",
+            "type": "integer"
+          },
+          "log_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Log Ids",
+            "type": "array"
+          },
+          "start": {
+            "format": "date-time",
+            "title": "Start",
+            "type": "string"
+          },
+          "top_domains": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Top Domains",
+            "type": "array"
+          },
+          "window_index": {
+            "title": "Window Index",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "window_index",
+          "start",
+          "end",
+          "events",
+          "distinct_users",
+          "distinct_domains",
+          "allowed",
+          "blocked",
+          "bytes_out",
+          "bytes_in",
+          "top_domains",
+          "log_ids"
+        ],
+        "title": "EventTimelineWindow",
+        "type": "object"
+      },
+      "EventTimelineWindowsResponse": {
+        "properties": {
+          "windows": {
+            "items": {
+              "$ref": "#/components/schemas/EventTimelineWindow"
+            },
+            "title": "Windows",
+            "type": "array"
+          }
+        },
+        "required": [
+          "windows"
+        ],
+        "title": "EventTimelineWindowsResponse",
         "type": "object"
       },
       "EvidencePayloadOut": {
@@ -2973,6 +3128,126 @@
         "summary": "Get Analysis",
         "tags": [
           "analyses"
+        ]
+      }
+    },
+    "/api/analyses/{analysis_id}/event-timeline": {
+      "get": {
+        "description": "The deterministic half: the windows and their aggregates, no LLM. Safe on every load.",
+        "operationId": "get_event_timeline_windows_api_analyses__analysis_id__event_timeline_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventTimelineWindowsResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Event Timeline Windows",
+        "tags": [
+          "events"
+        ]
+      }
+    },
+    "/api/analyses/{analysis_id}/event-timeline/summary": {
+      "post": {
+        "description": "The LLM half. A POST, not a GET: it spends tokens, and a GET that silently costs money on\nevery page load is the exact mistake `/overview` was making before its findings were\npersisted.",
+        "operationId": "summarize_event_timeline_api_analyses__analysis_id__event_timeline_summary_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "analysis_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Analysis Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventTimelineSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Summarize Event Timeline",
+        "tags": [
+          "events"
         ]
       }
     },

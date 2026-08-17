@@ -119,6 +119,8 @@ export interface AnalysesListResponse {
  * gen:api` is runnable.
  */
 export interface AnalysisDetail {
+  /** The Timeline tab's stored windowed summary, or null until an analyst asks for one. */
+  event_timeline_summary?: unknown;
   id: string;
   upload_id: string;
   status: string;

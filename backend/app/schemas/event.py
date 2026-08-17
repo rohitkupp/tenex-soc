@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from ipaddress import IPv4Address, IPv6Address
 from typing import Any
 
@@ -98,3 +99,39 @@ class EventOut(EventListItem):
     ocsf: dict[str, Any]
     enrichment: dict[str, Any]
     signals: list[EventSignalOut] = Field(default_factory=list)
+
+
+class EventTimelineWindow(BaseModel):
+    """One deterministic time bucket of events, with every figure the summariser is allowed to
+    quote. Computed in SQL (`app.api.events._window_aggregates`) — the LLM never counts."""
+
+    window_index: int
+    start: datetime
+    end: datetime
+    events: int
+    distinct_users: int
+    distinct_domains: int
+    allowed: int
+    blocked: int
+    bytes_out: int
+    bytes_in: int
+    top_domains: list[dict[str, Any]]
+    log_ids: list[str]
+
+
+class EventTimelineWindowsResponse(BaseModel):
+    windows: list[EventTimelineWindow]
+
+
+class EventTimelineSummaryResponse(BaseModel):
+    """`POST /analyses/{id}/event-timeline/summary`. `citation_valid` false means at least one
+    number in the prose did not match the window it described (CLAUDE.md rule 6) — the UI shows
+    the count rather than hiding it."""
+
+    overview: str
+    windows: list[dict[str, Any]]
+    citation_valid: bool
+    invalid_citation_count: int
+    model: str
+    cost_usd: Decimal
+    latency_ms: int

@@ -39,6 +39,48 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/analyses/{analysis_id}/event-timeline": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Event Timeline Windows
+         * @description The deterministic half: the windows and their aggregates, no LLM. Safe on every load.
+         */
+        get: operations["get_event_timeline_windows_api_analyses__analysis_id__event_timeline_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/analyses/{analysis_id}/event-timeline/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Summarize Event Timeline
+         * @description The LLM half. A POST, not a GET: it spends tokens, and a GET that silently costs money on
+         *     every page load is the exact mistake `/overview` was making before its findings were
+         *     persisted.
+         */
+        post: operations["summarize_event_timeline_api_analyses__analysis_id__event_timeline_summary_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/analyses/{analysis_id}/events": {
         parameters: {
             query?: never;
@@ -778,6 +820,10 @@ export interface components {
             };
             /** Error */
             error: string | null;
+            /** Event Timeline Summary */
+            event_timeline_summary?: {
+                [key: string]: unknown;
+            } | null;
             /** Finished At */
             finished_at: string | null;
             /**
@@ -1155,6 +1201,74 @@ export interface components {
             window_end: string | null;
             /** Window Start */
             window_start: string | null;
+        };
+        /**
+         * EventTimelineSummaryResponse
+         * @description `POST /analyses/{id}/event-timeline/summary`. `citation_valid` false means at least one
+         *     number in the prose did not match the window it described (CLAUDE.md rule 6) — the UI shows
+         *     the count rather than hiding it.
+         */
+        EventTimelineSummaryResponse: {
+            /** Citation Valid */
+            citation_valid: boolean;
+            /** Cost Usd */
+            cost_usd: string;
+            /** Invalid Citation Count */
+            invalid_citation_count: number;
+            /** Latency Ms */
+            latency_ms: number;
+            /** Model */
+            model: string;
+            /** Overview */
+            overview: string;
+            /** Windows */
+            windows: {
+                [key: string]: unknown;
+            }[];
+        };
+        /**
+         * EventTimelineWindow
+         * @description One deterministic time bucket of events, with every figure the summariser is allowed to
+         *     quote. Computed in SQL (`app.api.events._window_aggregates`) — the LLM never counts.
+         */
+        EventTimelineWindow: {
+            /** Allowed */
+            allowed: number;
+            /** Blocked */
+            blocked: number;
+            /** Bytes In */
+            bytes_in: number;
+            /** Bytes Out */
+            bytes_out: number;
+            /** Distinct Domains */
+            distinct_domains: number;
+            /** Distinct Users */
+            distinct_users: number;
+            /**
+             * End
+             * Format: date-time
+             */
+            end: string;
+            /** Events */
+            events: number;
+            /** Log Ids */
+            log_ids: string[];
+            /**
+             * Start
+             * Format: date-time
+             */
+            start: string;
+            /** Top Domains */
+            top_domains: {
+                [key: string]: unknown;
+            }[];
+            /** Window Index */
+            window_index: number;
+        };
+        /** EventTimelineWindowsResponse */
+        EventTimelineWindowsResponse: {
+            /** Windows */
+            windows: components["schemas"]["EventTimelineWindow"][];
         };
         /**
          * EvidencePayloadOut
@@ -1982,6 +2096,72 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_event_timeline_windows_api_analyses__analysis_id__event_timeline_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: {
+                tenex_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventTimelineWindowsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    summarize_event_timeline_api_analyses__analysis_id__event_timeline_summary_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                analysis_id: string;
+            };
+            cookie?: {
+                tenex_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventTimelineSummaryResponse"];
+                };
             };
             /** @description Validation Error */
             422: {

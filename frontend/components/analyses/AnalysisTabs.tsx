@@ -26,12 +26,16 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { LazyEvidenceTab } from "@/components/evidence/LazyEvidenceTab";
 
-export type AnalysisTabKey = "overview" | "incidents" | "events" | "evidence";
+export type AnalysisTabKey = "overview" | "timeline" | "signals" | "incidents" | "evidence";
 
+// Order is deliberate and reads outward from the summary: what happened (Overview), then the
+// readable account of the traffic (Timeline), then the raw detector firings behind it (Signals),
+// then what those correlated into (Incidents), then the underlying payloads (Evidence).
 const TABS: { key: AnalysisTabKey; label: string }[] = [
   { key: "overview", label: "Overview" },
+  { key: "timeline", label: "Timeline" },
+  { key: "signals", label: "Signals" },
   { key: "incidents", label: "Incidents" },
-  { key: "events", label: "Events" },
   { key: "evidence", label: "Evidence" },
 ];
 
@@ -42,13 +46,15 @@ function isTabKey(value: string | null): value is AnalysisTabKey {
 export function AnalysisTabs({
   overview,
   incidents,
-  events,
+  timeline,
+  signals,
   analysisId,
   counts,
 }: {
   overview: ReactNode;
   incidents: ReactNode;
-  events: ReactNode;
+  timeline: ReactNode;
+  signals: ReactNode;
   analysisId: string;
   counts?: Partial<Record<AnalysisTabKey, number>>;
 }) {
@@ -72,8 +78,9 @@ export function AnalysisTabs({
 
   const panels: Record<AnalysisTabKey, ReactNode> = {
     overview,
+    timeline,
+    signals,
     incidents,
-    events,
     // Rendered here rather than handed in as a prop: the Evidence panel needs to know whether
     // its tab is open (it fetches its own large, slow payload only once opened), and a server
     // component cannot pass a function across the RSC boundary to compute that — functions are

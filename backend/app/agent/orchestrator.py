@@ -75,6 +75,7 @@ from app.agent.retrieval import RetrievalCandidate, retrieve_candidates
 from app.agent.schemas import (
     AnalystOutput,
     DomainSemanticOutput,
+    EventTimelineOutput,
     Finding,
     JudgeOutput,
     NarratorOutput,
@@ -86,6 +87,7 @@ from app.agent.schemas import (
     build_present_verdict_tool,
     build_submit_analysis_tool,
     build_submit_judgement_tool,
+    build_summarize_windows_tool,
 )
 from app.agent.tools import TOOL_DEFINITIONS, ToolError, dispatch_tool
 from app.agent.verifier import (
@@ -95,6 +97,7 @@ from app.agent.verifier import (
     verify_anomaly_confidence,
     verify_citations,
     verify_domain_semantic_output,
+    verify_event_timeline_output,
     verify_narrator_output,
     verify_pass1,
     verify_pass2,
@@ -120,6 +123,7 @@ __all__ = [
     "NarrationResult",
     "assess_domain_semantics",
     "narrate_analysis",
+    "summarize_event_windows",
     "triage_incident",
     "triage_top_incidents_for_analysis",
 ]
@@ -1392,6 +1396,83 @@ def assess_domain_semantics(
         findings=findings,
         citation_valid=citation_valid,
         invalid_citations=tuple(invalid_citations),
+        model=model,
+        tokens_in=usage.input_tokens,
+        tokens_out=usage.output_tokens,
+        cost_usd=estimate_cost_usd(usage),
+        latency_ms=elapsed_ms,
+    )
+
+
+@dataclass(slots=True)
+class EventTimelineResult:
+    """The event-view timeline summary. Windowing is deterministic and upstream; this is only the
+    prose over it, plus the same numeric verification every other LLM output here gets."""
+
+    overview: str
+    windows: tuple[dict[str, Any], ...]
+    citation_valid: bool
+    invalid_citations: tuple[dict[str, Any], ...]
+    model: str
+    tokens_in: int
+    tokens_out: int
+    cost_usd: Decimal
+    latency_ms: int
+
+
+def summarize_event_windows(
+    *,
+    windows: list[dict[str, Any]],
+    caller: LLMCaller,
+    model: str,
+    timeout_seconds: float = 60.0,
+) -> EventTimelineResult:
+    """One LLM call over already-bucketed event windows -> readable prose per window.
+
+    `windows` must be the deterministic aggregates `app.api.events` computed in SQL. This function
+    never receives raw events (CLAUDE.md rule 1) and never chooses the windows -- same division of
+    labour as Path A, where selection is deterministic and only the writing is delegated.
+
+    Verification reuses `verify_narrator_output`'s numeric machinery via the same
+    `numeric_leaves`/`extract_numbers` pair: every number in a window's prose must appear in that
+    window's own aggregates. A model that totals two windows together, or estimates a figure it
+    was not given, is flagged rather than rendered as fact (rule 6).
+    """
+    start = time.monotonic()
+    deadline = start + timeout_seconds
+    usage = _UsageAccumulator()
+
+    raw = _run_notool_role(
+        caller=caller,
+        role="event_timeline",
+        system_prompt=prompts.EVENT_TIMELINE_SYSTEM_PROMPT,
+        user_content=prompts.wrap_untrusted({"windows": windows}),
+        terminal_tool=build_summarize_windows_tool(),
+        model=model,
+        deadline=deadline,
+        usage=usage,
+        effort=NARRATOR_EFFORT,
+    )
+    try:
+        output = EventTimelineOutput.model_validate(raw)
+    except ValidationError as exc:
+        raise SchemaValidationError(f"summarize_windows invalid: {exc}") from exc
+
+    citation_valid, invalid = verify_event_timeline_output(windows=windows, output=output)
+    elapsed_ms = int((time.monotonic() - start) * 1000)
+    log.info(
+        "agent.event_timeline_complete",
+        n_windows=len(windows),
+        citation_valid=citation_valid,
+        n_invalid=len(invalid),
+        cost_usd=str(estimate_cost_usd(usage)),
+        latency_ms=elapsed_ms,
+    )
+    return EventTimelineResult(
+        overview=output.overview,
+        windows=tuple(w.model_dump(mode="json") for w in output.windows),
+        citation_valid=citation_valid,
+        invalid_citations=tuple(invalid),
         model=model,
         tokens_in=usage.input_tokens,
         tokens_out=usage.output_tokens,

@@ -27,6 +27,10 @@ class AnalysisOut(BaseModel):
     counters: dict[str, object]
     parse_failure_rate: float | None
     llm_cost_usd: Decimal | None
+    # The Timeline tab's stored windowed summary (`analyses.event_timeline_summary`), so the tab
+    # renders what was already generated instead of asking the analyst to pay again. NULL until
+    # someone requests one — unlike `narrative`, the pipeline does not produce this.
+    event_timeline_summary: dict[str, object] | None = None
     error: str | None
     started_at: datetime | None
     finished_at: datetime | None

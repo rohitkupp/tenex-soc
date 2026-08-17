@@ -10,7 +10,6 @@ import type {
 } from "@/lib/api/types";
 import { formatDate, formatNumber, formatPercent, formatUsd } from "@/lib/format";
 import { FunnelProgress } from "@/components/pipeline/FunnelProgress";
-import { AnalysisTimeline } from "@/components/analyses/AnalysisTimeline";
 import { RetryButton } from "@/components/analyses/RetryButton";
 import { ExecutiveSummary } from "@/components/analyses/ExecutiveSummary";
 import { NotableUsersPanel } from "@/components/analyses/NotableUsersPanel";
@@ -18,6 +17,8 @@ import { NotableDestinationsPanel } from "@/components/analyses/NotableDestinati
 import { SemanticFindingsPanel } from "@/components/analyses/SemanticFindingsPanel";
 import { TrafficStatsPanel } from "@/components/analyses/TrafficStatsPanel";
 import { AnalysisTabs } from "@/components/analyses/AnalysisTabs";
+import { SignalsPanel } from "@/components/analyses/SignalsPanel";
+import { EventTimelineSummary } from "@/components/analyses/EventTimelineSummary";
 import { IncidentQueue } from "@/components/incidents/IncidentQueue";
 import { EventExplorer } from "@/components/events/EventExplorer";
 import { Panel } from "@/components/ui/Panel";
@@ -106,8 +107,6 @@ export default async function AnalysisDetailPage({
         </div>
       </Panel>
 
-      <AnalysisTimeline data={timeline} />
-
       {overview && (
         <>
           <NotableUsersPanel users={overview.notable_users} />
@@ -188,7 +187,8 @@ export default async function AnalysisDetailPage({
       <AnalysisTabs
         counts={{
           incidents: incidents?.items.length,
-          events: events?.items.length,
+          timeline: events?.items.length,
+          signals: timeline?.phases.length,
         }}
         overview={
           <>
@@ -207,13 +207,24 @@ export default async function AnalysisDetailPage({
             <IncidentQueue analysisId={analysis.id} incidents={incidents.items} />
           )
         }
-        events={
+        timeline={
           events === null ? (
             <Unreachable what="events" />
           ) : (
-            <EventExplorer analysisId={analysis.id} initial={events} />
+            <>
+              <EventTimelineSummary
+                analysisId={analysis.id}
+                stored={
+                  (analysis.event_timeline_summary as React.ComponentProps<
+                    typeof EventTimelineSummary
+                  >["stored"]) ?? null
+                }
+              />
+              <EventExplorer analysisId={analysis.id} initial={events} />
+            </>
           )
         }
+        signals={<SignalsPanel data={timeline} />}
         analysisId={analysis.id}
       />
     </div>

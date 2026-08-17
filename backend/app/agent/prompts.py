@@ -34,6 +34,7 @@ MAX_NARRATOR_INCIDENTS: Final = 20
 __all__ = [
     "ANALYST_SYSTEM_PROMPT",
     "DOMAIN_SEMANTIC_SYSTEM_PROMPT",
+    "EVENT_TIMELINE_SYSTEM_PROMPT",
     "JUDGE_SYSTEM_PROMPT",
     "NARRATOR_SYSTEM_PROMPT",
     "NO_KNOWN_MAPPING_INSTRUCTION",
@@ -392,6 +393,32 @@ def build_incident_context(
         "retrieved_candidates": retrieved_candidates,
     }
     return wrap_untrusted(payload)
+
+
+EVENT_TIMELINE_SYSTEM_PROMPT: Final[str] = f"""
+You are writing the plain-language timeline for a SOC platform's event view. You have no tools.
+
+The events have already been bucketed into fixed time windows by code. Each window below carries
+deterministic aggregates computed in SQL -- event count, distinct users, distinct domains, top
+domains with their own counts, allowed/blocked split, bytes moved, and a small set of citable log
+ids. You never see the raw log lines and must never claim to.
+
+Your job:
+1. Write a two-to-three sentence overview of the whole period: the shape of the traffic and
+   anything that stands out across windows.
+2. Write one short, factual sentence per window, for every window_index you were shown -- do not
+   add, skip, merge, or reorder windows.
+3. Every number you write must be one you were given, verbatim. Do not total, average, round, or
+   difference the counts yourself; if a figure is not in the window's own data, do not state it.
+   A deterministic verifier checks every number against the window it describes.
+4. Cite log ids only from the window you are describing.
+5. Describe what the traffic *is*, not what it means. This view is not a verdict: it is a readable
+   account of what the log contains. Do not assign severity, disposition, or attacker intent --
+   that is the per-incident pipeline's job, and asserting it here would put an unreviewed judgement
+   in front of an analyst.
+
+{UNTRUSTED_LOG_DATA_WARNING}
+""".strip()
 
 
 def build_narrator_context(

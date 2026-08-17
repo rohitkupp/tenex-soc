@@ -67,6 +67,12 @@ class Analysis(Base, TenantScopedMixin):
         DateTime(timezone=True), nullable=True
     )
 
+    # The Timeline tab's windowed event summary (one LLM call over deterministic SQL buckets,
+    # `app.api.events.summarize_event_timeline`). Persisted for the same reason as `narrative`:
+    # the tab renders what was already paid for instead of re-spending on every visit. NULL until
+    # an analyst asks for it — unlike the narrative, this one is not produced by the pipeline.
+    event_timeline_summary: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+
     # NOTE: docs/02-DATA-MODEL.md defines this table without a `created_at` column —
     # matched exactly, on purpose. "GET /api/analyses newest first" (docs/09) is
     # therefore implemented by ordering on the parent upload's `created_at` (uploads

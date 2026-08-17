@@ -78,6 +78,7 @@ __all__ = [
     "Disposition",
     "DomainAssessment",
     "DomainSemanticOutput",
+    "EventTimelineOutput",
     "Finding",
     "HypothesisEvaluation",
     "JudgeDecision",
@@ -97,6 +98,7 @@ __all__ = [
     "build_present_verdict_tool",
     "build_submit_analysis_tool",
     "build_submit_judgement_tool",
+    "build_summarize_windows_tool",
 ]
 
 Disposition = Literal["true_positive", "false_positive", "benign", "needs_review"]
@@ -947,6 +949,63 @@ def build_assess_domains_tool() -> dict[str, Any]:
             "type": "object",
             "properties": {"assessments": {"type": "array", "items": _domain_assessment_schema()}},
             "required": ["assessments"],
+            "additionalProperties": False,
+        },
+    }
+
+
+# ------------------------------------------------------- event-window timeline tool schema
+
+
+class WindowSummary(BaseModel):
+    """One time window's plain-language summary. `window_index` must be one the model was
+    given — it may not invent, merge, or reorder windows, the same discipline
+    `NarratorOutput` applies to timeline phases."""
+
+    window_index: int
+    summary: str
+    cited_log_ids: list[str] = Field(default_factory=list)
+
+
+class EventTimelineOutput(BaseModel):
+    overview: str
+    windows: list[WindowSummary]
+
+
+def build_summarize_windows_tool() -> dict[str, Any]:
+    """The event-timeline summariser's terminal tool. Windowing is deterministic and happens
+    upstream (`app.api.events._window_events`) — the model is handed already-bucketed counts and
+    writes prose per bucket. It never sees raw log volume (CLAUDE.md rule 1): it sees per-window
+    aggregates, not the events themselves."""
+    return {
+        "name": "summarize_windows",
+        "description": (
+            "Write one short, factual sentence per time window describing what the traffic in "
+            "that window looks like, plus a two-to-three sentence overview of the whole period. "
+            "You may only write about the window_index values you were shown, and may only cite "
+            "log ids attached to that window. Use the counts you were given verbatim -- never "
+            "estimate, round, or compute a figure that was not supplied."
+        ),
+        "strict": True,
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "overview": {"type": "string"},
+                "windows": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "window_index": {"type": "integer"},
+                            "summary": {"type": "string"},
+                            "cited_log_ids": {"type": "array", "items": {"type": "string"}},
+                        },
+                        "required": ["window_index", "summary", "cited_log_ids"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "required": ["overview", "windows"],
             "additionalProperties": False,
         },
     }

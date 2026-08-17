@@ -44,14 +44,19 @@ import base64
 import binascii
 import ipaddress
 import uuid
-from datetime import datetime
-from typing import Annotated
+from datetime import UTC, datetime, timedelta
+from decimal import Decimal
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import ColumnElement, exists, select, tuple_
+from sqlalchemy import ColumnElement, exists, func, select, tuple_, update
 from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.orm import Session
 
+from app.agent.client import LiveCaller
+from app.agent.context import log_citation_id
+from app.agent.orchestrator import summarize_event_windows
+from app.core.config import get_settings
 from app.core.db import get_db
 from app.core.errors import ApiError
 from app.core.security import CurrentUser, require_user
@@ -59,7 +64,14 @@ from app.models.analysis import Analysis
 from app.models.base import tenant_scope
 from app.models.event import Event
 from app.models.signal import Signal
-from app.schemas.event import EventListItem, EventListResponse, EventOut, EventSignalOut
+from app.schemas.event import (
+    EventListItem,
+    EventListResponse,
+    EventOut,
+    EventSignalOut,
+    EventTimelineSummaryResponse,
+    EventTimelineWindowsResponse,
+)
 
 router = APIRouter()
 
@@ -90,6 +102,17 @@ def _decode_cursor(cursor: str) -> tuple[datetime, int]:
         return datetime.fromisoformat(ts_str), int(id_str)
     except (ValueError, binascii.Error) as exc:
         raise ApiError(status_code=400, code="invalid_cursor", detail="Invalid cursor.") from exc
+
+
+def _require_analysis(db: Session, tenant_id: uuid.UUID, analysis_id: uuid.UUID) -> Analysis:
+    """Tenant-scoped existence check, so a bad id 404s before any windowing work happens."""
+    with tenant_scope(db, tenant_id):
+        analysis = db.execute(
+            select(Analysis).where(Analysis.id == analysis_id)
+        ).scalar_one_or_none()
+    if analysis is None:
+        raise _analysis_not_found()
+    return analysis
 
 
 def _has_signal_predicate(analysis_id: uuid.UUID, *, want_signal: bool) -> ColumnElement[bool]:
@@ -307,3 +330,205 @@ def get_event_by_line(
         if event is None:
             raise _event_not_found()
     return _event_out(db, event)
+
+
+# ============================================================================================
+# Event-window timeline (the Timeline tab). Deterministic bucketing here, prose from one LLM
+# call in `app.agent.orchestrator.summarize_event_windows`. The split is the same one Path A
+# draws: code decides *what* the windows are and what is true of each; the model only writes.
+# ============================================================================================
+
+# Enough windows to show shape across a multi-day file, few enough that the whole set fits one
+# prompt comfortably (CLAUDE.md rule 1 — reduce before the next stage, never after).
+MAX_TIMELINE_WINDOWS = 24
+
+# Citable ids per window, so a window's prose can point at concrete lines without the payload
+# growing with the window's event count.
+LOG_IDS_PER_WINDOW = 6
+
+# Top domains named per window. Enough to characterise the traffic, bounded so one busy window
+# cannot dominate the prompt.
+TOP_DOMAINS_PER_WINDOW = 5
+
+
+def _window_bounds(
+    first: datetime, last: datetime, n_windows: int
+) -> list[tuple[datetime, datetime]]:
+    """`n_windows` equal, contiguous, half-open buckets spanning `[first, last]`.
+
+    Equal-width rather than per-hour: a file may span three days or three weeks, and a fixed
+    hour bucket would produce either four windows or five hundred. The last bucket's upper bound
+    is nudged past `last` so the final event is included — a half-open interval would drop it.
+    """
+    if n_windows < 1:
+        return []
+    total = (last - first).total_seconds()
+    if total <= 0:
+        return [(first, last + timedelta(seconds=1))]
+    step = total / n_windows
+    bounds: list[tuple[datetime, datetime]] = []
+    for i in range(n_windows):
+        start = first + timedelta(seconds=step * i)
+        end = first + timedelta(seconds=step * (i + 1))
+        if i == n_windows - 1:
+            end = last + timedelta(seconds=1)
+        bounds.append((start, end))
+    return bounds
+
+
+def _window_aggregates(
+    db: Session, tenant_id: uuid.UUID, analysis_id: uuid.UUID
+) -> list[dict[str, Any]]:
+    """One row of already-computed truth per window. Every number the model is allowed to state
+    is produced here, in SQL, so the verifier has something exact to check its prose against."""
+    with tenant_scope(db, tenant_id):
+        span = db.execute(
+            select(func.min(Event.ts), func.max(Event.ts)).where(Event.analysis_id == analysis_id)
+        ).one_or_none()
+    if span is None or span[0] is None or span[1] is None:
+        return []
+
+    first, last = span
+    bounds = _window_bounds(first, last, MAX_TIMELINE_WINDOWS)
+    windows: list[dict[str, Any]] = []
+
+    for index, (start, end) in enumerate(bounds):
+        scope = (
+            Event.analysis_id == analysis_id,
+            Event.ts >= start,
+            Event.ts < end,
+        )
+        with tenant_scope(db, tenant_id):
+            totals = db.execute(
+                select(
+                    func.count(Event.id),
+                    func.count(func.distinct(Event.principal)),
+                    func.count(func.distinct(Event.domain)),
+                    func.coalesce(func.sum(Event.bytes_out), 0),
+                    func.coalesce(func.sum(Event.bytes_in), 0),
+                ).where(*scope)
+            ).one()
+            n_events, n_users, n_domains, bytes_out, bytes_in = totals
+            if not n_events:
+                continue
+
+            blocked = db.execute(
+                select(func.count(Event.id)).where(*scope, Event.action == "blocked")
+            ).scalar_one()
+            top_domains = db.execute(
+                select(Event.domain, func.count(Event.id).label("n"))
+                .where(*scope, Event.domain.is_not(None))
+                .group_by(Event.domain)
+                .order_by(func.count(Event.id).desc(), Event.domain)
+                .limit(TOP_DOMAINS_PER_WINDOW)
+            ).all()
+            line_nos = (
+                db.execute(
+                    select(Event.raw_line_no)
+                    .where(*scope)
+                    .order_by(Event.ts.asc(), Event.id.asc())
+                    .limit(LOG_IDS_PER_WINDOW)
+                )
+                .scalars()
+                .all()
+            )
+
+        windows.append(
+            {
+                "window_index": index,
+                "start": start.isoformat(),
+                "end": end.isoformat(),
+                "events": int(n_events),
+                "distinct_users": int(n_users),
+                "distinct_domains": int(n_domains),
+                "allowed": int(n_events) - int(blocked),
+                "blocked": int(blocked),
+                "bytes_out": int(bytes_out),
+                "bytes_in": int(bytes_in),
+                "top_domains": [{"domain": d, "events": int(n)} for d, n in top_domains],
+                "log_ids": [log_citation_id(n) for n in line_nos],
+            }
+        )
+    return windows
+
+
+@router.get("/analyses/{analysis_id}/event-timeline", response_model=EventTimelineWindowsResponse)
+def get_event_timeline_windows(
+    analysis_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current: Annotated[CurrentUser, Depends(require_user)],
+) -> EventTimelineWindowsResponse:
+    """The deterministic half: the windows and their aggregates, no LLM. Safe on every load."""
+    _require_analysis(db, current.tenant.id, analysis_id)
+    return EventTimelineWindowsResponse(
+        windows=_window_aggregates(db, current.tenant.id, analysis_id)
+    )
+
+
+@router.post(
+    "/analyses/{analysis_id}/event-timeline/summary",
+    response_model=EventTimelineSummaryResponse,
+)
+def summarize_event_timeline(
+    analysis_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+    current: Annotated[CurrentUser, Depends(require_user)],
+) -> EventTimelineSummaryResponse:
+    """The LLM half. A POST, not a GET: it spends tokens, and a GET that silently costs money on
+    every page load is the exact mistake `/overview` was making before its findings were
+    persisted."""
+    analysis = _require_analysis(db, current.tenant.id, analysis_id)
+    settings = get_settings()
+    if not settings.llm_enabled:
+        raise ApiError(
+            status_code=503,
+            code="anthropic_api_key_not_configured",
+            detail="Summarising the timeline requires ANTHROPIC_API_KEY to be configured.",
+        )
+
+    windows = _window_aggregates(db, current.tenant.id, analysis_id)
+    if not windows:
+        return EventTimelineSummaryResponse(
+            overview="",
+            windows=[],
+            citation_valid=True,
+            invalid_citation_count=0,
+            model=settings.anthropic_model,
+            cost_usd=Decimal("0"),
+            latency_ms=0,
+        )
+
+    result = summarize_event_windows(
+        windows=windows,
+        caller=LiveCaller(api_key=settings.anthropic_api_key.get_secret_value()),
+        model=settings.anthropic_model,
+    )
+
+    with tenant_scope(db, current.tenant.id):
+        db.execute(
+            update(Analysis)
+            .where(Analysis.id == analysis_id)
+            .values(
+                llm_cost_usd=func.coalesce(Analysis.llm_cost_usd, 0) + result.cost_usd,
+                event_timeline_summary={
+                    "overview": result.overview,
+                    "windows": list(result.windows),
+                    "citation_valid": result.citation_valid,
+                    "invalid_citation_count": len(result.invalid_citations),
+                    "model": result.model,
+                    "generated_at": datetime.now(UTC).isoformat(),
+                },
+            )
+        )
+        db.commit()
+
+    _ = analysis
+    return EventTimelineSummaryResponse(
+        overview=result.overview,
+        windows=list(result.windows),
+        citation_valid=result.citation_valid,
+        invalid_citation_count=len(result.invalid_citations),
+        model=result.model,
+        cost_usd=result.cost_usd,
+        latency_ms=result.latency_ms,
+    )
