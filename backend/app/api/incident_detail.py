@@ -37,6 +37,7 @@ from __future__ import annotations
 import base64
 import binascii
 import uuid
+from collections import defaultdict
 from datetime import datetime
 from typing import Annotated
 
@@ -275,6 +276,7 @@ def _timeline_phase_out(phase: TimelinePhase) -> TimelinePhaseOut:
         entity_type=phase.entity_type,
         entity_value=phase.entity_value,
         confidence=phase.confidence,
+        calibrated=phase.calibrated,
         mitre_technique=phase.mitre_technique,
     )
 
@@ -304,17 +306,55 @@ def analysis_timeline_phases(
     total_phases = len(all_phases)
     truncated = total_phases > MAX_ANALYSIS_TIMELINE_PHASES
     if truncated:
-        keep_indices = {
-            i
-            for i, _ in sorted(
-                enumerate(all_phases),
-                key=lambda pair: (-pair[1].confidence, pair[0]),
-            )[:MAX_ANALYSIS_TIMELINE_PHASES]
-        }
+        keep_indices = _select_phase_indices(all_phases, MAX_ANALYSIS_TIMELINE_PHASES)
         phases = [p for i, p in enumerate(all_phases) if i in keep_indices]
     else:
         phases = all_phases
     return phases, total_phases, truncated
+
+
+def _select_phase_indices(phases: list[TimelinePhase], limit: int) -> set[int]:
+    """Which `limit` phases survive truncation — highest confidence first, but round-robin
+    across `detector_key` so no single detector can own the whole page.
+
+    A pure `sorted(by -confidence)[:limit]` is what this used to be, and on real data it
+    degenerates completely. Confidence is `clamp01(raw_score)` for any detector without a
+    fitted isotonic calibrator, so an uncalibrated detector whose raw scores exceed 1.0 pins
+    every one of its signals to *exactly* 1.0. On a measured analysis here, 189 signals tied at
+    1.0 against this 100-phase cap — two detectors between them filled the entire timeline and
+    every row rendered "confidence 100%". An analyst learns nothing from a page where every
+    entry is identical, and the strongest evidence from every *other* detector is what got cut
+    to make room for the ties.
+
+    Round-robin attacks that directly: take each detector's best remaining phase in turn, so a
+    detector holding 143 saturated signals contributes its first before it contributes its
+    second. Detectors are visited in descending order of their own top confidence, so the
+    strongest evidence still leads; within a detector, phases stay ranked by confidence with
+    chronological position as the tiebreak. Fully deterministic, and it selects exactly what
+    the old rule did whenever no detector holds more than its round-robin share.
+    """
+    by_detector: dict[str, list[tuple[float, int]]] = defaultdict(list)
+    for i, phase in enumerate(phases):
+        by_detector[phase.detector_key].append((phase.confidence, i))
+    if not by_detector:
+        return set()
+    for ranked in by_detector.values():
+        ranked.sort(key=lambda pair: (-pair[0], pair[1]))
+
+    # Strongest detector first, by its own best phase; the detector key breaks ties so the
+    # order is stable across runs rather than dependent on dict insertion order.
+    order = sorted(by_detector, key=lambda key: (-by_detector[key][0][0], key))
+
+    keep: set[int] = set()
+    for round_index in range(max(len(r) for r in by_detector.values())):
+        for detector_key in order:
+            ranked = by_detector[detector_key]
+            if round_index >= len(ranked):
+                continue
+            keep.add(ranked[round_index][1])
+            if len(keep) == limit:
+                return keep
+    return keep
 
 
 @router.get("/analyses/{analysis_id}/timeline", response_model=AnalysisTimelineResponse)

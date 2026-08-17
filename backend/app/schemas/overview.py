@@ -187,22 +187,39 @@ class DomainSemanticFinding(BaseModel):
     evidence_id: str | None = None
 
 
+class StoredNarrative(BaseModel):
+    """The narrative the `triage` stage's Path A call already produced and paid for, read back
+    off `analyses.narrative*`. No LLM call happens on this path — it is a column read."""
+
+    executive_summary: str
+    citation_valid: bool | None
+    invalid_citation_count: int
+    model: str | None
+    cost_usd: Decimal | None
+    generated_at: datetime | None
+
+
 class AnalysisOverviewResponse(BaseModel):
     """`GET /api/analyses/{id}/overview` — change 10 Level 1 ("what happened"): overview stats +
-    executive summary + anomaly count. `executive_summary` is always `null` here — see this
-    module's own docstring for why the Narrator call is a separate `POST /narrate`, not inlined
-    into this GET."""
+    executive summary + anomaly count.
+
+    `narrative` carries the summary the pipeline generated during `triage`, when one exists. It
+    is a read of `analyses.narrative`, never a generation: this route stays free of LLM spend,
+    which is what lets the page render it on every load. `null` means the Narrator has not run
+    for this analysis (or failed) — the UI says so rather than offering to spend."""
 
     overview: LogOverview
     anomaly_count: int
     notable_users: list[NotableUser]
     notable_destinations: list[NotableDestination]
     domain_semantic_findings: list[DomainSemanticFinding]
+    narrative: StoredNarrative | None
 
 
 class AnalysisNarrateResponse(BaseModel):
     """`POST /api/analyses/{id}/narrate` — `app.agent.orchestrator.NarrationResult`, serialised.
-    Not persisted (see module docstring); every call re-runs the Narrator and re-spends."""
+    Also written to `analyses.narrative*` so a deliberate regeneration replaces what the page
+    reads, rather than living only in the tab that requested it."""
 
     executive_summary: str
     phase_narratives: list[dict[str, Any]]

@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, Text, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Numeric, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import Float, Integer, Uuid
@@ -35,6 +35,26 @@ class Analysis(Base, TenantScopedMixin):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Path A's narrative (migration change 14, `app.agent.orchestrator.narrate_analysis`). The
+    # `triage` stage has always generated this once per analysis; before these columns existed it
+    # kept only the cost and dropped the prose, so the UI had to offer a button that re-ran — and
+    # re-paid for — a call the pipeline had already made. Persisted here so the run the analyst
+    # already paid for is the one they read. `narrative` is NULL when the Narrator has not run or
+    # failed; the other columns are only meaningful alongside a non-NULL `narrative`.
+    narrative: Mapped[str | None] = mapped_column(Text, nullable=True)
+    narrative_phases: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    narrative_citation_valid: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    narrative_invalid_citations: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    narrative_model: Mapped[str | None] = mapped_column(Text, nullable=True)
+    narrative_cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 4), nullable=True)
+    narrative_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     # NOTE: docs/02-DATA-MODEL.md defines this table without a `created_at` column —
     # matched exactly, on purpose. "GET /api/analyses newest first" (docs/09) is

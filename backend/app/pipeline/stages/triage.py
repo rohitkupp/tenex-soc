@@ -74,7 +74,11 @@ from sqlalchemy import func, select, update
 
 from app.agent.client import LiveCaller, LLMCaller
 from app.agent.context import log_citation_id
-from app.agent.orchestrator import narrate_analysis, triage_top_incidents_for_analysis
+from app.agent.orchestrator import (
+    narrate_analysis,
+    narrative_columns,
+    triage_top_incidents_for_analysis,
+)
 from app.api.analyses import _compute_log_overview, _narrator_overview_payload
 from app.api.incident_detail import analysis_timeline_phases
 from app.core.config import get_settings
@@ -256,16 +260,19 @@ def _run_triage(message: StageMessage, *, caller: LLMCaller | None = None) -> di
                 citation_valid=narration_citation_valid,
                 cost_usd=str(narration_cost),
             )
-            if narration_cost:
-                with tenant_scope(session, message.tenant_id):
-                    session.execute(
-                        update(Analysis)
-                        .where(Analysis.id == message.analysis_id)
-                        .values(
-                            llm_cost_usd=func.coalesce(Analysis.llm_cost_usd, 0) + narration_cost
-                        )
+            # Persist the prose, not just its price. This call has always run here; until the
+            # `analyses.narrative` columns existed its output was discarded and the UI had to
+            # offer a button that paid for it a second time.
+            with tenant_scope(session, message.tenant_id):
+                session.execute(
+                    update(Analysis)
+                    .where(Analysis.id == message.analysis_id)
+                    .values(
+                        llm_cost_usd=func.coalesce(Analysis.llm_cost_usd, 0) + narration_cost,
+                        **narrative_columns(narration),
                     )
-                    session.commit()
+                )
+                session.commit()
     except Exception as exc:
         # Wraps both Path B (`triage_top_incidents_for_analysis`) and Path A (`narrate_analysis`)
         # -- either can raise straight out of `app.agent.client.LiveCaller.create` ->

@@ -54,6 +54,7 @@ import json
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any, Final
 
@@ -1229,10 +1230,13 @@ def triage_top_incidents_for_analysis(
 
 @dataclass(slots=True)
 class NarrationResult:
-    """change 14 Path A's output — not persisted to any table by this module (no schema for one
-    exists yet; wiring this into `analyses`/an API response is out of `app/agent`'s ownership).
-    `citation_valid`/`invalid_citations` mirror the Path B verdict's own fields — "Verifier still
-    runs" applies here exactly as it does for the per-incident pipeline."""
+    """change 14 Path A's output. `citation_valid`/`invalid_citations` mirror the Path B
+    verdict's own fields — "Verifier still runs" applies here exactly as it does for the
+    per-incident pipeline.
+
+    Persisted to `analyses.narrative*` by both of its producers, via `narrative_columns` below;
+    this module still does not write the row itself (that stays with the stage and the route
+    that own their sessions), it only owns the mapping from result to columns."""
 
     executive_summary: str
     phase_narratives: tuple[dict[str, Any], ...]
@@ -1243,6 +1247,29 @@ class NarrationResult:
     tokens_out: int
     cost_usd: Decimal
     latency_ms: int
+
+
+def narrative_columns(result: NarrationResult) -> dict[str, Any]:
+    """`NarrationResult` -> the `analyses.narrative*` column values, as an `update().values()`
+    mapping.
+
+    Both producers of a narration — the `triage` stage's automatic Path A call and the manual
+    `POST /api/analyses/{id}/narrate` — write through this one function, so a stored narrative
+    means the same thing regardless of which produced it. Previously they agreed on nothing:
+    the stage discarded its result entirely and only the route returned one, over the wire, to
+    a single browser tab that lost it on reload.
+
+    `narrative_generated_at` is stamped here rather than defaulted in the database so it records
+    when the model actually produced the text, not when the row happened to be written."""
+    return {
+        "narrative": result.executive_summary,
+        "narrative_phases": list(result.phase_narratives),
+        "narrative_citation_valid": result.citation_valid,
+        "narrative_invalid_citations": list(result.invalid_citations),
+        "narrative_model": result.model,
+        "narrative_cost_usd": result.cost_usd,
+        "narrative_generated_at": datetime.now(UTC),
+    }
 
 
 def narrate_analysis(

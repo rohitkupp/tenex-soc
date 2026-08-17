@@ -32,7 +32,7 @@ from datetime import UTC, datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import func, select, tuple_
+from sqlalchemy import func, select, tuple_, update
 from sqlalchemy.orm import Session
 from starlette import status
 
@@ -42,9 +42,10 @@ from app.agent.orchestrator import (
     MAX_SEMANTIC_DOMAINS_PER_CALL,
     assess_domain_semantics,
     narrate_analysis,
+    narrative_columns,
 )
 from app.api.incident_detail import analysis_timeline_phases
-from app.baseline.resolve import contact_counts, percentile_for
+from app.baseline.resolve import contact_counts_many, percentiles_for_many
 from app.core.config import get_settings
 from app.core.db import get_db, get_engine
 from app.core.errors import ApiError
@@ -76,6 +77,7 @@ from app.schemas.overview import (
     NotableDestination,
     NotableUser,
     PeriodicityOut,
+    StoredNarrative,
 )
 from app.schemas.uploads import AnalysisListResponse, AnalysisOut, AnalysisRetryResponse
 
@@ -400,15 +402,35 @@ def _compute_notable_users(
         key=lambda u: _rank_key(top_score_by_user.get(u.value), u.event_count),
     )[:NOTABLE_ENTITIES_LIMIT]
 
+    # Two batched lookups for the whole ranked page, not two per user. The loop below was
+    # previously one `percentile_for` *and* one `contact_counts` per (user, domain) pair —
+    # ~600 sequential round trips for a 20-user page, which is what made this endpoint take
+    # 14s against a managed Postgres in another region and blew the frontend's server-render
+    # budget. Same values, same semantics (see `percentiles_for_many`), two queries.
+    baselines = percentiles_for_many(
+        db,
+        tenant_id,
+        "user",
+        "n_events",
+        {user.value: float(user.event_count) for user in ranked},
+    )
+    contacts = contact_counts_many(
+        db,
+        tenant_id,
+        (
+            (user.value, domain)
+            for user in ranked
+            for domain in domains_by_user.get(user.value, ())
+        ),
+    )
+
     notable: list[NotableUser] = []
     for user in ranked:
-        baseline = percentile_for(
-            db, tenant_id, "user", user.value, "n_events", float(user.event_count)
-        )
+        baseline = baselines[user.value]
         first_seen_count = sum(
             1
             for domain in domains_by_user.get(user.value, ())
-            if contact_counts(db, tenant_id, user.value, domain).user.is_first_contact
+            if contacts[(user.value, domain)].user.is_first_contact
         )
         notable.append(
             NotableUser(
@@ -512,12 +534,15 @@ def _compute_notable_destinations(
         key=lambda d: _rank_key(top_score_by_domain.get(d.value), d.event_count),
     )[:NOTABLE_ENTITIES_LIMIT]
 
+    # Only `.org` is used below — `contact_counts` also resolves user/department scope, neither
+    # meaningful for a domain-centric (not user-centric) view, so an empty `user` is passed
+    # deliberately rather than picking one of this domain's visitors arbitrarily. Batched for
+    # the same reason as `_compute_notable_users` above: one query, not one per domain.
+    org_contacts = contact_counts_many(db, tenant_id, (("", d.value) for d in ranked))
+
     notable: list[NotableDestination] = []
     for domain in ranked:
-        # Only `.org` is used below — `contact_counts` also resolves user/department scope,
-        # neither meaningful for a domain-centric (not user-centric) view, so an empty `user`
-        # is passed deliberately rather than picking one of this domain's visitors arbitrarily.
-        org_contact = contact_counts(db, tenant_id, "", domain.value).org
+        org_contact = org_contacts[("", domain.value)].org
         notable.append(
             NotableDestination(
                 value=domain.value,
@@ -548,12 +573,15 @@ def _domain_semantic_candidate_selection(
     Ranked first-seen-first, then by ascending org contact count, and capped at
     `MAX_SEMANTIC_DOMAINS_PER_CALL` *here* — before any of the per-candidate row lookups below run
     — so the domains most worth the extra queries are the ones that survive the cut."""
+    org_contacts = contact_counts_many(
+        db, tenant_id, (("", d.value) for d in destinations if not d.first_observed)
+    )
     ranked: list[tuple[int, NotableDestination]] = []
     for d in destinations:
         if d.first_observed:
             ranked.append((0, d))
             continue
-        org_count = contact_counts(db, tenant_id, "", d.value).org.contact_count
+        org_count = org_contacts[("", d.value)].org.contact_count
         if 0 < org_count <= RARE_ORG_CONTACT_THRESHOLD:
             ranked.append((org_count, d))
     ranked.sort(key=lambda pair: pair[0])
@@ -645,9 +673,10 @@ def _compute_domain_semantic_candidates(
     pipeline, applied to a handful of domains rather than the whole file.
     """
     selected = _domain_semantic_candidate_selection(db, tenant_id, destinations)
+    rarities = contact_counts_many(db, tenant_id, (("", d.value) for d in selected))
     candidates: list[dict[str, Any]] = []
     for i, dest in enumerate(selected, start=1):
-        rarity = contact_counts(db, tenant_id, "", dest.value).org
+        rarity = rarities[("", dest.value)].org
         first_event = _first_event_for_domain(db, tenant_id, analysis_id, dest.value)
         preceding: list[dict[str, Any]] = []
         if first_event is not None and first_event.principal:
@@ -774,6 +803,23 @@ def get_analysis_overview(
         domain_semantic_findings=_compute_domain_semantic_findings(
             db, current.tenant.id, analysis_id, notable_destinations
         ),
+        narrative=_stored_narrative(analysis),
+    )
+
+
+def _stored_narrative(analysis: Analysis) -> StoredNarrative | None:
+    """The narrative `triage` already generated, read off the row. A column read, never a
+    generation — this route must stay free of LLM spend so the page can render the summary on
+    every load instead of asking the analyst to pay for one the pipeline already bought."""
+    if not analysis.narrative:
+        return None
+    return StoredNarrative(
+        executive_summary=analysis.narrative,
+        citation_valid=analysis.narrative_citation_valid,
+        invalid_citation_count=len(analysis.narrative_invalid_citations or []),
+        model=analysis.narrative_model,
+        cost_usd=analysis.narrative_cost_usd,
+        generated_at=analysis.narrative_generated_at,
     )
 
 
@@ -906,6 +952,19 @@ def narrate_analysis_route(
         citation_valid=result.citation_valid,
         cost_usd=str(result.cost_usd),
     )
+    # An explicit regeneration replaces the stored copy — otherwise the analyst would read a
+    # narrative from the pipeline run while the one they just paid to refresh lived only in the
+    # browser tab, and a reload would silently revert it.
+    with tenant_scope(db, current.tenant.id):
+        db.execute(
+            update(Analysis)
+            .where(Analysis.id == analysis_id)
+            .values(
+                llm_cost_usd=func.coalesce(Analysis.llm_cost_usd, 0) + result.cost_usd,
+                **narrative_columns(result),
+            )
+        )
+        db.commit()
     return AnalysisNarrateResponse(
         executive_summary=result.executive_summary,
         phase_narratives=list(result.phase_narratives),

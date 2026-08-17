@@ -70,6 +70,14 @@ class TimelinePhase:
     entity_type: str
     entity_value: str
     confidence: float
+    # False when this detector had no fitted isotonic calibrator and `confidence` is therefore
+    # `clamp01(raw_score)` — a raw detector score, not a probability
+    # (`app.detection.calibration.CalibratorStore.calibrate`'s documented fallback). Carried so
+    # the UI can say which of the two a number is instead of rendering both as "confidence
+    # N%": a raw score clamped at 1.0 displayed as "100% confident" is the most misleading
+    # thing this pipeline can show an analyst, and it is exactly what an unfitted detector
+    # produces.
+    calibrated: bool
     mitre_technique: str | None
 
 
@@ -110,6 +118,10 @@ def build_timeline(signals: list[Any]) -> list[TimelinePhase]:
                 entity_type=s.entity_type,
                 entity_value=s.entity_value,
                 confidence=s.confidence,
+                # `SignalRef` (graph-internal) predates the column and doesn't carry it; a
+                # missing attribute means "we can't claim it was calibrated", which is the
+                # safe direction to guess in.
+                calibrated=bool(getattr(s, "calibrated", False)),
                 mitre_technique=s.mitre_technique,
             )
         )

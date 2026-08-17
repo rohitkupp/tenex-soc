@@ -584,6 +584,11 @@ export interface TimelinePhaseOut {
   entity_type?: string;
   entity_value?: string;
   confidence?: number | null;
+  /** False when no isotonic calibrator was fitted for this detector, so `confidence` is
+   * `clamp01(raw_score)` — a raw detector score, not a probability. Rendering an uncalibrated
+   * score as "confidence N%" is misleading: a raw score at or above 1 pins to exactly 1.0, so
+   * the UI shows "raw score / uncalibrated" instead. See `AnalysisTimeline.tsx`. */
+  calibrated?: boolean;
   mitre_technique?: string | null;
 }
 
@@ -1090,6 +1095,21 @@ export interface AnalysisOverviewResponse {
   notable_users: NotableUser[];
   notable_destinations: NotableDestination[];
   domain_semantic_findings: DomainSemanticFinding[];
+  /** The Path A narrative the `triage` stage already generated and persisted, or `null` if the
+   * Narrator has not run for this analysis. Reading it costs nothing — it is a column read on
+   * `analyses.narrative`, not an LLM call — which is what lets the page render the executive
+   * summary on load instead of behind a "generate" button. */
+  narrative: StoredNarrative | null;
+}
+
+/** `analyses.narrative*`, as served on the overview. */
+export interface StoredNarrative {
+  executive_summary: string;
+  citation_valid: boolean | null;
+  invalid_citation_count: number;
+  model: string | null;
+  cost_usd: number | string | null;
+  generated_at: string | null;
 }
 
 /** `POST /api/analyses/{id}/narrate` — change 14 Path A's `NarrationResult`, serialised. Not

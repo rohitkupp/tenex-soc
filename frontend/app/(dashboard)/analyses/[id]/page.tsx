@@ -1,7 +1,14 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { fetchServer } from "@/lib/api/server";
-import type { AnalysisDetail, AnalysisOverviewResponse, AnalysisTimelineResponse } from "@/lib/api/types";
+import type {
+  AnalysisDetail,
+  AnalysisEvidenceResponse,
+  AnalysisOverviewResponse,
+  AnalysisTimelineResponse,
+  EventListResponse,
+  IncidentsListResponse,
+} from "@/lib/api/types";
 import { formatDate, formatNumber, formatPercent, formatUsd } from "@/lib/format";
 import { FunnelProgress } from "@/components/pipeline/FunnelProgress";
 import { AnalysisTimeline } from "@/components/analyses/AnalysisTimeline";
@@ -11,6 +18,10 @@ import { NotableUsersPanel } from "@/components/analyses/NotableUsersPanel";
 import { NotableDestinationsPanel } from "@/components/analyses/NotableDestinationsPanel";
 import { SemanticFindingsPanel } from "@/components/analyses/SemanticFindingsPanel";
 import { TrafficStatsPanel } from "@/components/analyses/TrafficStatsPanel";
+import { AnalysisTabs } from "@/components/analyses/AnalysisTabs";
+import { IncidentQueue } from "@/components/incidents/IncidentQueue";
+import { EventExplorer } from "@/components/events/EventExplorer";
+import { EvidenceExplorer } from "@/components/evidence/EvidenceExplorer";
 import { Panel } from "@/components/ui/Panel";
 
 export const metadata: Metadata = { title: "Analysis — Tenex SOC Analyst" };
@@ -30,12 +41,19 @@ export default async function AnalysisDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [analysis, timeline, overview] = await Promise.all([
+  // All four tab payloads in one parallel batch, so the page costs the *slowest* fetch rather
+  // than the sum — and switching tabs afterwards costs nothing at all, because no further
+  // request happens. This replaces three separate routes that each paid a full server render.
+  const [analysis, timeline, overview, incidents, events, evidence] = await Promise.all([
     fetchServer<AnalysisDetail>(`/api/analyses/${id}`),
     fetchServer<AnalysisTimelineResponse>(`/api/analyses/${id}/timeline`),
-    // change 9: deterministic, always produced — safe to fetch on every render, unlike the
-    // Narrator (`ExecutiveSummary`), which is an explicit, cost-bearing click.
+    // change 9: deterministic, always produced — safe to fetch on every render. It also carries
+    // the stored Path A narrative (`overview.narrative`), which is a column read rather than an
+    // LLM call, so rendering the executive summary on load costs nothing.
     fetchServer<AnalysisOverviewResponse>(`/api/analyses/${id}/overview`),
+    fetchServer<IncidentsListResponse>(`/api/analyses/${id}/incidents`),
+    fetchServer<EventListResponse>(`/api/analyses/${id}/events?limit=100`),
+    fetchServer<AnalysisEvidenceResponse>(`/api/analyses/${id}/evidence`),
   ]);
 
   // fetchServer collapses "not found" and "API unreachable" to the same
@@ -65,15 +83,15 @@ export default async function AnalysisDetailPage({
   // docs/v2_migration change 10: "Summary · Timeline · Anomalies · Notable users · Notable
   // destinations · Traffic statistics" — this page's section order below, extending the funnel
   // page rather than replacing it (change 27). `overview` (change 9) is deterministic and safe
-  // to render on every load; the executive summary (`ExecutiveSummary`, change 14 Path A) is a
-  // separate, explicit, cost-bearing click within the Summary section.
+  // to render on every load, and now carries the Path A narrative the pipeline already
+  // generated, so the executive summary renders with it rather than behind a button.
   const overviewSections = (
     <>
       <Panel title="Summary" padding="tight">
         <div className="flex flex-col gap-3 p-1">
           {overview ? (
             <>
-              <ExecutiveSummary analysisId={analysis.id} />
+              <ExecutiveSummary narrative={overview.narrative} />
               <Link
                 href={`/analyses/${analysis.id}/incidents`}
                 className="w-fit text-xs text-[var(--color-text-mid)] underline underline-offset-2 hover:text-[var(--color-text-hi)]"
@@ -154,27 +172,6 @@ export default async function AnalysisDetailPage({
         </span>
       </div>
 
-      <nav className="flex items-center gap-4 border-b border-[var(--color-border)] text-sm">
-        <Link
-          href={`/analyses/${analysis.id}/incidents`}
-          className="border-b-2 border-transparent pb-2 text-[var(--color-text-mid)] transition-colors hover:border-[var(--color-text-hi)] hover:text-[var(--color-text-hi)]"
-        >
-          Incidents
-        </Link>
-        <Link
-          href={`/analyses/${analysis.id}/events`}
-          className="border-b-2 border-transparent pb-2 text-[var(--color-text-mid)] transition-colors hover:border-[var(--color-text-hi)] hover:text-[var(--color-text-hi)]"
-        >
-          Events
-        </Link>
-        <Link
-          href={`/analyses/${analysis.id}/evidence`}
-          className="border-b-2 border-transparent pb-2 text-[var(--color-text-mid)] transition-colors hover:border-[var(--color-text-hi)] hover:text-[var(--color-text-hi)]"
-        >
-          Evidence
-        </Link>
-      </nav>
-
       {isFailed && (
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[var(--color-severity-critical)] bg-[var(--color-surface-1)] px-5 py-4">
           <div>
@@ -189,17 +186,58 @@ export default async function AnalysisDetailPage({
         </div>
       )}
 
-      {isRunning || isFailed ? (
-        <>
-          {funnel}
-          {overviewSections}
-        </>
-      ) : (
-        <>
-          {overviewSections}
-          {funnel}
-        </>
-      )}
+      <AnalysisTabs
+        counts={{
+          incidents: incidents?.items.length,
+          events: events?.items.length,
+          evidence: evidence?.items.length,
+        }}
+        overview={
+          isRunning || isFailed ? (
+            <>
+              {funnel}
+              {overviewSections}
+            </>
+          ) : (
+            <>
+              {overviewSections}
+              {funnel}
+            </>
+          )
+        }
+        incidents={
+          incidents === null ? (
+            <Unreachable what="incidents" />
+          ) : (
+            <IncidentQueue analysisId={analysis.id} incidents={incidents.items} />
+          )
+        }
+        events={
+          events === null ? (
+            <Unreachable what="events" />
+          ) : (
+            <EventExplorer analysisId={analysis.id} initial={events} />
+          )
+        }
+        evidence={
+          evidence === null ? (
+            <Unreachable what="evidence" />
+          ) : (
+            <EvidenceExplorer analysisId={analysis.id} initial={evidence} />
+          )
+        }
+      />
+    </div>
+  );
+}
+
+function Unreachable({ what }: { what: string }) {
+  return (
+    <div className="flex flex-col items-center gap-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-1)] px-6 py-16 text-center">
+      <p className="text-sm text-[var(--color-severity-high)]">
+        Could not load {what} — the API is unreachable.
+      </p>
+      <p className="text-xs text-[var(--color-text-lo)]">Reload the page once it is back.</p>
     </div>
   );
 }

@@ -187,6 +187,10 @@ class TimelinePhaseOut(BaseModel):
     entity_type: str
     entity_value: str
     confidence: float
+    # False when no isotonic calibrator was fitted for this detector, so `confidence` is
+    # `clamp01(raw_score)` — a raw detector score, not a probability. The UI must not render an
+    # uncalibrated score as a confidence percentage; see `app.graph.timeline.TimelinePhase`.
+    calibrated: bool
     mitre_technique: str | None
 
 

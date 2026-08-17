@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import math
 import uuid
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Final, Literal
@@ -69,7 +70,9 @@ __all__ = [
     "PercentileResult",
     "ScopeContactCount",
     "contact_counts",
+    "contact_counts_many",
     "percentile_for",
+    "percentiles_for_many",
 ]
 
 
@@ -155,6 +158,10 @@ def percentile_for(
     Missing profile row and `n_windows < MIN_WINDOWS_FOR_BASELINE` are handled identically —
     both are "not enough history to trust a percentile" — the only difference visible to the
     caller is `n_windows` (0 for a missing row).
+
+    Resolving many entities of the same `(entity_type, metric)` at once? Use
+    `percentiles_for_many` — it is this function's exact semantics over one query instead of
+    one query per entity.
     """
     with tenant_scope(session, tenant_id):
         profile = session.execute(
@@ -165,6 +172,69 @@ def percentile_for(
             )
         ).scalar_one_or_none()
 
+    return _percentile_from_profile(
+        profile, entity_type=entity_type, entity_value=entity_value, metric=metric, value=value
+    )
+
+
+def percentiles_for_many(
+    session: Session,
+    tenant_id: uuid.UUID,
+    entity_type: str,
+    metric: str,
+    values: Mapping[str, float],
+) -> dict[str, PercentileResult]:
+    """`percentile_for` for a whole set of entity values of one `(entity_type, metric)`, in a
+    single `WHERE entity_value IN (...)` query instead of one round trip per entity.
+
+    Semantically identical to calling `percentile_for` in a loop — both paths hand the same
+    profile row (or `None`) to the same `_percentile_from_profile` — but a view resolving 20
+    entities pays one network round trip rather than 20. That distinction is not academic
+    against a managed Postgres a region away, where the round trip, not the query, is the cost.
+
+    Every key of `values` is present in the returned mapping: an entity with no profile row
+    resolves to the same `insufficient_history` result `percentile_for` returns for a miss, so
+    a caller never has to distinguish "absent from the result" from "no baseline".
+    """
+    if not values:
+        return {}
+
+    with tenant_scope(session, tenant_id):
+        profiles = (
+            session.execute(
+                select(BaselineProfile).where(
+                    BaselineProfile.entity_type == entity_type,
+                    BaselineProfile.metric == metric,
+                    BaselineProfile.entity_value.in_(list(values)),
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+    by_value = {p.entity_value: p for p in profiles}
+    return {
+        entity_value: _percentile_from_profile(
+            by_value.get(entity_value),
+            entity_type=entity_type,
+            entity_value=entity_value,
+            metric=metric,
+            value=value,
+        )
+        for entity_value, value in values.items()
+    }
+
+
+def _percentile_from_profile(
+    profile: BaselineProfile | None,
+    *,
+    entity_type: str,
+    entity_value: str,
+    metric: str,
+    value: float,
+) -> PercentileResult:
+    """The pure half of `percentile_for`: profile row (or `None`) -> result. Shared verbatim
+    with `percentiles_for_many` so the batch path can never drift from the single-entity one."""
     if profile is None:
         return PercentileResult(
             entity_type=entity_type,
@@ -259,15 +329,62 @@ def contact_counts(session: Session, tenant_id: uuid.UUID, user: str, domain: st
     contacted but this particular user never has reports `user.contact_count == 0,
     user.is_first_contact == True` alongside a non-zero `org.contact_count` -- exactly the "zero
     for Alice, ... four org-wide" case the migration doc names.
-    """
-    department = department_for_user(user)
 
+    Resolving many pairs at once? Use `contact_counts_many` — same semantics, one query for the
+    whole set instead of one per pair.
+    """
     with tenant_scope(session, tenant_id):
         rows = (
             session.execute(select(BaselineContact).where(BaselineContact.domain == domain))
             .scalars()
             .all()
         )
+
+    return _contacts_from_rows(rows, user=user, domain=domain)
+
+
+def contact_counts_many(
+    session: Session, tenant_id: uuid.UUID, pairs: Iterable[tuple[str, str]]
+) -> dict[tuple[str, str], ContactCounts]:
+    """`contact_counts` over many `(user, domain)` pairs, in one `WHERE domain IN (...)` query.
+
+    The single-pair form already fetches *every* scope row for its domain and filters in
+    process, so batching costs nothing extra per domain — a view asking about 20 users across
+    27 domains issues one query here instead of up to 540. Keyed by the `(user, domain)` tuple
+    exactly as passed; duplicate pairs collapse to one entry.
+    """
+    wanted = list(dict.fromkeys(pairs))
+    if not wanted:
+        return {}
+
+    domains = {domain for _, domain in wanted}
+    with tenant_scope(session, tenant_id):
+        rows = (
+            session.execute(
+                select(BaselineContact).where(BaselineContact.domain.in_(sorted(domains)))
+            )
+            .scalars()
+            .all()
+        )
+
+    rows_by_domain: dict[str, list[BaselineContact]] = {domain: [] for domain in domains}
+    for row in rows:
+        rows_by_domain.setdefault(row.domain, []).append(row)
+
+    return {
+        (user, domain): _contacts_from_rows(
+            rows_by_domain.get(domain, ()), user=user, domain=domain
+        )
+        for user, domain in wanted
+    }
+
+
+def _contacts_from_rows(
+    rows: Iterable[BaselineContact], *, user: str, domain: str
+) -> ContactCounts:
+    """The pure half of `contact_counts`: this domain's scope rows -> the three-scope result.
+    Shared verbatim with `contact_counts_many` so the batch path cannot drift."""
+    department = department_for_user(user)
     by_scope = {(r.scope, r.scope_value): r for r in rows}
 
     user_row = by_scope.get(("user", user))

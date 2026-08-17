@@ -1,84 +1,47 @@
-"use client";
-
 /**
  * change 10 Level 1 ("what happened"): the executive summary, over change 9's deterministic
  * overview stats — "an analyst should understand the file in ten seconds." Path A (change 14),
- * `POST /api/analyses/{id}/narrate`, one LLM call.
+ * `app.agent.orchestrator.narrate_analysis`, one LLM call.
  *
- * Deliberately a click, not an automatic fetch on page load: `NarrationResult` is not persisted
- * server-side (`backend/app/schemas/overview.py`'s own module docstring — no schema for it
- * exists yet, out of this milestone's ownership to add), so every call is a real, unrepeated
- * spend (CLAUDE.md: "cost is real per upload"). An automatic call here would re-spend on every
- * navigation back to this page; a button, mirroring `RetryButton`'s pattern, spends exactly
- * once per analyst click.
+ * Renders on load, with no button and no fetch of its own. The `triage` stage has always made
+ * this call once per analysis; it now persists the result to `analyses.narrative*`, so the
+ * summary the analyst reads is the one the pipeline already generated and paid for. This used
+ * to be a "Generate executive summary" button precisely because that result was discarded —
+ * the only way to see a narrative was to buy a second one, and it was lost again on reload.
+ *
+ * A server component: there is nothing to interact with, and the text arrives with the
+ * overview payload the page already fetches.
  */
-import { useCallback, useState } from "react";
-import { apiFetch, ApiError } from "@/lib/api/client";
-import type { AnalysisNarrateResponse } from "@/lib/api/types";
-import { formatUsd } from "@/lib/format";
+import type { StoredNarrative } from "@/lib/api/types";
+import { formatDate, formatUsd } from "@/lib/format";
 
-export function ExecutiveSummary({ analysisId }: { analysisId: string }) {
-  const [state, setState] = useState<"idle" | "loading" | "error">("idle");
-  const [result, setResult] = useState<AnalysisNarrateResponse | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-
-  const generate = useCallback(async () => {
-    setState("loading");
-    setMessage(null);
-    try {
-      const res = await apiFetch<AnalysisNarrateResponse>(`/api/analyses/${analysisId}/narrate`, {
-        method: "POST",
-      });
-      setResult(res);
-      setState("idle");
-    } catch (err: unknown) {
-      setState("error");
-      setMessage(
-        err instanceof ApiError
-          ? err.status === 503
-            ? "The Narrator is not configured (no Anthropic API key set)."
-            : err.message
-          : "Could not reach the API.",
-      );
-    }
-  }, [analysisId]);
-
-  if (result) {
+export function ExecutiveSummary({ narrative }: { narrative: StoredNarrative | null }) {
+  if (!narrative) {
     return (
-      <div className="flex flex-col gap-2">
-        <p className="max-w-[68ch] font-serif text-[17px] leading-[1.65] text-[var(--color-text-hi)]">
-          {result.executive_summary}
-        </p>
-        <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--color-text-lo)]">
-          {!result.citation_valid && (
-            <span className="text-[var(--color-severity-high)]">
-              {result.invalid_citations.length} claim{result.invalid_citations.length === 1 ? "" : "s"} failed
-              citation verification.
-            </span>
-          )}
-          <span>{result.model}</span>
-          <span>{formatUsd(result.cost_usd)}</span>
-          <span>{result.latency_ms}ms</span>
-        </div>
-      </div>
+      <p className="text-sm text-[var(--color-text-mid)]">
+        No executive summary — the Narrator has not run for this analysis yet. It runs
+        automatically as part of the triage stage.
+      </p>
     );
   }
 
   return (
-    <div className="flex flex-col items-start gap-2">
-      <button
-        type="button"
-        onClick={generate}
-        disabled={state === "loading"}
-        className="rounded-md border border-[var(--color-border)] px-3 py-1.5 text-xs font-medium text-[var(--color-text-hi)] transition-colors hover:bg-[var(--color-surface-2)] disabled:opacity-50"
-      >
-        {state === "loading" ? "Generating…" : "Generate executive summary"}
-      </button>
-      {state === "error" && message && (
-        <p role="alert" className="text-xs text-[var(--color-severity-high)]">
-          {message}
-        </p>
-      )}
+    <div className="flex flex-col gap-2">
+      <p className="max-w-[68ch] font-serif text-[17px] leading-[1.65] text-[var(--color-text-hi)]">
+        {narrative.executive_summary}
+      </p>
+      <div className="flex flex-wrap items-center gap-3 text-xs text-[var(--color-text-lo)]">
+        {narrative.citation_valid === false && (
+          // CLAUDE.md rule 6: an unverified claim is flagged, never silently rendered as fact.
+          <span className="text-[var(--color-severity-high)]">
+            {narrative.invalid_citation_count} claim
+            {narrative.invalid_citation_count === 1 ? "" : "s"} failed citation verification
+          </span>
+        )}
+        {narrative.model && <span>{narrative.model}</span>}
+        {narrative.cost_usd !== null && <span>{formatUsd(narrative.cost_usd)}</span>}
+        {narrative.generated_at && <span>generated {formatDate(narrative.generated_at)}</span>}
+      </div>
     </div>
   );
 }

@@ -97,7 +97,23 @@ function TimelineRow({ phase, last }: { phase: TimelinePhaseOut; last: boolean }
             </span>
           )}
           {phase.detector_key && <span className="font-mono">{phase.detector_key}</span>}
-          {hasConfidence && <span>confidence {formatScore(phase.confidence)}</span>}
+          {hasConfidence &&
+            (phase.calibrated ? (
+              <span>confidence {formatScore(phase.confidence)}</span>
+            ) : (
+              // An uncalibrated detector's `confidence` is `clamp01(raw_score)` — a raw score,
+              // not a probability, and one that pins to exactly 1.0 whenever the raw score
+              // reaches 1. Labelling that "confidence 100%" tells the analyst the system is
+              // certain when it has never been calibrated at all, so the uncalibrated case is
+              // named as what it is instead.
+              <span
+                className="text-[var(--color-text-lo)]"
+                title="No isotonic calibrator is fitted for this detector, so this is a raw detector score clamped to [0,1] — not a calibrated probability. Comparing it against a calibrated detector's confidence is not meaningful."
+              >
+                raw score {formatScore(phase.confidence)}
+                <span className="ml-1 uppercase tracking-wide">uncalibrated</span>
+              </span>
+            ))}
           <span>
             {phase.event_ids.length} event{phase.event_ids.length === 1 ? "" : "s"}
           </span>
