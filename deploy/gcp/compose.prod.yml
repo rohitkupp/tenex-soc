@@ -47,13 +47,28 @@ x-worker-env: &worker-env
   LOG_LEVEL: info
 
 # Same shared shape as docker-compose.yml's x-worker-defaults — see that file's comment.
-# No source bind-mount here (prod images are the artifact, per this file's header).
+# No *source* bind-mount here (prod images are the artifact, per this file's header).
+#
+# `model_artifacts` is the exception, and deliberately a named volume rather than either a
+# bind-mount or something baked into the image. Trained L3 artifacts are generated state, not
+# source: `backend/data/models/` is gitignored, so `ship.sh`'s `git archive HEAD` cannot carry
+# them, and the image build context therefore never contains them either. Before change 12 this
+# was invisible — DEMO_MODE meant nothing loaded a model. Now `detect` hard-fails without a
+# `feature_manifest.json`, and it failed exactly that way on the first real deploy after the
+# migration: parse produced 3,358 events and the stage behind it died on a missing file.
+#
+# It must be shared, not per-service: training runs in one container and `detector`/`agent` are
+# the ones that read the result, so anything written into a single container's writable layer is
+# both invisible to them and lost on the next `up --build`. Provision once with
+# `docker compose exec api python -m app.detection.ml.train`; the volume outlives rebuilds.
 x-worker-defaults: &worker-defaults
   build:
     context: ../../backend
     dockerfile: Dockerfile
   restart: unless-stopped
   environment: *worker-env
+  volumes:
+    - model_artifacts:/app/data/models
   depends_on:
     rabbitmq: {condition: service_healthy}
     minio: {condition: service_healthy}
@@ -79,6 +94,8 @@ services:
     restart: unless-stopped
     environment: *worker-env
     expose: ["8000"]
+    volumes:
+      - model_artifacts:/app/data/models
     depends_on:
       rabbitmq: {condition: service_healthy}
       minio: {condition: service_healthy}
@@ -168,3 +185,6 @@ volumes:
   rabbitmq_data:
   minio_data:
   redis_data:
+  # Trained L3 artifacts. Shared by api + every worker, and survives `up --build` —
+  # see the x-worker-defaults comment for why this is state rather than source.
+  model_artifacts:
