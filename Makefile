@@ -54,7 +54,10 @@ gen-data-quick: ## Small corpus, no baseline — for a fast local check
 	$(BACKEND) python -m datagen split --out data --files 20 --skip-baseline
 
 train: ## Train all models, writing artifacts to backend/data/models/
-	$(BACKEND) python -m app.detection.train
+	# `app.detection.train` never existed — this target has always failed with
+	# ModuleNotFoundError. The real entrypoints are the two below.
+	$(BACKEND) python -m app.detection.evidence.dga_train
+	$(BACKEND) python -m app.detection.ml.train
 
 eval: ## Run the golden dataset; exits 1 on regression
 	$(BACKEND) python -m evals.run

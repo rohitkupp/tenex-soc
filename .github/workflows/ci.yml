@@ -99,7 +99,7 @@ jobs:
   # Postgres (the real L1 Sigma rules and L2 events_dao have no DB-free code path — see
   # backend/evals/pipeline.py's module docstring) but never an ANTHROPIC_API_KEY: agent metrics
   # degrade to "not measured" (backend/evals/metrics/agent.py) rather than attempting a live
-  # call, because no key is configured here either (see this workflow's top-level `env`).
+  # call, because no key is configured anywhere in this workflow (see the note above `jobs:`).
   # `app/agent/orchestrator.py`/`verifier.py` exist; the gap is recorded tests/fixtures/llm/
   # fixtures to replay (a one-time task needing a live key, out of scope for CI) — see
   # evals/metrics/agent.py's module docstring. The one agent-dependent metric change 25 names as
@@ -145,6 +145,15 @@ jobs:
 
       - name: Migrate
         run: alembic upgrade head
+
+      # `backend/data/models/` is gitignored on purpose (see .gitignore's own note — the ECOD
+      # and LOF artifacts embed their training matrices and are too large to commit), so a fresh
+      # runner has no artifacts at all and `evals.run` died on the missing DGA weights before
+      # evaluating anything. The gate has to fit what it grades.
+      - name: Fit detector artifacts
+        run: |
+          python -m app.detection.evidence.dga_train
+          python -m app.detection.ml.train
 
       - name: Golden dataset regression gate
         run: python -m evals.run

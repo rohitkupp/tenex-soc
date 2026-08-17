@@ -417,11 +417,7 @@ def _compute_notable_users(
     contacts = contact_counts_many(
         db,
         tenant_id,
-        (
-            (user.value, domain)
-            for user in ranked
-            for domain in domains_by_user.get(user.value, ())
-        ),
+        ((user.value, domain) for user in ranked for domain in domains_by_user.get(user.value, ())),
     )
 
     notable: list[NotableUser] = []
