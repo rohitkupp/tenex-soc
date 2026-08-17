@@ -508,7 +508,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     fit_p = sub.add_parser(
-        "fit-ml", help="Fit ml.{iforest,mahalanobis,ecod,peer_group} calibrators"
+        "fit-ml", help="Fit ml.{iforest,mahalanobis,ecod,peer_group,eif,kth_nn} calibrators"
     )
     fit_p.add_argument("--log-level", default="info")
 

@@ -2063,8 +2063,16 @@ export interface components {
          *     verbatim — the UI dispatches on `detector_key` to render it (docs/13 M15: "No raw JSON
          *     rendered anywhere in the UI"), so narrowing it to a union here would only make the server
          *     the second place that has to learn about every new detector.
+         *
+         *     `calibrated` (docs/04 §Fusion "Calibration provenance") is `false` when `confidence` is the
+         *     `clamp01(raw_score)` fallback rather than a real isotonic calibrator's output — surfaced so
+         *     the UI can render "unmeasured confidence" instead of a number that looks exactly like a
+         *     genuinely calibrated model's most confident possible output (see `app.models.signal.Signal`'s
+         *     module docstring for why that distinction matters).
          */
         SignalOut: {
+            /** Calibrated */
+            calibrated: boolean;
             /** Confidence */
             confidence: number;
             /**

@@ -194,7 +194,11 @@ def _calibration_feature(detector_key: str, raw_score: float) -> float:
 
 def _recalibrate_signals(conn: Any, *, analysis_id: Any, tenant_id: Any) -> int:
     """One calibrated-confidence pass over every `signals` row this stage just wrote (any
-    layer) — see module docstring "Calibration"."""
+    layer) — see module docstring "Calibration". Also stamps `calibrated` (docs/04 §Fusion
+    "Calibration provenance", `app.models.signal.Signal`'s own docstring): `CalibratorStore.
+    has(detector_key)` is checked at the same moment `.calibrate()` is called, so a signal's
+    provenance always reflects whether *this* pass found a fitted calibrator for it, not
+    whether one exists today by the time something later reads the row."""
     store = CalibratorStore()
     rows = conn.execute(
         text(
@@ -209,11 +213,18 @@ def _recalibrate_signals(conn: Any, *, analysis_id: Any, tenant_id: Any) -> int:
             "confidence": store.calibrate(
                 detector_key, _calibration_feature(detector_key, raw_score)
             ),
+            "calibrated": store.has(detector_key),
         }
         for signal_id, detector_key, raw_score in rows
     ]
     if updates:
-        conn.execute(text("UPDATE signals SET confidence = :confidence WHERE id = :id"), updates)
+        conn.execute(
+            text(
+                "UPDATE signals SET confidence = :confidence, calibrated = :calibrated "
+                "WHERE id = :id"
+            ),
+            updates,
+        )
     return len(updates)
 
 

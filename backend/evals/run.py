@@ -222,23 +222,17 @@ def main(argv: list[str] | None = None) -> int:
             "this harness can run at all. Every one of the eight golden scenarios hit this at "
             "this harness's 120-user org size — a real, reproducible bug filed here, not "
             "silently avoided.",
-            "**`app.graph.pipeline_demo._ml_model_pairs` still scores the pre-migration-19 L3 "
-            "roster (`ml.iforest`/`ml.mahalanobis`/`ml.ecod`/`ml.peer_group`), not "
-            "`SHIPPED_MODEL_FIELDS` (`ml.eif`/`ml.kth_nn`/`ml.peer_group`) — a stale hardcoded "
-            "list, the same class of bug fixed in this run for `known_detector_registry` and "
-            "`app.detection.calibration._model_pairs`. Left unfixed here because `evals/"
-            "pipeline.py`'s own module docstring states `app/graph/pipeline_demo.py` is out of "
-            "this harness's ownership to modify, and because `_ml_model_pairs` is shared between "
-            "signal emission (which must stay faithful to what production actually fuses) and "
-            "calibration-sample collection (which should cover all six) — widening it in place "
-            "would need splitting that shared function, a larger change than this pass makes. "
-            "Net effect: `ml.eif`/`ml.kth_nn` never appear in section 3's live-pipeline detection "
-            "breakdown or per-detector/per-layer aggregates (only in the L3 benchmark table and "
-            "the false-positive-rate table above, both scored independently of that function), "
-            "and this run's simulated incident-formation/fusion still credits `ml.iforest`/"
-            "`ml.mahalanobis`/`ml.ecod` instead of the models production actually ships. Filed "
-            "here rather than silently worked around; fixing it for real needs sign-off to touch "
-            "`app/graph/pipeline_demo.py`.",
+            "**Resolved: `app.graph.pipeline_demo._ml_model_pairs` used to score the "
+            "pre-migration-19 L3 roster** (`ml.iforest`/`ml.mahalanobis`/`ml.ecod`/"
+            "`ml.peer_group`) instead of `SHIPPED_MODEL_FIELDS` (`ml.eif`/`ml.kth_nn`/"
+            "`ml.peer_group`) — the same class of stale-hardcoded-list bug already fixed for "
+            "`known_detector_registry` and `app.detection.calibration._model_pairs`, previously "
+            "left unfixed here for lack of sign-off to touch `app/graph/pipeline_demo.py`. Now "
+            "reads `SHIPPED_MODEL_FIELDS` directly (`app.detection.ml.detect`'s own roster "
+            "constant), so `_run_l3`'s signal emission and `fit_layer_calibrators`'s calibration-"
+            "sample collection both stay faithful to what production actually ships, and "
+            "`ml.eif`/`ml.kth_nn` now appear in section 3's live-pipeline breakdown and get a "
+            "fitted calibrator like every other shipped model.",
         ],
     )
     RESULTS_MD_PATH.write_text(md, encoding="utf-8")

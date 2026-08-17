@@ -317,7 +317,17 @@ def _build_incident_context_block(ctx: AgentContext) -> str:
         title, severity, fused_score = incident.title, incident.severity, incident.fused_score
 
     total_signal_count = len(all_signals)
-    signals = sorted(all_signals, key=lambda s: s.confidence, reverse=True)[:MAX_SIGNALS_IN_CONTEXT]
+    # Calibrated signals rank ahead of uncalibrated ones, confidence only breaking ties within
+    # each group (docs/04 §Fusion "Calibration provenance") -- an uncalibrated `clamp01(raw_
+    # score)` fallback can be numerically identical to a genuinely calibrated model's most
+    # confident output (`signal.stl_residual`'s unbounded robust-z saturates at exactly 1.0), so
+    # sorting on `confidence` alone here would let a fallback-inflated signal silently push a
+    # real one out of the top `MAX_SIGNALS_IN_CONTEXT` slots the Analyst actually sees. This does
+    # not touch `Incident.anomaly_confidence` (CLAUDE.md rule 5: the LLM never sets priority) --
+    # only which of an incident's own signals are worth spending a context slot on.
+    signals = sorted(all_signals, key=lambda s: (s.calibrated, s.confidence), reverse=True)[
+        :MAX_SIGNALS_IN_CONTEXT
+    ]
     timeline_phases = build_timeline(list(signals))
 
     all_event_ids: set[int] = set()
@@ -333,6 +343,7 @@ def _build_incident_context_block(ctx: AgentContext) -> str:
             "detector_key": s.detector_key,
             "detector_layer": s.detector_layer,
             "confidence": s.confidence,
+            "calibrated": s.calibrated,
             "entity_type": s.entity_type,
             "entity_value": ctx.pseudonymize_value(s.entity_value, s.entity_type),
             "mitre_technique": s.mitre_technique,

@@ -9,6 +9,21 @@ empty or detector-irrelevant row set (an all-identity-source analysis with no `d
 simply produces zero beaconing/DGA/rarity/url-path drafts), so there is no branching here on
 which sources are present.
 
+## `collect_signal_drafts` — the six extractors, named exactly once
+
+`run_evidence_layer` calls all six `detect_*` extractors through `collect_signal_drafts` below
+rather than listing them inline, and that function is the single place in this codebase that
+list is allowed to exist. `app.graph.pipeline_demo._run_l2` (the M10 offline verification
+harness's own L2 runner, needed because that harness persists signals itself rather than reusing
+this module's `persist_signals` call) calls the same function rather than carrying its own
+hand-typed copy of the six extractors — a real, measured bug this docstring records rather than
+hides: an earlier version of `_run_l2` listed only four of the six (missing
+`detect_stl_residual`/`detect_url_path`, added after that function was first written), which
+silently meant `signal.stl_residual` and `signal.url_path_entropy` could never appear in a
+`pipeline_demo` run and — because `fit_layer_calibrators` samples training data via that same
+function — could never get a fitted calibrator either. Reusing this module's own extractor list
+is what makes that class of drift structurally impossible rather than merely fixed once.
+
 ## Two outputs, one pass over the rows
 
 `signals` rows and the existing detection pipeline still exist (fusion, correlation, the incident
@@ -26,6 +41,7 @@ needs them next.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy.orm import Session
@@ -42,7 +58,8 @@ from app.detection.evidence.constants import (
     SIGNAL_URL_PATH,
 )
 from app.detection.evidence.dga import DGAArtifact, detect_dga, load_artifact, raw_evidence_dga
-from app.detection.evidence.events_dao import fetch_event_rows, persist_signals
+from app.detection.evidence.drafts import SignalDraft
+from app.detection.evidence.events_dao import EventRow, fetch_event_rows, persist_signals
 from app.detection.evidence.payload import EvidencePayload, RawEvidence, finalize_evidence
 from app.detection.evidence.rarity import detect_rarity, raw_evidence_rarity
 from app.detection.evidence.resolve_evidence import resolve_evidence
@@ -51,9 +68,25 @@ from app.detection.evidence.url_path import detect_url_path, raw_evidence_url_en
 from app.models.base import tenant_scope
 from app.models.signal import Signal
 
-__all__ = ["EvidenceRunSummary", "run_evidence_layer"]
+__all__ = ["EvidenceRunSummary", "collect_signal_drafts", "run_evidence_layer"]
 
 log = get_logger(__name__)
+
+
+def collect_signal_drafts(
+    rows: Sequence[EventRow], *, dga_artifact: DGAArtifact
+) -> list[SignalDraft]:
+    """All six L2 extractors' `SignalDraft`s over the same `rows` -- the single place this list
+    is named (module docstring). `run_evidence_layer` and `app.graph.pipeline_demo._run_l2` both
+    call this rather than each carrying their own copy."""
+    return [
+        *detect_beaconing(rows),
+        *detect_dga(rows, artifact=dga_artifact),
+        *detect_burst(rows),
+        *detect_rarity(rows),
+        *detect_stl_residual(rows),
+        *detect_url_path(rows),
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,14 +122,7 @@ def run_evidence_layer(
 
         artifact = dga_artifact if dga_artifact is not None else load_artifact()
 
-        drafts = [
-            *detect_beaconing(rows),
-            *detect_dga(rows, artifact=artifact),
-            *detect_burst(rows),
-            *detect_rarity(rows),
-            *detect_stl_residual(rows),
-            *detect_url_path(rows),
-        ]
+        drafts = collect_signal_drafts(rows, dga_artifact=artifact)
 
         signals: list[Signal] = persist_signals(
             session, analysis_id=analysis_id, tenant_id=tenant_id, drafts=drafts

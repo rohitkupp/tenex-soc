@@ -2954,8 +2954,12 @@
         "type": "object"
       },
       "SignalOut": {
-        "description": "docs/02's `signals` table. `explanation` is the detector's own payload, passed through\nverbatim \u2014 the UI dispatches on `detector_key` to render it (docs/13 M15: \"No raw JSON\nrendered anywhere in the UI\"), so narrowing it to a union here would only make the server\nthe second place that has to learn about every new detector.",
+        "description": "docs/02's `signals` table. `explanation` is the detector's own payload, passed through\nverbatim \u2014 the UI dispatches on `detector_key` to render it (docs/13 M15: \"No raw JSON\nrendered anywhere in the UI\"), so narrowing it to a union here would only make the server\nthe second place that has to learn about every new detector.\n\n`calibrated` (docs/04 \u00a7Fusion \"Calibration provenance\") is `false` when `confidence` is the\n`clamp01(raw_score)` fallback rather than a real isotonic calibrator's output \u2014 surfaced so\nthe UI can render \"unmeasured confidence\" instead of a number that looks exactly like a\ngenuinely calibrated model's most confident possible output (see `app.models.signal.Signal`'s\nmodule docstring for why that distinction matters).",
         "properties": {
+          "calibrated": {
+            "title": "Calibrated",
+            "type": "boolean"
+          },
           "confidence": {
             "title": "Confidence",
             "type": "number"
@@ -3043,6 +3047,7 @@
           "detector_layer",
           "raw_score",
           "confidence",
+          "calibrated",
           "entity_type",
           "entity_value",
           "window_start",

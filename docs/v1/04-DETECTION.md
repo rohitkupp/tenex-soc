@@ -588,6 +588,100 @@ record the LLM's severity opinion separately and report the disagreement rate as
 Emit a reliability diagram (predicted vs. observed precision, 10 bins) in the eval report and
 on the `/models` page. Brier score is the headline number.
 
+### Calibration provenance, and why the fallback needed a flag
+
+`CalibratorStore.calibrate()` falls back to `clamp01(raw_score)` for any detector with no fitted
+isotonic calibrator (never seen during fitting, or too few/degenerate samples —
+`MIN_SAMPLES_TO_FIT=8`). That fallback is permanent policy, not a gap to eventually close: new
+detectors ship before their first fit, and some genuinely never accumulate enough labeled samples
+in a given corpus (§"Calibration roster invariant" below has the full, checked list).
+
+The fallback was silently *unsafe*, not merely interim. Several detectors' raw scores are not
+naturally bounded to `[0, 1]` — `signal.stl_residual` emits an unbounded robust-z — so `clamp01`
+on an uncalibrated row can saturate at exactly `1.0`, indistinguishable by number alone from a
+genuinely calibrated model's most confident possible output. Measured on
+`train_0002_low_and_slow_exfil.log` (8,079 events, 10,800 signals) before this fix: **64.0%** of
+all signals sat at confidence ≥ 0.99, and the top 30 highest-confidence slots of the file's
+largest incident (3,530 contributing signals) were **28/30 `signal.stl_residual`** (uncalibrated,
+mean confidence 0.77, *median exactly 1.0*) and 2/30 `ml.peer_group` — every Sigma/L1 signal and
+every other L2/L3 detector on that incident pushed out of the Analyst's context window by a
+fallback number that only *looked* more confident than they did.
+
+**Fix: `signals.calibrated` (boolean, migration `signals_calibrated_provenance`).** Set once, at
+the same call site that computes `confidence` (`CalibratorStore.has(detector_key)`, checked
+before `.calibrate()` runs) — never recomputed later, since provenance is a fact about *when the
+row was written*, not something safely re-derivable from today's calibrator roster (a
+calibrator can be added, or its artifact lost, after the row was persisted). Existing rows were
+backfilled to `False` at migration time: their true historical provenance isn't reconstructable,
+and "unmeasured until proven otherwise" is the direction it's safe to be wrong in.
+`app.agent.orchestrator._build_incident_context_block`'s top-30 selection now sorts
+`(calibrated desc, confidence desc)` — an uncalibrated fallback can no longer outrank a
+calibrated signal for a context slot, only tie-break against other uncalibrated ones. `SignalOut`
+(docs/09) exposes the flag so the UI can render "unmeasured confidence" instead of a number
+indistinguishable from a genuinely high-confidence signal. This does **not** touch
+`Incident.anomaly_confidence` (incident-level, LLM-immutable, unchanged) — only which of an
+incident's *own* signals earn one of the Analyst's 30 context slots.
+
+**Re-measured after the fix** (same file, same seed, `signal.stl_residual` now genuinely fit —
+see roster below): **55.6%** of signals still sit at confidence ≥ 0.99 — improved, not
+eliminated, exactly as expected (coverage of the fallback is not the same problem as quality of
+every calibrator). `signal.stl_residual` itself: mean confidence 0.77 → **0.006**, median 1.0 →
+**0.0005**, now genuinely discriminating rather than saturating. The largest incident's top-30
+flipped from 28/30 `signal.stl_residual` to **0/30** — replaced by `ml.peer_group` (28/30),
+`ml.kth_nn` (1/30), `ml.eif` (1/30), all genuinely calibrated. The remaining saturation is a
+*different, disclosed* problem: the three shipped L3 models' own calibrators output a
+near-ceiling confidence (mean 0.997–0.999) across nearly every entity-window on this corpus, so
+they now correctly dominate the top-30 by real calibrated confidence rather than by fallback
+artifact — but that dominance itself means no L1/L2 signal on this incident earns a context slot
+either, a quality question this fix does not claim to have solved. `signal.burst`'s calibrator is
+separately known to be near-flat (identical output at raw `z=4.05` and `z=1e6`), and
+`sigma.non_browser_user_agent`'s was fit on `n_positive=1` of 12,418 — both real, both open.
+
+### Calibration roster invariant — `docs/v2_migration` change 19's own lesson, twice more
+
+`app.graph.pipeline_demo.fit_layer_calibrators` (the offline harness that fits every L1/L2/L3/L5
+calibrator into the shared store) used to hand-list its own detector set in two places, both of
+which had silently drifted from the codebase's real, single sources of truth:
+
+- `_run_l2` listed four of the six L2 extractors (missing `detect_stl_residual`/
+  `detect_url_path`, added to the evidence package after this function was first written) —
+  `signal.stl_residual` and `signal.url_path_entropy` could never be sampled for calibration,
+  only ever fall back.
+- `_ml_model_pairs` listed the *pre-migration-19* L3 roster (`ml.iforest`/`ml.mahalanobis`/
+  `ml.ecod`/`ml.peer_group`) instead of `SHIPPED_MODEL_FIELDS` (`ml.eif`/`ml.kth_nn`/
+  `ml.peer_group`) — the same class of bug already fixed once for `app.detection.calibration.
+  _model_pairs` and `evals.metrics.detection.known_detector_registry`, independently
+  reintroduced here because the three functions never shared a source.
+
+Both now read from the same single source every other caller uses. `_run_l2` calls
+`app.detection.evidence.run.collect_signal_drafts` — the same function `run_evidence_layer` (the
+*production* L2 stage) calls, so `_run_l2` cannot drift from production's own extractor list
+again: there is only one list. `_ml_model_pairs` reads `SHIPPED_MODEL_FIELDS` directly. The
+benchmark-only models (`ml.iforest`/`ml.mahalanobis`/`ml.ecod`) are deliberately *not* calibrated
+by this harness — they never emit a production signal (`score_entity_windows` only scores
+`SHIPPED_MODEL_FIELDS`), so a calibrator for them would sit unused here; `app.detection.
+calibration.recompare_l3` already benchmarks all six on its own held-out seed for that purpose.
+
+**Refit roster** (`python -m app.graph.pipeline_demo fit-calibrators`, docs/11's eight scenarios
++ FP-control + canary, 50k events each): 16 detectors, including `signal.stl_residual` for the
+first time. Nine sigma rules, `signal.url_path_entropy`, and (not production-reachable today)
+one graph feature remain without a fitted calibrator — every one checked and named, not silently
+missing:
+
+| detector_key | reason |
+|---|---|
+| `sigma.blocked_then_allowed` | fired, n=2 (< `MIN_SAMPLES_TO_FIT=8`) |
+| `sigma.large_post_to_new_domain` | fired, n=1 |
+| `signal.url_path_entropy` | fired (n=32), but every sample shared one label — isotonic needs both classes |
+| 8 further `sigma.*` rules (`anonymizer_proxy_avoidance_category`, `credentials_in_url`, `direct_to_ip_request`, `dlp_engine_triggered`, `executable_archive_download_new_domain`, `high_risk_score_allowed`, `malicious_url_category`, `threat_name_present`) | zero samples — none of the harness's eight scenarios happens to set that rule's trigger field to a matching value (spot-verified for two of these: the scenario logs' `dlpengine`/`threatname` columns exist but are blank on every row this harness's corpus produced, even though the generator module is *capable* of populating them — a corpus-coverage gap, not a rule bug, and out of this pass's scope to chase) |
+
+`tests/test_calibration_roster_invariant.py` pins this shut three ways: a DB-free test that
+`collect_signal_drafts` still calls all six extractors, a DB-free test that `_ml_model_pairs`
+still matches `SHIPPED_MODEL_FIELDS` exactly, and a broader test (skipped on a fresh checkout
+with no fitted calibrators — neither CI job populates the shared store) that every detector able
+to reach `signals` in production has a fitted calibrator or is on the checked exemption table
+above.
+
 
 ## L2 is now an evidence layer — `docs/v2_migration` change 2
 

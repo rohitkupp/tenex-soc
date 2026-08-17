@@ -52,12 +52,9 @@ from app.detection.calibration import (
     fit_calibrators,
     reliability_diagram,
 )
-from app.detection.evidence.beaconing import detect_beaconing
-from app.detection.evidence.burst import detect_burst
-from app.detection.evidence.dga import detect_dga
 from app.detection.evidence.dga import load_artifact as load_dga_artifact
 from app.detection.evidence.events_dao import fetch_event_rows
-from app.detection.evidence.rarity import detect_rarity
+from app.detection.evidence.run import collect_signal_drafts
 from app.detection.fusion import FusionInput, score_incident
 from app.detection.sigma.runner import run_rules as sigma_run_rules
 from app.graph.builder import (
@@ -152,15 +149,19 @@ def _run_l1(analysis_id: uuid.UUID, tenant_id: uuid.UUID) -> list[RawSignal]:
 
 
 def _run_l2(session: Session, analysis_id: uuid.UUID, tenant_id: uuid.UUID) -> list[RawSignal]:
+    """L2 signals for the demo path -- via `collect_signal_drafts`, the *same* single-source-of-
+    truth six-extractor list `app.detection.evidence.run.run_evidence_layer` (the live pipeline's
+    own L2 stage) calls, not a second hand-typed copy. This function used to list only four of
+    the six `detect_*` extractors (missing `detect_stl_residual`/`detect_url_path`, added to the
+    evidence package after this function was first written) -- since `fit_layer_calibrators`
+    below samples its training data through this same function, that meant `signal.stl_residual`
+    and `signal.url_path_entropy` could never get a fitted calibrator, silently, until the drift
+    was noticed and this function was pointed at the shared helper instead of its own list.
+    """
     with tenant_scope(session, tenant_id):
         rows = fetch_event_rows(session, analysis_id)
     artifact = load_dga_artifact()
-    drafts = [
-        *detect_beaconing(rows),
-        *detect_dga(rows, artifact=artifact),
-        *detect_burst(rows),
-        *detect_rarity(rows),
-    ]
+    drafts = collect_signal_drafts(rows, dga_artifact=artifact)
     return [
         RawSignal(
             detector_key=d.detector_key,
@@ -179,28 +180,38 @@ def _run_l2(session: Session, analysis_id: uuid.UUID, tenant_id: uuid.UUID) -> l
 
 
 def _ml_model_pairs(bundle: Any) -> list[tuple[str, Any]]:
-    """`[(detector_key, model), ...]` for every L3 model the *current*
-    `app.detection.ml.detect.MLModelBundle` exposes -- see
-    `app.detection.calibration._model_pairs`'s docstring for why this is read dynamically off
-    that package's own constants rather than hardcoded (it grew from three models to five during
-    this milestone's own development window, then back down to four when migration change 19 cut
-    the autoencoder)."""
+    """`[(detector_key, model), ...]` for every L3 model that actually SHIPS in production --
+    `app.detection.ml.detect.SHIPPED_MODEL_FIELDS` (docs/v2_migration change 19: EIF, kth-NN,
+    peer-group/LOF -- not Isolation Forest, ECOD, or Mahalanobis, which stay registered as
+    benchmarked-but-unshipped baselines).
+
+    This function used to hardcode the *pre-migration-19* roster (`ml.iforest`/`ml.mahalanobis`/
+    `ml.ecod`/`ml.peer_group`) -- a stale list that made `_run_l3` (this demo's "what would
+    actually get persisted as a signal" path) score three models production never ships while
+    silently never scoring `ml.eif`/`ml.kth_nn`, which it does. Because `fit_layer_calibrators`
+    collects its training samples through this same function (via `_run_l3_calibration_samples`),
+    the same drift meant `ml.eif`/`ml.kth_nn` could never get a fitted calibrator either -- both
+    consequences invisible until measured directly (see docs/04 §Fusion "Calibration roster
+    invariant").
+
+    `app.detection.calibration._model_pairs` is a distinct, separately-scoped function serving a
+    different purpose (`recompare_l3`'s benchmark, which needs every contender) and correctly
+    stays on the full six-model `ML_MODEL_FIELDS` -- this function reads `SHIPPED_MODEL_FIELDS`
+    directly rather than reusing or wrapping that one, since narrowing to "what ships" is exactly
+    the point here.
+    """
     from app.detection.ml import detect as ml_detect
 
-    return [
-        (ml_detect.ML_IFOREST, bundle.iforest),
-        (ml_detect.ML_MAHALANOBIS, bundle.mahalanobis),
-        (ml_detect.ML_ECOD, bundle.ecod),
-        (ml_detect.ML_PEER_GROUP, bundle.lof),
-    ]
+    return [(key, getattr(bundle, field)) for key, field in ml_detect.SHIPPED_MODEL_FIELDS.items()]
 
 
 def _run_l3(log_path: Path, line_to_event_id: dict[int, int]) -> tuple[list[RawSignal], Any, Any]:
-    """L3 signals for the demo path. Pre-filters on each model's own uncalibrated percentile
-    confidence (`SIGNAL_CONFIDENCE_THRESHOLD`, the same cheap gate `app.detection.ml.detect.
+    """L3 signals for the demo path, scored against the shipped roster only (`_ml_model_pairs`).
+    Pre-filters on each model's own uncalibrated percentile confidence
+    (`SIGNAL_CONFIDENCE_THRESHOLD`, the same cheap gate `app.detection.ml.detect.
     score_entity_windows` itself applies) *before* computing `explain_row` -- SHAP attribution is
     the expensive part of this loop, and computing it for every one of tens of thousands of
-    entity-window rows across all five models (instead of only the ~0.5% that clear the
+    entity-window rows across every model in the bundle (instead of only the ~0.5% that clear the
     threshold) is what made an earlier version of this function take 20+ minutes on a single
     50k-event scenario. Every other L1/L2 detector already pre-filters on its own raw score
     before producing a draft at all (beaconing's score threshold, burst's `|z| > 3.5`, ...); this
@@ -518,6 +529,11 @@ def run_scenario(
         for rs in all_raw:
             feature = _calibration_feature(rs.detector_key, rs.raw_score)
             confidence = calibrators.calibrate(rs.detector_key, feature)
+            # Calibration provenance (docs/04 §Fusion "Calibration provenance", `app.models.
+            # signal.Signal`'s own docstring) -- checked at the same moment `.calibrate()` runs,
+            # not derived later, for the same reason `app.pipeline.stages.detect.
+            # _recalibrate_signals` checks it inline rather than as a separate pass.
+            calibrated = calibrators.has(rs.detector_key)
             label = int(bool(malicious_event_ids & set(rs.evidence_event_ids)))
             reliability_samples.append((confidence, label))
 
@@ -528,6 +544,7 @@ def run_scenario(
                 detector_layer=rs.detector_layer,
                 raw_score=rs.raw_score,
                 confidence=confidence,
+                calibrated=calibrated,
                 entity_type=rs.entity_type,
                 entity_value=rs.entity_value,
                 window_start=rs.window_start,
