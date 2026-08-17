@@ -24,6 +24,7 @@
  * filters, sort order, scroll position — survives a round trip through another tab.
  */
 import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { LazyEvidenceTab } from "@/components/evidence/LazyEvidenceTab";
 
 export type AnalysisTabKey = "overview" | "incidents" | "events" | "evidence";
 
@@ -42,13 +43,13 @@ export function AnalysisTabs({
   overview,
   incidents,
   events,
-  evidence,
+  analysisId,
   counts,
 }: {
   overview: ReactNode;
   incidents: ReactNode;
   events: ReactNode;
-  evidence: (active: boolean) => ReactNode;
+  analysisId: string;
   counts?: Partial<Record<AnalysisTabKey, number>>;
 }) {
   const [active, setActive] = useState<AnalysisTabKey>("overview");
@@ -73,9 +74,11 @@ export function AnalysisTabs({
     overview,
     incidents,
     events,
-    // A render prop, not a node: the Evidence panel fetches its own (large, slow) payload and
-    // must not start until the analyst actually opens the tab.
-    evidence: evidence(active === "evidence"),
+    // Rendered here rather than handed in as a prop: the Evidence panel needs to know whether
+    // its tab is open (it fetches its own large, slow payload only once opened), and a server
+    // component cannot pass a function across the RSC boundary to compute that — functions are
+    // not serializable, which produced a server-side exception on every load of this page.
+    evidence: <LazyEvidenceTab analysisId={analysisId} active={active === "evidence"} />,
   };
 
   return (

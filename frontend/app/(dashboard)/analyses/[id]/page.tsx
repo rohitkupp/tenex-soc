@@ -20,7 +20,6 @@ import { TrafficStatsPanel } from "@/components/analyses/TrafficStatsPanel";
 import { AnalysisTabs } from "@/components/analyses/AnalysisTabs";
 import { IncidentQueue } from "@/components/incidents/IncidentQueue";
 import { EventExplorer } from "@/components/events/EventExplorer";
-import { LazyEvidenceTab } from "@/components/evidence/LazyEvidenceTab";
 import { Panel } from "@/components/ui/Panel";
 
 export const metadata: Metadata = { title: "Analysis — Tenex SOC Analyst" };
@@ -215,7 +214,7 @@ export default async function AnalysisDetailPage({
             <EventExplorer analysisId={analysis.id} initial={events} />
           )
         }
-        evidence={(active) => <LazyEvidenceTab analysisId={analysis.id} active={active} />}
+        analysisId={analysis.id}
       />
     </div>
   );
