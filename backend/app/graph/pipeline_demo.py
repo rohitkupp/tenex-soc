@@ -1,6 +1,6 @@
 """End-to-end M10 verification: parse -> events (Postgres) -> L1/L2/L3 detectors -> calibrate ->
 entity graph -> L5 graph features -> incidents -> fuse & severity -> title -> timeline ->
-recurrence -> persist.
+persist.
 
     python -m app.graph.pipeline_demo run --scenario c2_beaconing --seed 7 --events 50000
     python -m app.graph.pipeline_demo fit-calibrators
@@ -13,7 +13,7 @@ severities"). It reuses, read-only, every layer this milestone does not own
 future `app/pipeline` orchestrator would, and owns only the M10-specific glue: turning each
 layer's raw output into one common `RawSignal` shape, calibrating it
 (`app.detection.calibration`), building the graph (`app.graph.builder`), forming incidents
-(`app.graph.incidents`), scoring them (`app.detection.fusion`), titling, and linking recurrences.
+(`app.graph.incidents`), scoring them (`app.detection.fusion`), and titling them.
 
 **No `classify` stage, and no `train-classifier` command.** The pipeline used to run `L5 graph ->
 classify -> fuse` (docs/04's old ordering) via `app.graph.classifier`'s LightGBM technique
@@ -68,7 +68,6 @@ from app.graph.builder import (
 from app.graph.features import NodeFeatures, compute_node_features, graph_signals_for_incident
 from app.graph.incidents import IncidentCandidate, SignalRef, form_incidents
 from app.graph.ingest import IngestResult, ingest_log_file
-from app.graph.recurrence import canonical_text, embed_text, link_recurrence
 from app.graph.summary import summary_for_incident
 from app.graph.tags import compute_incident_tags
 from app.graph.timeline import build_timeline
@@ -431,8 +430,6 @@ class PersistedIncident:
     entity_keys: frozenset[EntityKey]
     n_signals: int
     evidence_event_ids: set[int]
-    recurrence_of: uuid.UUID | None
-    recurrence_similarity: float | None
     n_timeline_phases: int
     first_phase_summary: str | None
     # Deterministic pipeline outputs (this task): `app.graph.tags.compute_incident_tags` /
@@ -682,29 +679,11 @@ def run_scenario(
             evidence_ids: set[int] = set()
             for s in candidate.signals:
                 evidence_ids.update(s.evidence_event_ids)
-            # Event-level enrichment tags -> recurrence embedding text only. Distinct from
-            # `incident_tags` below -- see `app.pipeline.stages.correlate`'s identical rename for
-            # the same reason.
-            enrichment_tags: set[str] = set()
-            if evidence_ids:
-                stmt = select(Event.enrichment).where(Event.id.in_(evidence_ids))
-                for (enrichment,) in session.execute(stmt):
-                    enrichment_tags.update((enrichment or {}).get("tags", []))
-
-            text = canonical_text(
-                technique_ids=[s.mitre_technique for s in candidate.signals],
-                detector_keys=[s.detector_key for s in candidate.signals],
-                entity_types=[k[0] for k in candidate.entity_keys],
-                enrichment_tags=sorted(enrichment_tags),
-            )
-            embedding = embed_text(text)
-            link = link_recurrence(session, embedding)
-
             entity_ids = [
                 entity_key_to_id[k] for k in candidate.entity_keys if k in entity_key_to_id
             ]
 
-            incident_tags = compute_incident_tags(candidate.signals, is_recurrence=link is not None)
+            incident_tags = compute_incident_tags(candidate.signals)
             asset_events = _fetch_asset_events(session, evidence_ids)
             incident_tags = sorted({*incident_tags, *compute_asset_tags(asset_events)})
             incident_summary = summary_for_incident(
@@ -725,9 +704,6 @@ def run_scenario(
                 signal_ids=[s.signal_id for s in candidate.signals],
                 tags=incident_tags,
                 summary=incident_summary,
-                recurrence_of=link.recurrence_of if link else None,
-                recurrence_similarity=link.recurrence_similarity if link else None,
-                embedding=embedding,
             )
             session.add(incident_row)
             session.flush()
@@ -746,8 +722,6 @@ def run_scenario(
                     entity_keys=candidate.entity_keys,
                     n_signals=len(candidate.signals),
                     evidence_event_ids=evidence_ids,
-                    recurrence_of=link.recurrence_of if link else None,
-                    recurrence_similarity=link.recurrence_similarity if link else None,
                     n_timeline_phases=len(timeline),
                     first_phase_summary=timeline[0].summary if timeline else None,
                     tags=incident_tags,
@@ -983,7 +957,6 @@ def _print_run(result: RunResult) -> None:
             f"base={inc.base_score:.3f} "
             f"n_layers={inc.n_distinct_detector_layers} density={inc.community_signal_density:.2f} "
             f"n_signals={inc.n_signals} n_entities={len(inc.entity_keys)} "
-            f"recurrence_of={inc.recurrence_of} similarity={inc.recurrence_similarity} "
             f"technique={inc.top_technique} timeline_phases={inc.n_timeline_phases} "
             f"first_phase={inc.first_phase_summary!r}"
         )

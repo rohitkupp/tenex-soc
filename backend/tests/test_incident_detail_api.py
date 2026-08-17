@@ -315,35 +315,6 @@ def test_detail_verdict_is_null_when_untriaged(client: TestClient, ctx: dict) ->
     assert client.get(f"/api/incidents/{incident.id}").json()["verdict"] is None
 
 
-def test_detail_recurrence_inherits_the_parents_verdict(client: TestClient, ctx: dict) -> None:
-    """docs/05: a recurrence reuses its parent's verdict rather than paying for a second LLM
-    run — so the case file for the child must not render empty."""
-    authenticate(client, ctx["user"])
-    tenant, analysis = ctx["tenant"], ctx["analysis"]
-    parent = make_incident(tenant_id=tenant.id, analysis_id=analysis.id, title="original")
-    make_triage_verdict(incident_id=parent.id, recommended_actions=[])
-    child = make_incident(tenant_id=tenant.id, analysis_id=analysis.id, title="recurrence")
-    session = get_session_factory()()
-    try:
-        session.execute(
-            text(
-                "UPDATE incidents SET recurrence_of = :p, recurrence_similarity = 0.97 WHERE id = :c"
-            ),
-            {"p": parent.id, "c": child.id},
-        )
-        session.commit()
-    finally:
-        session.close()
-
-    body = client.get(f"/api/incidents/{child.id}").json()
-    assert body["recurrence_of"] == str(parent.id)
-    assert body["verdict"] is not None
-    assert body["verdict"]["incident_id"] == str(parent.id)
-
-
-# ------------------------------------------------------------------ GET /incidents/{id}/timeline
-
-
 def test_timeline_is_ordered_by_window_not_by_insertion(client: TestClient, ctx: dict) -> None:
     """docs/05: "Never let the model order events." Ordering comes from `window_start`, so
     inserting the later signal first must not change the output order."""

@@ -18,9 +18,8 @@ from typing import Any
 
 from app.core.db import get_session_factory
 from app.core.logging import configure_logging, get_logger
+from app.detection import initial_weights
 from app.detection.calibration import CalibratorStore
-from app.learning import initial_weights
-from app.learning import weights as weights_module
 from app.models.eval_run import EvalRun
 from evals import gate, golden, pipeline, predictions, report
 from evals.config import EVAL_CALIBRATORS_DIR, EVAL_SEED, FP_CONTROL_SCENARIO, RESULTS_MD_PATH
@@ -139,7 +138,7 @@ def main(argv: list[str] | None = None) -> int:
     log.info("run.initial_fusion_weights")
     # docs/12 change 4 ("Audit and set initial fusion weights"): derived from this run's own
     # freshly-measured pooled L3 benchmark (l3_result["pooled"], docs/12 change 2), using
-    # mechanism 2's own clamp formula (`app.learning.weights.clamp_fusion_weight`/
+    # mechanism 2's own clamp formula (`app.detection.initial_weights.clamp_fusion_weight`/
     # `pooled_precision`, reused not reimplemented — see `app.learning.initial_weights`). Written
     # to `data/models/initial_fusion_weights.json` (production `MODELS_DIR`, since this run
     # already scored `l3_result` against those exact artifacts) for
@@ -150,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
         key: (int(l3_result["pooled"][key]["tp"]), int(l3_result["pooled"][key]["fp"]))
         for key in shipped_initial_weights
     }
-    initial_weights_prior = weights_module.pooled_precision(shipped_pooled_counts.values())
+    initial_weights_prior = initial_weights.pooled_precision(shipped_pooled_counts.values())
     initial_weights_source = {
         "eval_seed": l3_result.get("eval_seed"),
         "derived_from": "app.detection.ml.evaluate.evaluate()['pooled'], this run",

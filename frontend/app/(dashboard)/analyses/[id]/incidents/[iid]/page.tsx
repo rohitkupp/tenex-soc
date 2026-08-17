@@ -16,7 +16,7 @@ import { SignalsSection } from "@/components/incidents/case/SignalsSection";
 import { EntityGraph } from "@/components/incidents/case/EntityGraph";
 import { InvestigationGuidance } from "@/components/incidents/case/InvestigationGuidance";
 import { AgentTrace } from "@/components/incidents/case/AgentTrace";
-import { FeedbackControls } from "@/components/incidents/case/FeedbackControls";
+import { IncidentFeedback } from "@/components/incidents/case/IncidentFeedback";
 
 export const metadata: Metadata = { title: "Case file — Tenex SOC Analyst" };
 
@@ -29,7 +29,7 @@ function SectionHeading({ children }: { children: React.ReactNode }) {
 /**
  * docs/10: "the most important screen in the product... a vertical document, not a grid of
  * widgets." Every section fetches in parallel server-side; the client-only pieces
- * (`NarrativeBlock`'s citation expansion, `FeedbackControls`) hydrate on top of that one
+ * (`NarrativeBlock`'s citation expansion, `IncidentFeedback`) hydrate on top of that one
  * server-rendered pass rather than each re-fetching their own snapshot.
  */
 export default async function CaseFilePage({
@@ -105,7 +105,6 @@ export default async function CaseFilePage({
           narrative={incident.verdict?.narrative ?? []}
           invalidCitations={incident.verdict?.invalid_citations ?? []}
           analysisId={id}
-          incidentId={incident.id}
         />
       </section>
 
@@ -151,10 +150,7 @@ export default async function CaseFilePage({
       {/* 11. Feedback */}
       <section>
         <SectionHeading>Feedback</SectionHeading>
-        <FeedbackControls
-          incidentId={incident.id}
-          retrievedTechniques={incident.verdict?.mitre_techniques ?? []}
-        />
+        <IncidentFeedback incidentId={incident.id} />
       </section>
     </div>
   );

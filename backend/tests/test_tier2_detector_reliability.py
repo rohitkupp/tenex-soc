@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.tier2.detector_reliability import list_detector_reliability
 from tests.conftest import make_analysis, make_tenant, make_user
-from tests.fixtures.learning import (  # noqa: F401
+from tests.fixtures.db_rows import (  # noqa: F401
     learning_cleanup,
     learning_session,
     make_feedback,

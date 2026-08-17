@@ -111,7 +111,6 @@ class IncidentListItem(BaseModel):
     tags: list[str]
     entity_count: int
     signal_count: int
-    recurrence_of: uuid.UUID | None
     created_at: datetime
     needs_attention: bool
 
@@ -129,7 +128,7 @@ class IncidentDetail(BaseModel):
     file's sections stream in independently, which is what `frontend/app/(dashboard)/analyses/
     [id]/incidents/[iid]` already does.
 
-    `verdict` is `null` for an untriaged incident. A recurrence inherits its parent's verdict
+    `verdict` is `null` for an untriaged incident.
     (docs/05), so it can be non-null even for an incident the agent never ran on directly.
 
     `tags` / `summary` are the deterministic pipeline outputs this class adds: computed once by
@@ -156,8 +155,6 @@ class IncidentDetail(BaseModel):
     signal_ids: list[int]
     tags: list[str]
     summary: str
-    recurrence_of: uuid.UUID | None
-    recurrence_similarity: float | None
     created_at: datetime
     entities: list[EntityOut]
     signals: list[SignalOut]

@@ -77,7 +77,6 @@ export default async function AnalysisDetailPage({
   }
 
   const isFailed = analysis.status === "failed";
-  const isRunning = analysis.status === "queued" || analysis.status === "running";
 
   const funnel = <FunnelProgress analysisId={analysis.id} initial={analysis} />;
 
@@ -193,17 +192,14 @@ export default async function AnalysisDetailPage({
           events: events?.items.length,
         }}
         overview={
-          isRunning || isFailed ? (
-            <>
-              {funnel}
-              {overviewSections}
-            </>
-          ) : (
-            <>
-              {overviewSections}
-              {funnel}
-            </>
-          )
+          <>
+            {/* Pipeline first in every state, not only while running/failed. It was last for a
+                complete analysis, which put the stage funnel and its counters below five panels
+                of scrolling — the one thing that says what the run actually did was the hardest
+                thing on the page to find. */}
+            {funnel}
+            {overviewSections}
+          </>
         }
         incidents={
           incidents === null ? (

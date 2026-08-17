@@ -1,6 +1,6 @@
 """Initial (pre-feedback) `detector_stats.fusion_weight` for the shipped ML detectors — docs/12
 change 4 ("Audit and set initial fusion weights"), and a companion to consumer 2
-(`app.learning.weights`, docs/08 Part 2 §2), not a seventh mechanism.
+(the deleted `app.learning.weights`, docs/08 Part 2 §2).
 
 ## The gap this closes
 
@@ -16,7 +16,7 @@ before a single analyst click has happened.
 ## The fix, and why it is "the same clamp mechanism 2 uses"
 
 `derive_initial_weights` is `clamp(precision_d / prior_precision, MIN_FUSION_WEIGHT,
-MAX_FUSION_WEIGHT)` — `app.learning.weights.clamp_fusion_weight`/`pooled_precision`, imported
+MAX_FUSION_WEIGHT)` — `clamp_fusion_weight`/`pooled_precision` below, defined
 rather than re-implemented, so a detector's seeded weight and its later analyst-feedback-learned
 weight (mechanism 2) live on the exact same scale: mechanism 2's next real retune, whenever it
 first runs, moves the weight *from* this benchmark-informed prior, not from an artificial 1.0.
@@ -48,13 +48,13 @@ model file is (`app.detection.ml`'s own "fail loudly" policy is deliberately not
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 from app.core.logging import get_logger
 from app.detection.ml.artifacts import MODELS_DIR
 from app.detection.ml.detect import SHIPPED_MODEL_FIELDS
-from app.learning.weights import clamp_fusion_weight, pooled_precision
 
 log = get_logger(__name__)
 
@@ -67,6 +67,29 @@ __all__ = [
 ]
 
 INITIAL_FUSION_WEIGHTS_FILENAME = "initial_fusion_weights.json"
+
+
+# Moved here from the deleted `app.learning.weights` (mechanism 2, the feedback-driven weight
+# retuner). Only the two pure helpers survived that deletion, because they are not learning: they
+# are the clamp and the pooled-precision formula that define the *scale* fusion weights live on,
+# and `make eval` seeds every detector's first weight with them. The retuner that used to move
+# those weights from analyst feedback is gone.
+MIN_FUSION_WEIGHT = 0.25
+MAX_FUSION_WEIGHT = 1.5
+
+
+def clamp_fusion_weight(value: float) -> float:
+    """`clamp(value, MIN_FUSION_WEIGHT, MAX_FUSION_WEIGHT)`."""
+    return max(MIN_FUSION_WEIGHT, min(MAX_FUSION_WEIGHT, value))
+
+
+def pooled_precision(counts: Iterable[tuple[int, int]]) -> float | None:
+    """Pooled precision (summed TP / summed TP+FP) over `(tp, fp)` pairs. `None` when there is no
+    evidence at all, so a caller cannot mistake "no data" for "zero precision"."""
+    pairs = list(counts)
+    total_tp = sum(tp for tp, _ in pairs)
+    total_fp = sum(fp for _, fp in pairs)
+    return total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else None
 
 
 def derive_initial_weights(counts_by_detector: dict[str, tuple[int, int]]) -> dict[str, float]:

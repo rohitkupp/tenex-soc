@@ -32,7 +32,7 @@ from app.models.triage_verdict import TriageVerdict
 from app.models.upload import Upload
 from app.models.user import User
 from tests.conftest import make_analysis, make_tenant, make_user
-from tests.fixtures.learning import learning_cleanup  # noqa: F401
+from tests.fixtures.db_rows import learning_cleanup  # noqa: F401
 from tests.fixtures.response import make_incident, make_triage_verdict
 
 

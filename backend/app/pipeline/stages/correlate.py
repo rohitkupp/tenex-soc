@@ -35,6 +35,7 @@ from sqlalchemy import select
 from app.core.db import get_engine, get_session_factory
 from app.core.logging import get_logger
 from app.detection.fusion import FusionInput, score_incident
+from app.detection.initial_weights import load_initial_fusion_weights
 from app.graph.asset_tags import AssetEvent, compute_asset_tags
 from app.graph.builder import (
     EntityKey,
@@ -43,11 +44,9 @@ from app.graph.builder import (
     persist_entity_graph,
 )
 from app.graph.incidents import IncidentCandidate, SignalRef, form_incidents
-from app.graph.recurrence import canonical_text, embed_text, link_recurrence
 from app.graph.summary import summary_for_incident
 from app.graph.tags import compute_incident_tags
 from app.graph.titling import title_for_incident
-from app.learning.initial_weights import load_initial_fusion_weights
 from app.models.base import tenant_scope
 from app.models.detector_stats import DetectorStats
 from app.models.event import Event
@@ -236,40 +235,16 @@ def _run_correlate(message: StageMessage) -> dict[str, Any]:
                 evidence_ids: set[int] = set()
                 for s in candidate.signals:
                     evidence_ids.update(s.evidence_event_ids)
-                # Event-level enrichment tags (docs/03's enrichment step: threat intel/category
-                # labels written onto `events.enrichment`) -- feeds the recurrence embedding's
-                # canonical text only. Distinct from `incident_tags` below (the new pipeline
-                # output this task adds: technique/layer/detector/derived tags on the *incident*
-                # itself, docs/09 + `app.graph.tags`) -- renamed from the bare `tags` this loop
-                # used before that feature existed, so the two are never confused at a call site.
-                enrichment_tags: set[str] = set()
-                if evidence_ids:
-                    for (enrichment,) in session.execute(
-                        select(Event.enrichment).where(Event.id.in_(evidence_ids))
-                    ):
-                        enrichment_tags.update((enrichment or {}).get("tags", []))
-
-                canonical = canonical_text(
-                    technique_ids=[s.mitre_technique for s in candidate.signals],
-                    detector_keys=[s.detector_key for s in candidate.signals],
-                    entity_types=[k[0] for k in candidate.entity_keys],
-                    enrichment_tags=sorted(enrichment_tags),
-                )
-                embedding = embed_text(canonical)
-                link = link_recurrence(session, embedding)
-
                 entity_ids = [
                     entity_key_to_id[k] for k in candidate.entity_keys if k in entity_key_to_id
                 ]
 
-                # Deterministic pipeline outputs, computed once here alongside the title and the
-                # recurrence embedding -- zero LLM cost, present for every incident (not just the
-                # top `MAX_TRIAGE_INCIDENTS` an LLM triages). See `app.graph.tags` and
+                # Deterministic pipeline outputs, computed once here alongside the title --
+                # zero LLM cost, present for every incident (not just the top
+                # `MAX_TRIAGE_INCIDENTS` an LLM triages). See `app.graph.tags` and
                 # `app.graph.summary` module docstrings for the full rationale, including the
                 # MITRE-allowlist mismatch `compute_incident_tags` guards against.
-                incident_tags = compute_incident_tags(
-                    candidate.signals, is_recurrence=link is not None
-                )
+                incident_tags = compute_incident_tags(candidate.signals)
                 # Asset/inventory tags (this task, `app.graph.asset_tags`) -- a second, unioned
                 # namespace on the same flat `incidents.tags` list, computed from the incident's
                 # evidence events rather than its signals. Merged with a `set` union + `sorted`
@@ -295,9 +270,6 @@ def _run_correlate(message: StageMessage) -> dict[str, Any]:
                     signal_ids=[s.signal_id for s in candidate.signals],
                     tags=incident_tags,
                     summary=incident_summary,
-                    recurrence_of=link.recurrence_of if link else None,
-                    recurrence_similarity=link.recurrence_similarity if link else None,
-                    embedding=embedding,
                 )
                 session.add(incident_row)
                 session.flush()

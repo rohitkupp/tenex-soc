@@ -28,7 +28,6 @@ import { useState } from "react";
 import type { InvalidCitation, NarrativeStep } from "@/lib/api/types";
 import { evidenceCardAnchorId } from "@/components/incidents/case/EvidenceSection";
 import { LogLineInspector } from "@/components/events/LogLineInspector";
-import { ClaimThumbs } from "@/components/incidents/case/ClaimThumbs";
 
 /** `app/agent/verifier.py::ClaimCheck.as_dict()`'s real shape is per-*claim*, not per-citation
  * — an entry names every citation on one claim plus which of them specifically failed which
@@ -125,7 +124,6 @@ export function NarrativeBlock({
   narrative,
   invalidCitations,
   analysisId,
-  incidentId,
 }: {
   narrative: NarrativeStep[];
   invalidCitations: InvalidCitation[];
@@ -133,7 +131,6 @@ export function NarrativeBlock({
   /** Change 22's per-claim thumbs need an incident to post feedback against; omit this prop
    * (e.g. a narrative preview with no case file behind it yet) and the thumbs simply don't
    * render. */
-  incidentId?: string;
 }) {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -161,7 +158,6 @@ export function NarrativeBlock({
                 <span className="mr-2 font-sans text-xs align-super text-[var(--color-text-lo)]">{step.step}</span>
                 {step.claim}
               </span>
-              {incidentId && <ClaimThumbs incidentId={incidentId} step={step.step} />}
             </p>
             {step.evidence_ids.length > 0 && (
               <div className="flex flex-wrap items-center gap-1.5 pl-1">

@@ -25,12 +25,6 @@ export async function AppNav() {
             Analyses
           </Link>
           <Link
-            href="/learning"
-            className="text-[var(--color-text-mid)] transition-colors hover:text-[var(--color-text-hi)]"
-          >
-            Learning
-          </Link>
-          <Link
             href="/tier2"
             className="text-[var(--color-text-mid)] transition-colors hover:text-[var(--color-text-hi)]"
           >

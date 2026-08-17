@@ -67,8 +67,7 @@ renders one list and the schema stays a single field. Four kinds:
 * Derived, unprefixed: `multi-layer` when the incident's signals span more than one
   `detector_layer` — docs/05's own fusion rationale ("corroboration across independent detection
   methods... is stronger evidence than any single high-scoring signal") made visible as a label,
-  not just folded into the score; `recurring` when the incident is a recurrence of an earlier one
-  (`recurrence_of` set, docs/05 "Recurrence detection").
+  not just folded into the score.
 """
 
 from __future__ import annotations
@@ -84,7 +83,6 @@ __all__ = [
     "TAG_DETECTOR_PREFIX",
     "TAG_LAYER_PREFIX",
     "TAG_MULTI_LAYER",
-    "TAG_RECURRING",
     "TAG_TECHNIQUE_PREFIX",
     "compute_incident_tags",
 ]
@@ -95,10 +93,9 @@ TAG_TECHNIQUE_PREFIX: Final[str] = "technique:"
 TAG_LAYER_PREFIX: Final[str] = "layer:"
 TAG_DETECTOR_PREFIX: Final[str] = "detector:"
 TAG_MULTI_LAYER: Final[str] = "multi-layer"
-TAG_RECURRING: Final[str] = "recurring"
 
 
-def compute_incident_tags(signals: Sequence[SignalRef], *, is_recurrence: bool) -> list[str]:
+def compute_incident_tags(signals: Sequence[SignalRef]) -> list[str]:
     """Deterministic, sorted, deduplicated. `signals` is `IncidentCandidate.signals` at correlate
     time — the same list `score_incident`/`title_for_incident` already consume, so this never
     needs its own DB round trip. Never raises on an out-of-allowlist technique — see module
@@ -130,7 +127,5 @@ def compute_incident_tags(signals: Sequence[SignalRef], *, is_recurrence: bool) 
 
     if len({s.detector_layer for s in signals}) > 1:
         tags.add(TAG_MULTI_LAYER)
-    if is_recurrence:
-        tags.add(TAG_RECURRING)
 
     return sorted(tags)

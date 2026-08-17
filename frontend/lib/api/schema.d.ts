@@ -453,27 +453,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/incidents/{incident_id}/claims/{step}/feedback": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Submit Claim Feedback
-         * @description Change 22: "Per-claim thumbs on narrative claims, hover-revealed." Independent of the
-         *     primary Confirm/Override/Dismiss bar — feeds mechanism 14 (verifier rule induction).
-         */
-        post: operations["submit_claim_feedback_api_incidents__incident_id__claims__step__feedback_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/incidents/{incident_id}/evidence": {
         parameters: {
             query?: never;
@@ -500,30 +479,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/incidents/{incident_id}/evidence/{evidence_id}/relevance": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Submit Evidence Relevance
-         * @description Change 16/22's "per-evidence relevance toggle" — the seam the evidence section (rendered
-         *     by a different milestone's frontend work, `app/api/incident_detail.py`'s
-         *     `GET /incidents/{id}/evidence`) writes through. Feeds mechanism 15 (evidence profile
-         *     widening); see `app.models.evidence_relevance_feedback`'s docstring for a documented reading
-         *     of a cross-reference discrepancy in the migration doc itself.
-         */
-        post: operations["submit_evidence_relevance_api_incidents__incident_id__evidence__evidence_id__relevance_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/incidents/{incident_id}/feedback": {
         parameters: {
             query?: never;
@@ -533,8 +488,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Submit Feedback */
-        post: operations["submit_feedback_api_incidents__incident_id__feedback_post"];
+        /**
+         * Submit Incident Feedback
+         * @description Store the analyst's own words about this incident. Nothing downstream consumes them.
+         */
+        post: operations["submit_incident_feedback_api_incidents__incident_id__feedback_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -617,208 +575,6 @@ export interface paths {
         };
         /** Get Incident Verdict */
         get: operations["get_incident_verdict_api_incidents__incident_id__verdict_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/learning/events": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Learning Events
-         * @description docs/10 `/learning` section 5, "learning events" — the change-21 feed. Not tenant-scoped
-         *     on the query (`learning_events` carries no `tenant_id`, per its own schema — change 23's
-         *     shared single-tenant workspace), ordered newest first.
-         */
-        get: operations["list_learning_events_api_learning_events_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/learning/metrics": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Learning Metrics */
-        get: operations["get_learning_metrics_api_learning_metrics_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/learning/proposals": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Learning Proposals
-         * @description docs/10 `/learning` section 6, "what your feedback changed" — `status_filter` defaults to
-         *     `pending` (the review queue); pass `?status_filter=approved` or `?status_filter=rejected` for
-         *     the change-21 "keep the rejection history" record.
-         */
-        get: operations["list_learning_proposals_api_learning_proposals_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/learning/proposals/{proposal_id}/accept": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Accept Learning Proposal
-         * @description The human-approval gate for all eight gated mechanisms (change 21: "requires human
-         *     approval ... auto-suppression is how you miss a breach"). Runs the mechanism's own
-         *     golden-set (or support) gate; a regressing candidate is rejected and the incumbent stays
-         *     live, with the rejection retained on this same row — see `app.learning.mechanisms.
-         *     decide_proposal`'s module docstring.
-         */
-        post: operations["accept_learning_proposal_api_learning_proposals__proposal_id__accept_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/learning/proposals/{proposal_id}/reject": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Reject Learning Proposal
-         * @description A human declining a proposal outright, without running the gate — the analyst's own
-         *     judgment is itself a sufficient reason not to apply a candidate. Distinct from a *gate*
-         *     rejection (`accept_learning_proposal` when the candidate regresses a metric): both land the
-         *     proposal in `STATUS_REJECTED` and keep the row (change 21: "keep the rejection history"),
-         *     but this path never mutates anything the candidate would have changed.
-         */
-        post: operations["reject_learning_proposal_api_learning_proposals__proposal_id__reject_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/learning/suppressions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Suppression Candidates
-         * @description `status_filter` defaults to `pending` (docs/09: "pending candidates") — pass e.g.
-         *     `?status_filter=accepted` to see the review history instead.
-         */
-        get: operations["list_suppression_candidates_api_learning_suppressions_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/learning/suppressions/{candidate_id}/accept": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Accept Suppression Candidate
-         * @description The **only** code path in this milestone that writes a `.yml` file under
-         *     `app/detection/rules/suppressions/` — see `app.learning.suppression`'s module docstring for
-         *     why that is a hard rule, not a convenience. Requires a human to hit this endpoint; there is
-         *     no automated caller anywhere in this codebase.
-         */
-        post: operations["accept_suppression_candidate_api_learning_suppressions__candidate_id__accept_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/models/calibration": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Calibration
-         * @description Refits live (docs/04's isotonic calibrator per detector, `app.learning.calibration`) and
-         *     returns the reliability diagram plus Brier score for every detector with enough labeled
-         *     feedback to fit — always current as of the latest `analyst_feedback` row, never a stale
-         *     cached figure. `persist=True` (the default) also writes the calibrator artifacts this fetch
-         *     just computed, so a page load doubles as a refit rather than only a read.
-         */
-        get: operations["get_calibration_api_models_calibration_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/models/versions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Model Versions
-         * @description `model_versions` is not tenant-scoped (docs/02 — models are versioned globally, see
-         *     `app.models.model_version`'s docstring); `require_user` still gates the route (every non-auth
-         *     route does, docs/09), it just does not filter the query. Every attempt is included, promoted
-         *     or not — docs/08's "Retrain gate": "Record every attempt, promoted or not — the rejection
-         *     history is the evidence the gate works," which this endpoint is the one place that evidence
-         *     surfaces.
-         */
-        get: operations["list_model_versions_api_models_versions_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -968,25 +724,6 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
-        /** AlignmentPointOut */
-        AlignmentPointOut: {
-            /** Alignment Pct */
-            alignment_pct: number;
-            /** N */
-            n: number;
-            /**
-             * Period End
-             * Format: date-time
-             */
-            period_end: string;
-            /**
-             * Period Start
-             * Format: date-time
-             */
-            period_start: string;
-            /** Synthetic */
-            synthetic: boolean;
-        };
         /** AnalysisEvidenceResponse */
         AnalysisEvidenceResponse: {
             /** Items */
@@ -1162,93 +899,6 @@ export interface components {
             /** Value */
             value: number;
         };
-        /** CalibrationResponse */
-        CalibrationResponse: {
-            /** Detectors */
-            detectors: components["schemas"]["DetectorCalibrationOut"][];
-            /** N Feedback Events */
-            n_feedback_events: number;
-            /** N Synthetic Feedback Events */
-            n_synthetic_feedback_events: number;
-            /** Overall Brier After */
-            overall_brier_after: number | null;
-            /** Overall Brier Before */
-            overall_brier_before: number | null;
-            /**
-             * Refit At
-             * Format: date-time
-             */
-            refit_at: string;
-            /** Synthetic */
-            synthetic: boolean;
-        };
-        /** ClaimFeedbackRequest */
-        ClaimFeedbackRequest: {
-            /** Helpful */
-            helpful: boolean;
-            /** Note */
-            note?: string | null;
-        };
-        /** ClaimFeedbackResponse */
-        ClaimFeedbackResponse: {
-            /** Helpful */
-            helpful: boolean;
-            /** Id */
-            id: number;
-            /**
-             * Incident Id
-             * Format: uuid
-             */
-            incident_id: string;
-            /** Step */
-            step: number;
-            /** Verifier Rule Proposed */
-            verifier_rule_proposed: boolean;
-        };
-        /** DetectorCalibrationOut */
-        DetectorCalibrationOut: {
-            /** Brier After */
-            brier_after: number | null;
-            /** Brier Before */
-            brier_before: number | null;
-            /** Brier Improvement */
-            brier_improvement: number | null;
-            /** Detector Key */
-            detector_key: string;
-            /** Fitted */
-            fitted: boolean;
-            /** N Positive */
-            n_positive: number;
-            /** N Samples */
-            n_samples: number;
-            /** Reliability After */
-            reliability_after: components["schemas"]["ReliabilityBinOut"][];
-            /** Reliability Before */
-            reliability_before: components["schemas"]["ReliabilityBinOut"][];
-            /** Skip Reason */
-            skip_reason: string | null;
-        };
-        /** DetectorPrecisionPointOut */
-        DetectorPrecisionPointOut: {
-            /** Detector Key */
-            detector_key: string;
-            /** N */
-            n: number;
-            /**
-             * Period End
-             * Format: date-time
-             */
-            period_end: string;
-            /**
-             * Period Start
-             * Format: date-time
-             */
-            period_start: string;
-            /** Precision */
-            precision: number | null;
-            /** Synthetic */
-            synthetic: boolean;
-        };
         /** DetectorReliabilityEntryOut */
         DetectorReliabilityEntryOut: {
             /** Confirmed */
@@ -1270,30 +920,6 @@ export interface components {
             items: components["schemas"]["DetectorReliabilityEntryOut"][];
             /** Total Tenants */
             total_tenants: number;
-        };
-        /** DetectorWeightChangeOut */
-        DetectorWeightChangeOut: {
-            /** Changed */
-            changed: boolean;
-            /** Detector Key */
-            detector_key: string;
-            /** False Positives */
-            false_positives: number;
-            /** Precision */
-            precision: number | null;
-            /** True Positives */
-            true_positives: number;
-            /** Weight After */
-            weight_after: number;
-            /** Weight Before */
-            weight_before: number;
-        };
-        /** DomainLabelCorrectionIn */
-        DomainLabelCorrectionIn: {
-            /** Domain */
-            domain: string;
-            /** Is Dga */
-            is_dga: boolean;
         };
         /**
          * DomainSemanticFinding
@@ -1583,90 +1209,29 @@ export interface components {
              */
             window_start: string;
         };
-        /** EvidenceRelevanceRequest */
-        EvidenceRelevanceRequest: {
-            /** Extractor */
-            extractor: string;
-            /** Relevant */
-            relevant: boolean;
+        /** FeedbackRequest */
+        FeedbackRequest: {
+            /** Text */
+            text: string;
         };
-        /** EvidenceRelevanceResponse */
-        EvidenceRelevanceResponse: {
-            /** Evidence Id */
-            evidence_id: string;
-            /** Id */
-            id: number;
+        /**
+         * FeedbackResponse
+         * @description `storage_key` is returned so the analyst (and a reviewer) can see exactly where the
+         *     feedback landed, rather than trusting that "saved" meant something.
+         */
+        FeedbackResponse: {
             /**
              * Incident Id
              * Format: uuid
              */
             incident_id: string;
-            /** Relevant */
-            relevant: boolean;
-            /** Widening Proposed */
-            widening_proposed: boolean;
-        };
-        /**
-         * FeedbackRequest
-         * @description `POST /api/incidents/{id}/feedback` body, docs/09 verbatim: `{agrees,
-         *     corrected_disposition?, corrected_technique?, dismissal_reason?, mark_benign_baseline?,
-         *     note?}`. `corrected_technique`, when set, must be one of the verdict's own retrieved
-         *     candidates plus `NO_KNOWN_MAPPING` (change 22) — enforced server-side in
-         *     `app.learning.feedback.record_feedback`. `dismissal_reason`, when set from the change-22
-         *     Dismiss control, is one of `app.learning.feedback.DISMISSAL_REASON_CATEGORIES`; the column
-         *     itself stays a plain string for backward compatibility with pre-migration callers.
-         *     `corrected_domain_labels` is change 21 mechanism 8's input hook, optional and additive.
-         */
-        FeedbackRequest: {
-            /** Agrees */
-            agrees: boolean;
-            /** Corrected Disposition */
-            corrected_disposition?: string | null;
+            /** Storage Key */
+            storage_key: string;
             /**
-             * Corrected Domain Labels
-             * @default []
+             * Submitted At
+             * Format: date-time
              */
-            corrected_domain_labels: components["schemas"]["DomainLabelCorrectionIn"][];
-            /** Corrected Technique */
-            corrected_technique?: string | null;
-            /** Dismissal Reason */
-            dismissal_reason?: string | null;
-            /**
-             * Mark Benign Baseline
-             * @default false
-             */
-            mark_benign_baseline: boolean;
-            /** Note */
-            note?: string | null;
-        };
-        /** FeedbackResponse */
-        FeedbackResponse: {
-            /**
-             * Baseline Expansion Proposed
-             * @default false
-             */
-            baseline_expansion_proposed: boolean;
-            /** Benign Baseline Entries Created */
-            benign_baseline_entries_created: number;
-            /** Calibration Refit Triggered */
-            calibration_refit_triggered: boolean;
-            /** Detector Weight Changes */
-            detector_weight_changes: components["schemas"]["DetectorWeightChangeOut"][];
-            /**
-             * Exemplar Proposed
-             * @default false
-             */
-            exemplar_proposed: boolean;
-            /**
-             * Feedback Id
-             * Format: uuid
-             */
-            feedback_id: string;
-            /** Reference Set Mechanism */
-            reference_set_mechanism?: number | null;
-            retrain_attempt: components["schemas"]["RetrainAttemptOut"] | null;
-            /** Suppression Candidates Generated */
-            suppression_candidates_generated: string[];
+            submitted_at: string;
         };
         /** FirstSeenIndicatorOut */
         FirstSeenIndicatorOut: {
@@ -1738,7 +1303,7 @@ export interface components {
          *     file's sections stream in independently, which is what `frontend/app/(dashboard)/analyses/
          *     [id]/incidents/[iid]` already does.
          *
-         *     `verdict` is `null` for an untriaged incident. A recurrence inherits its parent's verdict
+         *     `verdict` is `null` for an untriaged incident.
          *     (docs/05), so it can be non-null even for an incident the agent never ran on directly.
          *
          *     `tags` / `summary` are the deterministic pipeline outputs this class adds: computed once by
@@ -1774,10 +1339,6 @@ export interface components {
              * Format: uuid
              */
             id: string;
-            /** Recurrence Of */
-            recurrence_of: string | null;
-            /** Recurrence Similarity */
-            recurrence_similarity: number | null;
             /** Severity */
             severity: string;
             /** Signal Ids */
@@ -1853,8 +1414,6 @@ export interface components {
             mitre_techniques: string[];
             /** Needs Attention */
             needs_attention: boolean;
-            /** Recurrence Of */
-            recurrence_of: string | null;
             /** Severity */
             severity: string;
             /** Signal Count */
@@ -1908,115 +1467,6 @@ export interface components {
             /** Items */
             items: components["schemas"]["IndicatorOverlapEntryOut"][];
         };
-        /** LearningEventOut */
-        LearningEventOut: {
-            /** After State */
-            after_state: {
-                [key: string]: unknown;
-            } | null;
-            /** Applied */
-            applied: boolean;
-            /** Before State */
-            before_state: {
-                [key: string]: unknown;
-            } | null;
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Id */
-            id: number;
-            /** Mechanism */
-            mechanism: number;
-            /** Mechanism Name */
-            mechanism_name: string;
-            /** Metric Delta */
-            metric_delta: {
-                [key: string]: unknown;
-            } | null;
-            /** Trigger Feedback Id */
-            trigger_feedback_id: string | null;
-        };
-        /** LearningEventsResponse */
-        LearningEventsResponse: {
-            /** Items */
-            items: components["schemas"]["LearningEventOut"][];
-        };
-        /** LearningMetricsResponse */
-        LearningMetricsResponse: {
-            /** Alignment Pct */
-            alignment_pct: number | null;
-            /** Alignment Trend */
-            alignment_trend: components["schemas"]["AlignmentPointOut"][];
-            /**
-             * Computed At
-             * Format: date-time
-             */
-            computed_at: string;
-            /** Detector Precision Trend */
-            detector_precision_trend: components["schemas"]["DetectorPrecisionPointOut"][];
-            /** N Feedback Events */
-            n_feedback_events: number;
-            /** N Synthetic Feedback Events */
-            n_synthetic_feedback_events: number;
-            /** Synthetic */
-            synthetic: boolean;
-        };
-        /** LearningProposalDecisionResponse */
-        LearningProposalDecisionResponse: {
-            /** After State */
-            after_state: {
-                [key: string]: unknown;
-            };
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Metric Delta */
-            metric_delta: {
-                [key: string]: unknown;
-            };
-            /** Passed */
-            passed: boolean;
-            /** Reason */
-            reason: string;
-            /** Status */
-            status: string;
-        };
-        /** LearningProposalOut */
-        LearningProposalOut: {
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Mechanism */
-            mechanism: number;
-            /** Mechanism Name */
-            mechanism_name: string;
-            /** Payload */
-            payload: {
-                [key: string]: unknown;
-            };
-            /** Reviewed At */
-            reviewed_at: string | null;
-            /** Status */
-            status: string;
-            /** Supporting Feedback Ids */
-            supporting_feedback_ids: string[];
-        };
-        /** LearningProposalsResponse */
-        LearningProposalsResponse: {
-            /** Items */
-            items: components["schemas"]["LearningProposalOut"][];
-        };
         /**
          * LogOverview
          * @description change 9's JSON shape, verbatim field-for-field:
@@ -2069,36 +1519,6 @@ export interface components {
         MeResponse: {
             tenant: components["schemas"]["TenantOut"];
             user: components["schemas"]["UserOut"];
-        };
-        /** ModelVersionOut */
-        ModelVersionOut: {
-            /** Artifact Ref */
-            artifact_ref: string;
-            /** Eval Scores */
-            eval_scores: {
-                [key: string]: unknown;
-            };
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Model Key */
-            model_key: string;
-            /** Promoted */
-            promoted: boolean;
-            /**
-             * Trained At
-             * Format: date-time
-             */
-            trained_at: string;
-            /** Version */
-            version: number;
-        };
-        /** ModelVersionsResponse */
-        ModelVersionsResponse: {
-            /** Items */
-            items: components["schemas"]["ModelVersionOut"][];
         };
         /**
          * NotableDestination
@@ -2162,62 +1582,10 @@ export interface components {
             /** Spectral Strength */
             spectral_strength: number;
         };
-        /** ReliabilityBinOut */
-        ReliabilityBinOut: {
-            /** Bin Hi */
-            bin_hi: number;
-            /** Bin Lo */
-            bin_lo: number;
-            /** N */
-            n: number;
-            /** Observed Precision */
-            observed_precision: number | null;
-            /** Predicted Mean */
-            predicted_mean: number | null;
-        };
         /** ResendVerificationRequest */
         ResendVerificationRequest: {
             /** Email */
             email: string;
-        };
-        /** RetrainAttemptOut */
-        RetrainAttemptOut: {
-            /**
-             * Attempted At
-             * Format: date-time
-             */
-            attempted_at: string;
-            /** Baseline Version */
-            baseline_version: number | null;
-            /** Gate Comparisons */
-            gate_comparisons: components["schemas"]["RetrainGateComparisonOut"][];
-            /** Gate Passed */
-            gate_passed: boolean | null;
-            /** Gate Reason */
-            gate_reason: string | null;
-            /** N Training Rows */
-            n_training_rows: number;
-            /** Promoted */
-            promoted: boolean;
-            /** Skip Reason */
-            skip_reason: string | null;
-            /** Skipped */
-            skipped: boolean;
-            /** Version */
-            version: number | null;
-        };
-        /** RetrainGateComparisonOut */
-        RetrainGateComparisonOut: {
-            /** Baseline */
-            baseline: number;
-            /** Candidate */
-            candidate: number;
-            /** Delta */
-            delta: number;
-            /** Metric */
-            metric: string;
-            /** Regressed */
-            regressed: boolean;
         };
         /**
          * SignalOut
@@ -2294,54 +1662,6 @@ export interface components {
             invalid_citation_count: number;
             /** Model */
             model: string | null;
-        };
-        /** SuppressionAcceptResponse */
-        SuppressionAcceptResponse: {
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Status */
-            status: string;
-            /** Written Path */
-            written_path: string;
-        };
-        /** SuppressionCandidateOut */
-        SuppressionCandidateOut: {
-            /**
-             * Created At
-             * Format: date-time
-             */
-            created_at: string;
-            /** Detector Key */
-            detector_key: string;
-            /** Entity Type */
-            entity_type: string;
-            /** Entity Value */
-            entity_value: string;
-            /**
-             * Id
-             * Format: uuid
-             */
-            id: string;
-            /** Reason */
-            reason: string;
-            /** Reviewed At */
-            reviewed_at: string | null;
-            /** Rule Yaml */
-            rule_yaml: string;
-            /** Status */
-            status: string;
-            /** Synthetic */
-            synthetic: boolean;
-            /** Written Path */
-            written_path: string | null;
-        };
-        /** SuppressionListResponse */
-        SuppressionListResponse: {
-            /** Items */
-            items: components["schemas"]["SuppressionCandidateOut"][];
         };
         /**
          * TechniquePrevalenceEntryOut
@@ -3265,44 +2585,6 @@ export interface operations {
             };
         };
     };
-    submit_claim_feedback_api_incidents__incident_id__claims__step__feedback_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                incident_id: string;
-                step: number;
-            };
-            cookie?: {
-                tenex_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ClaimFeedbackRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ClaimFeedbackResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_incident_evidence_api_incidents__incident_id__evidence_get: {
         parameters: {
             query?: never;
@@ -3336,45 +2618,7 @@ export interface operations {
             };
         };
     };
-    submit_evidence_relevance_api_incidents__incident_id__evidence__evidence_id__relevance_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                incident_id: string;
-                evidence_id: string;
-            };
-            cookie?: {
-                tenex_session?: string | null;
-            };
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["EvidenceRelevanceRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["EvidenceRelevanceResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    submit_feedback_api_incidents__incident_id__feedback_post: {
+    submit_incident_feedback_api_incidents__incident_id__feedback_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -3392,7 +2636,7 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            201: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -3533,299 +2777,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TriageVerdictResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_learning_events_api_learning_events_get: {
-        parameters: {
-            query?: {
-                mechanism?: number | null;
-                limit?: number;
-            };
-            header?: never;
-            path?: never;
-            cookie?: {
-                tenex_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LearningEventsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_learning_metrics_api_learning_metrics_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: {
-                tenex_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LearningMetricsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_learning_proposals_api_learning_proposals_get: {
-        parameters: {
-            query?: {
-                status_filter?: string | null;
-                mechanism?: number | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: {
-                tenex_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LearningProposalsResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    accept_learning_proposal_api_learning_proposals__proposal_id__accept_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                proposal_id: string;
-            };
-            cookie?: {
-                tenex_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LearningProposalDecisionResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    reject_learning_proposal_api_learning_proposals__proposal_id__reject_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                proposal_id: string;
-            };
-            cookie?: {
-                tenex_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LearningProposalDecisionResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_suppression_candidates_api_learning_suppressions_get: {
-        parameters: {
-            query?: {
-                status_filter?: string | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: {
-                tenex_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuppressionListResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    accept_suppression_candidate_api_learning_suppressions__candidate_id__accept_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                candidate_id: string;
-            };
-            cookie?: {
-                tenex_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SuppressionAcceptResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_calibration_api_models_calibration_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: {
-                tenex_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["CalibrationResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    list_model_versions_api_models_versions_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: {
-                tenex_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["ModelVersionsResponse"];
                 };
             };
             /** @description Validation Error */

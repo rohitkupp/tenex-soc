@@ -39,6 +39,7 @@ from app.models.tenant import Tenant
 from app.models.tier2_signature import Tier2Signature
 from app.models.triage_verdict import TriageVerdict
 from app.models.upload import Upload
+from app.tier2.embedding import canonical_text, embed_text
 from app.tier2.hashing import indicator_hash, tenant_hash
 
 log = get_logger(__name__)
@@ -194,11 +195,19 @@ def build_signature(
         # looking at it — `incident.created_at` is when correlation formed the incident
         # from its signals; `verdict.created_at` is only processing latency after that.
         observed_at=incident.created_at,
-        # Reused, not recomputed: `incidents.embedding` (docs/02) already exists for
-        # recurrence search in the same 1024-dim space `tier2_signatures.embedding`
-        # declares — computing a second, independent embedding for the same incident
-        # would be pure waste and a second place for the two to silently disagree.
-        embedding=incident.embedding,
+        # Computed here, from this signature's own structural content. It used to be read
+        # straight off `incidents.embedding`, which existed for recurrence (duplicate) search in
+        # the same 1024-dim space. Recurrence detection is deleted and that column with it, so
+        # Tier 2 owns its embedding now — `app.tier2.embedding`, the same deterministic
+        # HashingVectorizer, over the techniques/types this signature actually carries.
+        embedding=embed_text(
+            canonical_text(
+                technique_ids=unique_techniques,
+                detector_keys=[],
+                entity_types=list(dict.fromkeys(source_types)),
+                enrichment_tags=[],
+            )
+        ),
     )
 
 

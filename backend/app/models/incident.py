@@ -12,12 +12,8 @@ CREATE TABLE incidents (
   entity_ids BIGINT[] NOT NULL,
   signal_ids BIGINT[] NOT NULL,
   status TEXT NOT NULL DEFAULT 'open',
-  recurrence_of UUID REFERENCES incidents(id),
-  recurrence_similarity REAL,
-  embedding VECTOR(1024),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX ON incidents USING hnsw (embedding vector_cosine_ops);
 ```
 
 `anomaly_confidence` — docs/v2_migration change 3 ("two confidences, never mixed") — is the
@@ -34,12 +30,6 @@ issues an `UPDATE` against this column.
 `tenant_id` overrides `TenantScopedMixin`'s column exactly like `app.models.event.Event` and
 `app.models.signal.Signal` — no FK, no bare index, matching docs/02's literal SQL for this
 table. Structural tenant scoping still fully applies (the guard is keyed off the class).
-
-`recurrence_of` is a self-referential FK (`REFERENCES incidents(id)`, no `ON DELETE` action
-per docs/02) — an incident can point at an earlier one it's a recurrence of.
-
-`embedding` is `VECTOR(1024)` (`pgvector.sqlalchemy.Vector`), backing the HNSW index
-(`vector_cosine_ops`) created in the migration for nearest-neighbor recurrence search.
 
 ## `tags` / `summary` -- deterministic pipeline outputs, this task
 
@@ -68,7 +58,6 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from pgvector.sqlalchemy import Vector
 from sqlalchemy import ARRAY, REAL, BigInteger, ForeignKey, Index, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import DateTime, Uuid
@@ -103,22 +92,11 @@ class Incident(Base, TenantScopedMixin):
     )
     summary: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="open")
-    recurrence_of: Mapped[uuid.UUID | None] = mapped_column(
-        Uuid(as_uuid=True), ForeignKey("incidents.id"), nullable=True
-    )
-    recurrence_similarity: Mapped[float | None] = mapped_column(REAL, nullable=True)
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(1024), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
 
     __table_args__ = (
-        Index(
-            "ix_incidents_embedding_hnsw",
-            "embedding",
-            postgresql_using="hnsw",
-            postgresql_ops={"embedding": "vector_cosine_ops"},
-        ),
         # GIN `array_ops` -- supports `@>`/`<@`/`&&`/`=` on `tags`, not `x = ANY(tags)` (see
         # module docstring). No caller uses this yet (docs/09 lists no `?tag=` query param today),
         # but the column exists specifically so the dashboard can filter on it later without a

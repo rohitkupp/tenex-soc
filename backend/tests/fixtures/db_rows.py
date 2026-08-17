@@ -1,9 +1,15 @@
-"""Shared builders for `tests/test_learning_*.py`. Mirrors `tests/conftest.py`'s
+"""Shared row builders one layer below `tests/conftest.py`. Mirrors its
 `make_tenant`/`make_user`/`make_analysis` pattern (a real row via a tenant-bound session, not a
 mock) one layer further down the schema: `signals` -> `incidents` -> `triage_verdicts` ->
 `analyst_feedback`, none of which `conftest.py` itself needed before this milestone.
 
-Lives under `tests/fixtures/` rather than a new `test_learning_*.py` module, matching
+Was `tests/fixtures/learning.py`, named for the `test_learning_*.py` family it was written for.
+Those tests are gone with the learning loop; the fixtures themselves were never learning-specific
+— they build real tenant-scoped rows down the `signals -> incidents -> triage_verdicts` chain —
+so they are renamed to what they actually are and kept for the tests that still need them
+(`test_tenant_isolation`, `test_tier2_detector_reliability`).
+
+Lives under `tests/fixtures/` rather than a `test_*.py` module, matching
 `tests/fixtures/rules/events.py`'s own precedent: shared, non-test support code for a family of
 test modules belongs here, not duplicated across them or awkwardly named to satisfy pytest's
 `test_*.py` collection glob.
@@ -26,7 +32,6 @@ from app.models.base import tenant_scope
 from app.models.incident import Incident
 from app.models.signal import Signal
 from app.models.triage_verdict import TriageVerdict
-from app.models.user import User
 
 
 @pytest.fixture
@@ -199,7 +204,6 @@ def make_incident_with_verdict(
     severity: str = "high",
     threat_confidence: str = "high",
     mitre_techniques: list[str] | None = None,
-    embedding: list[float] | None = None,
     created_at: datetime | None = None,
 ) -> tuple[Incident, TriageVerdict]:
     """One incident carrying `signals` (already-created `Signal` rows, same `analysis_id`), plus
@@ -221,7 +225,6 @@ def make_incident_with_verdict(
             anomaly_confidence=anomaly_confidence_from_fused_score(fused_score),
             entity_ids=[],
             signal_ids=[s.id for s in signals],
-            embedding=embedding,
             **({"created_at": created_at} if created_at is not None else {}),
         )
         session.add(incident)
@@ -275,24 +278,3 @@ def make_feedback(
     session.add(feedback)
     session.flush()
     return feedback
-
-
-def unit_embedding(seed_text: str, dim: int = 1024) -> list[float]:
-    """A deterministic, roughly-unit-norm pseudo-embedding for tests that need `incidents.
-    embedding` populated (few-shot memory retrieval) without pulling in a real model. Same
-    `seed_text` -> same vector; different `seed_text` -> a materially different one."""
-    import random
-
-    rng = random.Random(seed_text)
-    vec = [rng.gauss(0, 1) for _ in range(dim)]
-    norm = sum(v * v for v in vec) ** 0.5
-    return [v / norm for v in vec] if norm > 0 else vec
-
-
-__all__ = [
-    "User",
-    "make_feedback",
-    "make_incident_with_verdict",
-    "make_signal",
-    "unit_embedding",
-]

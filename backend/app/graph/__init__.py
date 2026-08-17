@@ -10,8 +10,6 @@ submodule:
 - `app.graph.features` — L5 graph anomaly features + infrastructure clustering (docs/04 §L5).
 - `app.graph.titling` — deterministic incident titles (docs/05 "Incident titling").
 - `app.graph.timeline` — deterministic incident timelines (docs/05 "Timeline").
-- `app.graph.recurrence` — canonical text, embedding, cosine-search recurrence linking (docs/05
-  "Recurrence detection").
 - `app.graph.pipeline_demo` — the end-to-end CLI that ties all of the above together against a
   real generated scenario and a real Postgres database, for M10's verification bar.
 """

@@ -17,11 +17,10 @@ from app.api import (
     analyses,
     auth,
     events,
+    feedback,
     health,
     incident_detail,
     incidents,
-    learning,
-    models,
     stream,
     tier2,
     uploads,
@@ -114,6 +113,5 @@ app.include_router(stream.router, prefix="/api", tags=["analyses"])
 app.include_router(events.router, prefix="/api", tags=["events"])
 app.include_router(incident_detail.router, prefix="/api", tags=["incidents"])
 app.include_router(incidents.router, prefix="/api", tags=["incidents"])
-app.include_router(learning.router, prefix="/api", tags=["learning"])
-app.include_router(models.router, prefix="/api", tags=["models"])
+app.include_router(feedback.router, prefix="/api", tags=["feedback"])
 app.include_router(tier2.router, prefix="/api", tags=["tier2"])

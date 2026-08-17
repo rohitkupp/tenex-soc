@@ -109,16 +109,6 @@ from app.models.incident import Incident
 from app.models.signal import Signal
 from app.models.triage_verdict import TriageVerdict
 
-try:  # M13, concurrent -- see this module's own docstring and CLAUDE.md's build brief item 8.
-    from app.learning.memory import (
-        get_prior_analyst_decisions_for_incident,
-        render_prior_analyst_decisions_block,
-    )
-
-    _HAS_FEW_SHOT_MEMORY = True
-except ImportError:  # pragma: no cover - integration point for when app/learning isn't present
-    _HAS_FEW_SHOT_MEMORY = False
-
 __all__ = [
     "MAX_SEMANTIC_DOMAINS_PER_CALL",
     "AgentRefusalError",
@@ -415,24 +405,6 @@ def _build_incident_context_block(ctx: AgentContext) -> str:
         evidence_payloads=evidence_payloads_payload,
         retrieved_candidates=retrieved_payload,
     )
-
-
-def _prior_analyst_decisions_block(ctx: AgentContext) -> str:
-    """M13's few-shot memory integration point. Degrades to an empty string on any failure,
-    including the module not existing at all -- few-shot memory is a quality enhancement, never a
-    triage blocker."""
-    if not _HAS_FEW_SHOT_MEMORY:
-        return ""
-    try:
-        decisions = get_prior_analyst_decisions_for_incident(
-            ctx.session, tenant_id=ctx.tenant_id, incident_id=ctx.incident_id
-        )
-        if not decisions:
-            return ""
-        return render_prior_analyst_decisions_block(decisions)
-    except Exception:  # degrade, never fail the run over a memory lookup
-        log.warning("agent.prior_decisions_failed", incident_id=str(ctx.incident_id), exc_info=True)
-        return ""
 
 
 def _render_finding_flags(finding_flags: dict[str, tuple[str, ...]]) -> str:
@@ -753,8 +725,6 @@ def _run_flow(
     trace: list[ToolTraceEntry],
 ) -> TriageVerdictOut:
     incident_context = _build_incident_context_block(ctx)
-    prior_block = _prior_analyst_decisions_block(ctx)
-    prior_suffix = f"\n\n{prompts.wrap_prior_analyst_decisions(prior_block)}" if prior_block else ""
 
     # ---- stage 1: Analyst ----
     analysis_raw = _run_tool_role(
@@ -762,7 +732,7 @@ def _run_flow(
         ctx=ctx,
         role="analyst",
         system_prompt=prompts.ANALYST_SYSTEM_PROMPT,
-        first_user_content=incident_context + prior_suffix,
+        first_user_content=incident_context,
         investigation_tools=ANALYST_TOOLS,
         terminal_tool=build_submit_analysis_tool(),
         budget=budget,
@@ -876,7 +846,6 @@ def _run_flow(
         )
         + "\n\n"
         + _wrap_presenter_findings(presenter_findings)
-        + prior_suffix
     )
     verdict_raw = _run_notool_role(
         caller=caller,
@@ -1016,48 +985,6 @@ def _persist(session: Session, incident_id: uuid.UUID, verdict: TriageVerdictOut
     return row
 
 
-def _persist_inherited(
-    session: Session, incident_id: uuid.UUID, parent: TriageVerdict
-) -> TriageVerdict:
-    """docs/07 "Scope discipline": "Recurrences are skipped and inherit their parent's
-    verdict." No LLM call, no cost."""
-    row = TriageVerdict(
-        incident_id=incident_id,
-        disposition=parent.disposition,
-        threat_confidence=parent.threat_confidence,
-        threat_confidence_reason=parent.threat_confidence_reason,
-        llm_severity_opinion=parent.llm_severity_opinion,
-        mitre_techniques=parent.mitre_techniques,
-        summary=parent.summary,
-        narrative=parent.narrative,
-        contradicting_evidence=parent.contradicting_evidence,
-        recommended_actions=parent.recommended_actions,
-        tool_trace=[
-            {
-                "role": "system",
-                "tool_name": "inherit_recurrence",
-                "tool_input": {
-                    "parent_verdict_id": str(parent.id),
-                    "parent_incident_id": str(parent.incident_id),
-                },
-                "is_error": False,
-                "summary": f"inherited disposition from recurrence parent verdict {parent.id}",
-            }
-        ],
-        citation_valid=parent.citation_valid,
-        invalid_citations=parent.invalid_citations,
-        model=f"inherited:{parent.model}",
-        tokens_in=0,
-        tokens_out=0,
-        cost_usd=Decimal("0"),
-        latency_ms=0,
-    )
-    session.add(row)
-    session.commit()
-    session.refresh(row)
-    return row
-
-
 def triage_incident(
     session: Session,
     tenant_id: uuid.UUID,
@@ -1075,7 +1002,6 @@ def triage_incident(
 
     Dispatch order:
     1. Existing verdict (unless `force`) — return it.
-    2. Recurrence with an already-triaged parent — inherit, no API call.
     3. Otherwise, the real Analyst -> Judge -> verifier -> Presenter flow — raises
        `MissingAPIKeyError` if no `caller` was injected and `Settings.anthropic_api_key` is unset.
     """
@@ -1085,24 +1011,6 @@ def triage_incident(
         existing = _latest_verdict(session, incident_id)
         if existing is not None:
             return existing
-
-    with tenant_scope(session, tenant_id):
-        incident = session.get(Incident, incident_id)
-        if incident is None:
-            raise AgentContextError(f"incident {incident_id} not found for tenant {tenant_id}")
-        recurrence_of = incident.recurrence_of
-
-    if recurrence_of is not None:
-        parent_verdict = _latest_verdict(session, recurrence_of)
-        if parent_verdict is not None:
-            log.info(
-                "agent.triage_inherited",
-                incident_id=str(incident_id),
-                parent_incident_id=str(recurrence_of),
-            )
-            return _persist_inherited(session, incident_id, parent_verdict)
-        # Parent has no verdict of its own yet — fall through and triage this incident on its own
-        # merits rather than blocking on it.
 
     if caller is None and not settings.llm_enabled:
         raise MissingAPIKeyError
@@ -1195,7 +1103,7 @@ def triage_top_incidents_for_analysis(
     force: bool = False,
 ) -> list[TriageVerdict]:
     """docs/07 "Scope discipline": "Only the top MAX_TRIAGE_INCIDENTS (15) by fused_score."
-    Recurrences among them inherit rather than re-triage. Computes this analysis's
+    Computes this analysis's
     `EvidencePayload`s exactly once (`compute_evidence_payloads`) and shares them across every
     incident's `triage_incident` call — `app.agent.context`'s own module docstring on why
     recomputing per-incident would otherwise happen `MAX_TRIAGE_INCIDENTS` times over."""

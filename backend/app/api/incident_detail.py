@@ -247,7 +247,6 @@ def list_incidents(
                 tags=list(inc.tags),
                 entity_count=len(inc.entity_ids),
                 signal_count=len(inc.signal_ids),
-                recurrence_of=inc.recurrence_of,
                 created_at=inc.created_at,
                 # Everything an analyst must personally look at: never triaged, the agent
                 # itself asked for review, or a verdict whose citations failed verification
@@ -400,23 +399,14 @@ def get_analysis_timeline(
 def _verdict_for_incident(
     db: Session, tenant_id: uuid.UUID, incident: Incident
 ) -> TriageVerdict | None:
-    """This incident's own latest verdict, falling back to its parent's when it is itself a
-    recurrence with none yet (docs/05: a recurrence inherits its parent's verdict rather than
-    re-running the LLM) — so neither the case file nor the evidence view shows an empty state
-    for an incident the analyst has, in substance, already seen. Shared by `get_incident` and
-    `get_incident_evidence` so the two can never disagree about which verdict "this incident's
-    verdict" means.
+    """This incident's own latest verdict. Shared by `get_incident` and `get_incident_evidence`
+    so the two can never disagree about which verdict "this incident's verdict" means.
+
+    Previously fell back to a recurrence parent's verdict when this incident had none. Recurrence
+    detection is gone (it was the duplicate-checking service), so an incident with no verdict now
+    simply has none — every incident is triaged on its own evidence or not at all.
     """
-    verdict = _latest_verdicts(db, [incident.id]).get(incident.id)
-    if verdict is not None or incident.recurrence_of is None:
-        return verdict
-    with tenant_scope(db, tenant_id):
-        parent = db.execute(
-            select(Incident).where(Incident.id == incident.recurrence_of)
-        ).scalar_one_or_none()
-    if parent is None:
-        return None
-    return _latest_verdicts(db, [parent.id]).get(parent.id)
+    return _latest_verdicts(db, [incident.id]).get(incident.id)
 
 
 @router.get("/incidents/{incident_id}", response_model=IncidentDetail)
@@ -463,8 +453,6 @@ def get_incident(
         signal_ids=list(incident.signal_ids),
         tags=list(incident.tags),
         summary=incident.summary,
-        recurrence_of=incident.recurrence_of,
-        recurrence_similarity=incident.recurrence_similarity,
         created_at=incident.created_at,
         entities=[EntityOut.model_validate(e) for e in entities],
         signals=[SignalOut.model_validate(s) for s in signals],

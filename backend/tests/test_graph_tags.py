@@ -10,7 +10,6 @@ from app.graph.tags import (
     TAG_DETECTOR_PREFIX,
     TAG_LAYER_PREFIX,
     TAG_MULTI_LAYER,
-    TAG_RECURRING,
     TAG_TECHNIQUE_PREFIX,
     compute_incident_tags,
 )
@@ -40,7 +39,9 @@ def _signal(
 
 
 def test_allowlisted_technique_becomes_a_tag() -> None:
-    tags = compute_incident_tags([_signal(1, mitre_technique="T1090")], is_recurrence=False)
+    tags = compute_incident_tags(
+        [_signal(1, mitre_technique="T1090")],
+    )
     assert f"{TAG_TECHNIQUE_PREFIX}T1090" in tags
 
 
@@ -50,7 +51,9 @@ def test_two_distinct_allowlisted_techniques_both_tagged() -> None:
         _signal(1, mitre_technique="T1090"),
         _signal(2, mitre_technique="T1105"),
     ]
-    tags = compute_incident_tags(signals, is_recurrence=False)
+    tags = compute_incident_tags(
+        signals,
+    )
     assert f"{TAG_TECHNIQUE_PREFIX}T1090" in tags
     assert f"{TAG_TECHNIQUE_PREFIX}T1105" in tags
 
@@ -59,7 +62,9 @@ def test_technique_outside_allowlist_is_dropped_not_passed_through() -> None:
     """T1552.001 (`credentials-in-url.yml`'s own tag) is not one of the 13 proxy-observable
     allowlisted techniques -- CLAUDE.md: technique ids outside the allowlist are "a bug to
     report, not to pass through."."""
-    tags = compute_incident_tags([_signal(1, mitre_technique="T1552.001")], is_recurrence=False)
+    tags = compute_incident_tags(
+        [_signal(1, mitre_technique="T1552.001")],
+    )
     assert f"{TAG_TECHNIQUE_PREFIX}T1552.001" not in tags
     assert not any(t.startswith(TAG_TECHNIQUE_PREFIX) for t in tags)
 
@@ -68,19 +73,22 @@ def test_malformed_technique_missing_t_prefix_is_dropped() -> None:
     """The exact live-data malformation this environment's Sigma rules currently produce
     (`app/detection/sigma/rule.py`'s `mitre_techniques` strips the leading 'T') -- a bare "1090"
     must not be silently treated as the allowlisted "T1090"."""
-    tags = compute_incident_tags([_signal(1, mitre_technique="1090")], is_recurrence=False)
+    tags = compute_incident_tags(
+        [_signal(1, mitre_technique="1090")],
+    )
     assert not any(t.startswith(TAG_TECHNIQUE_PREFIX) for t in tags)
 
 
 def test_no_technique_produces_no_technique_tag_but_does_not_crash() -> None:
-    tags = compute_incident_tags([_signal(1, mitre_technique=None)], is_recurrence=False)
+    tags = compute_incident_tags(
+        [_signal(1, mitre_technique=None)],
+    )
     assert not any(t.startswith(TAG_TECHNIQUE_PREFIX) for t in tags)
 
 
 def test_layer_and_detector_tags_always_present() -> None:
     tags = compute_incident_tags(
         [_signal(1, detector_key="sigma.blocked_then_allowed", detector_layer="rule")],
-        is_recurrence=False,
     )
     assert f"{TAG_LAYER_PREFIX}rule" in tags
     assert f"{TAG_DETECTOR_PREFIX}sigma.blocked_then_allowed" in tags
@@ -92,7 +100,9 @@ def test_multi_layer_tag_present_when_two_distinct_layers() -> None:
         _signal(1, detector_key="signal.beaconing", detector_layer="signal"),
         _signal(2, detector_key="sigma.large_post_to_new_domain", detector_layer="rule"),
     ]
-    tags = compute_incident_tags(signals, is_recurrence=False)
+    tags = compute_incident_tags(
+        signals,
+    )
     assert TAG_MULTI_LAYER in tags
 
 
@@ -102,18 +112,10 @@ def test_multi_layer_tag_absent_when_single_layer() -> None:
         _signal(1, detector_key="sigma.blocked_then_allowed", detector_layer="rule"),
         _signal(2, detector_key="sigma.large_post_to_new_domain", detector_layer="rule"),
     ]
-    tags = compute_incident_tags(signals, is_recurrence=False)
+    tags = compute_incident_tags(
+        signals,
+    )
     assert TAG_MULTI_LAYER not in tags
-
-
-def test_recurring_tag_present_when_is_recurrence_true() -> None:
-    tags = compute_incident_tags([_signal(1)], is_recurrence=True)
-    assert TAG_RECURRING in tags
-
-
-def test_recurring_tag_absent_when_is_recurrence_false() -> None:
-    tags = compute_incident_tags([_signal(1)], is_recurrence=False)
-    assert TAG_RECURRING not in tags
 
 
 def test_tags_are_sorted_and_deduplicated() -> None:
@@ -131,11 +133,12 @@ def test_tags_are_sorted_and_deduplicated() -> None:
             mitre_technique="T1090",
         ),
     ]
-    tags = compute_incident_tags(signals, is_recurrence=False)
+    tags = compute_incident_tags(
+        signals,
+    )
     assert tags == sorted(set(tags))
     assert tags.count(f"{TAG_TECHNIQUE_PREFIX}T1090") == 1
 
 
 def test_empty_signal_list_produces_no_tags_without_crashing() -> None:
-    assert compute_incident_tags([], is_recurrence=False) == []
-    assert compute_incident_tags([], is_recurrence=True) == [TAG_RECURRING]
+    assert compute_incident_tags([]) == []

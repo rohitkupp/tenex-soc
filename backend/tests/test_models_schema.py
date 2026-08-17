@@ -75,34 +75,6 @@ def test_signals_index_and_tenant_id_has_no_fk_or_bare_index() -> None:
     assert not any(d.rstrip().endswith("btree (tenant_id)") for d in index_defs.values())
 
 
-def test_incidents_hnsw_index_and_recurrence_of_self_fk() -> None:
-    with get_engine().connect() as conn:
-        index_defs = dict(
-            conn.execute(
-                text("SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'incidents'")
-            ).all()
-        )
-        fk_defs = dict(
-            conn.execute(
-                text(
-                    "SELECT conname, pg_get_constraintdef(oid) FROM pg_constraint "
-                    "WHERE conrelid = 'incidents'::regclass AND contype = 'f'"
-                )
-            ).all()
-        )
-
-    hnsw_def = index_defs["ix_incidents_embedding_hnsw"]
-    assert "USING hnsw" in hnsw_def
-    assert "vector_cosine_ops" in hnsw_def
-    assert "embedding" in hnsw_def
-
-    assert fk_defs["incidents_recurrence_of_fkey"] == (
-        "FOREIGN KEY (recurrence_of) REFERENCES incidents(id)"
-    )
-    assert not any("tenants" in d for d in fk_defs.values())
-    assert not any(d.rstrip().endswith("btree (tenant_id)") for d in index_defs.values())
-
-
 def test_entities_unique_constraint_on_analysis_id_type_value() -> None:
     with get_engine().connect() as conn:
         index_defs = (
@@ -170,13 +142,15 @@ def test_vector_columns_are_pgvector_1024() -> None:
             text(
                 "SELECT c.relname, a.atttypmod FROM pg_attribute a "
                 "JOIN pg_class c ON c.oid = a.attrelid "
-                "WHERE c.relname IN ('incidents', 'tier2_signatures') "
+                "WHERE c.relname = 'tier2_signatures' "
                 "AND a.attname = 'embedding' AND a.attnum > 0 AND NOT a.attisdropped"
             )
         ).all()
     by_table = dict(rows)
-    assert by_table["incidents"] == 1024
-    assert by_table["tier2_signatures"] == 1024
+    # `incidents.embedding` is gone with recurrence detection (migration c9d5e83f2a17).
+    # `tier2_signatures.embedding` is the only pgvector column left, and Tier 2 now computes it
+    # itself (`app.tier2.embedding`) instead of borrowing the incident's.
+    assert by_table == {"tier2_signatures": 1024}
 
 
 # ------------------------------------------------------------ tricky-type round trips
@@ -216,98 +190,6 @@ def test_signals_evidence_event_ids_array_and_explanation_jsonb_round_trip(
         assert signal.created_at is not None
     finally:
         session.close()
-
-
-def test_incidents_embedding_vector_and_id_arrays_round_trip(
-    tenant_cleanup: list[uuid.UUID],
-) -> None:
-    tenant = make_tenant(name="Incidents Roundtrip")
-    tenant_cleanup.append(tenant.id)
-    user = make_user(tenant_id=tenant.id, email="incidents-rt@example.com")
-    analysis = make_analysis(tenant_id=tenant.id, user_id=user.id)
-
-    session = get_session_factory()()
-    try:
-        with tenant_scope(session, tenant.id):
-            incident = Incident(
-                analysis_id=analysis.id,
-                tenant_id=tenant.id,
-                title="Suspected credential stuffing",
-                severity="high",
-                fused_score=0.88,
-                anomaly_confidence=anomaly_confidence_from_fused_score(0.88),
-                entity_ids=[10, 20, 30],
-                signal_ids=[100, 200],
-                embedding=VEC,
-            )
-            session.add(incident)
-            session.commit()
-            session.refresh(incident)
-
-        assert incident.entity_ids == [10, 20, 30]
-        assert incident.signal_ids == [100, 200]
-        assert incident.status == "open"
-        assert incident.embedding is not None
-        assert len(incident.embedding) == 1024
-        assert incident.recurrence_of is None
-    finally:
-        session.close()
-
-
-def test_incidents_recurrence_of_self_reference_round_trip(
-    tenant_cleanup: list[uuid.UUID],
-) -> None:
-    tenant = make_tenant(name="Incidents Recurrence")
-    tenant_cleanup.append(tenant.id)
-    user = make_user(tenant_id=tenant.id, email="incidents-recur@example.com")
-    analysis = make_analysis(tenant_id=tenant.id, user_id=user.id)
-
-    session = get_session_factory()()
-    child_id: uuid.UUID | None = None
-    parent_id: uuid.UUID | None = None
-    try:
-        with tenant_scope(session, tenant.id):
-            parent = Incident(
-                analysis_id=analysis.id,
-                tenant_id=tenant.id,
-                title="Original incident",
-                severity="medium",
-                fused_score=0.5,
-                anomaly_confidence=anomaly_confidence_from_fused_score(0.5),
-                entity_ids=[],
-                signal_ids=[],
-            )
-            session.add(parent)
-            session.commit()
-            session.refresh(parent)
-            parent_id = parent.id
-
-            child = Incident(
-                analysis_id=analysis.id,
-                tenant_id=tenant.id,
-                title="Recurrence of the original",
-                severity="medium",
-                fused_score=0.6,
-                anomaly_confidence=anomaly_confidence_from_fused_score(0.6),
-                entity_ids=[],
-                signal_ids=[],
-                recurrence_of=parent.id,
-                recurrence_similarity=0.94,
-            )
-            session.add(child)
-            session.commit()
-            session.refresh(child)
-            child_id = child.id
-
-        assert child.recurrence_of == parent_id
-        assert child.recurrence_similarity == pytest.approx(0.94)
-    finally:
-        session.close()
-        # Delete the self-referencing child before the parent, then let tenant_cleanup
-        # sweep the analysis (which cascades the parent) — recurrence_of has no ON
-        # DELETE action per docs/02, so order matters here.
-        if child_id is not None:
-            _exec("DELETE FROM incidents WHERE id = :id", id=str(child_id))
 
 
 def test_entities_unique_constraint_raises_on_duplicate(
