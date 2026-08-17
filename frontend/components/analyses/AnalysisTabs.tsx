@@ -48,7 +48,7 @@ export function AnalysisTabs({
   overview: ReactNode;
   incidents: ReactNode;
   events: ReactNode;
-  evidence: ReactNode;
+  evidence: (active: boolean) => ReactNode;
   counts?: Partial<Record<AnalysisTabKey, number>>;
 }) {
   const [active, setActive] = useState<AnalysisTabKey>("overview");
@@ -69,7 +69,14 @@ export function AnalysisTabs({
     window.history.replaceState(null, "", url);
   }, []);
 
-  const panels: Record<AnalysisTabKey, ReactNode> = { overview, incidents, events, evidence };
+  const panels: Record<AnalysisTabKey, ReactNode> = {
+    overview,
+    incidents,
+    events,
+    // A render prop, not a node: the Evidence panel fetches its own (large, slow) payload and
+    // must not start until the analyst actually opens the tab.
+    evidence: evidence(active === "evidence"),
+  };
 
   return (
     <div className="flex flex-col gap-6">

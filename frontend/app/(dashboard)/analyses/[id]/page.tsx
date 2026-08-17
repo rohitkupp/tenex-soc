@@ -3,7 +3,6 @@ import Link from "next/link";
 import { fetchServer } from "@/lib/api/server";
 import type {
   AnalysisDetail,
-  AnalysisEvidenceResponse,
   AnalysisOverviewResponse,
   AnalysisTimelineResponse,
   EventListResponse,
@@ -21,7 +20,7 @@ import { TrafficStatsPanel } from "@/components/analyses/TrafficStatsPanel";
 import { AnalysisTabs } from "@/components/analyses/AnalysisTabs";
 import { IncidentQueue } from "@/components/incidents/IncidentQueue";
 import { EventExplorer } from "@/components/events/EventExplorer";
-import { EvidenceExplorer } from "@/components/evidence/EvidenceExplorer";
+import { LazyEvidenceTab } from "@/components/evidence/LazyEvidenceTab";
 import { Panel } from "@/components/ui/Panel";
 
 export const metadata: Metadata = { title: "Analysis — Tenex SOC Analyst" };
@@ -44,7 +43,7 @@ export default async function AnalysisDetailPage({
   // All four tab payloads in one parallel batch, so the page costs the *slowest* fetch rather
   // than the sum — and switching tabs afterwards costs nothing at all, because no further
   // request happens. This replaces three separate routes that each paid a full server render.
-  const [analysis, timeline, overview, incidents, events, evidence] = await Promise.all([
+  const [analysis, timeline, overview, incidents, events] = await Promise.all([
     fetchServer<AnalysisDetail>(`/api/analyses/${id}`),
     fetchServer<AnalysisTimelineResponse>(`/api/analyses/${id}/timeline`),
     // change 9: deterministic, always produced — safe to fetch on every render. It also carries
@@ -53,7 +52,9 @@ export default async function AnalysisDetailPage({
     fetchServer<AnalysisOverviewResponse>(`/api/analyses/${id}/overview`),
     fetchServer<IncidentsListResponse>(`/api/analyses/${id}/incidents`),
     fetchServer<EventListResponse>(`/api/analyses/${id}/events?limit=100`),
-    fetchServer<AnalysisEvidenceResponse>(`/api/analyses/${id}/evidence`),
+    // Evidence is deliberately absent: it is ~13s and 328KB, and putting it here would make
+    // opening the analysis page cost the slowest tab nobody asked for. `LazyEvidenceTab`
+    // fetches it when the tab is first opened.
   ]);
 
   // fetchServer collapses "not found" and "API unreachable" to the same
@@ -190,7 +191,6 @@ export default async function AnalysisDetailPage({
         counts={{
           incidents: incidents?.items.length,
           events: events?.items.length,
-          evidence: evidence?.items.length,
         }}
         overview={
           isRunning || isFailed ? (
@@ -219,13 +219,7 @@ export default async function AnalysisDetailPage({
             <EventExplorer analysisId={analysis.id} initial={events} />
           )
         }
-        evidence={
-          evidence === null ? (
-            <Unreachable what="evidence" />
-          ) : (
-            <EvidenceExplorer analysisId={analysis.id} initial={evidence} />
-          )
-        }
+        evidence={(active) => <LazyEvidenceTab analysisId={analysis.id} active={active} />}
       />
     </div>
   );
