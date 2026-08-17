@@ -35,6 +35,29 @@ human to look at it).
 change 12 removed the demo-mode/no-key fallback, so a missing `ANTHROPIC_API_KEY` is a permanent
 configuration error, not a mode to degrade into. `make_handler(caller=...)` is the injection point tests use to hand in a recorded/scripted
 `LLMCaller` instead — CI never needs a live key.
+
+## Non-retryable Anthropic failures must not spend the full backoff ladder
+
+Observed in production: a triage stage that had exhausted its credit balance dead-lettered
+"after 4 attempt(s)" — attempt 0 plus all three backoff retries (`app.pipeline.base_worker`) —
+with cost climbing in even steps across every attempt, because `_run_triage` re-ran the *entire*
+four-stage Analyst/verifier/Judge/verifier/Presenter chain (plus Path A's narration call) on each
+retry. `anthropic.BadRequestError` (400 `invalid_request_error`) is not
+`app.pipeline.errors.PermanentStageError`, so `base_worker` treated it exactly like a dropped DB
+connection: retry with backoff, three more times, at full LLM spend each time. A 400 from a bad
+request (or an exhausted credit balance, or an invalid/expired key, or a model ID this account
+cannot access) cannot succeed on retry — the request is identical every time.
+
+`_permanent_stage_error_for` below classifies the four Anthropic exception classes that are
+genuinely non-retryable (see its own docstring for the exact list and why) and `_run_triage`
+re-raises those as `PermanentStageError` so `base_worker` dead-letters on the first attempt
+instead of the fourth. Every other failure — including the other Anthropic exception classes
+(`RateLimitError`, `InternalServerError`, `OverloadedError`, `APIConnectionError`/
+`APITimeoutError`) and anything unrelated to the LLM call (a DB hiccup, a bug) — is left alone
+and keeps the existing retry-with-backoff policy. The error is never swallowed either way: a
+reclassified failure still carries the original exception's message (via `PermanentStageError`'s
+own text) into the `dead_letters` row and `analyses.error`, exactly as an unclassified failure's
+message does today — only the attempt count changes.
 """
 
 from __future__ import annotations
@@ -44,8 +67,9 @@ import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Final
 
+import anthropic
 from sqlalchemy import func, select, update
 
 from app.agent.client import LiveCaller, LLMCaller
@@ -71,6 +95,38 @@ from app.pipeline.redis_client import get_redis
 log = get_logger(__name__)
 
 TriageHandler = Callable[[StageMessage], Awaitable[list[tuple[str, StageMessage]]]]
+
+# Verified against the installed SDK's status-code -> exception-class mapping
+# (`anthropic.Anthropic._make_status_error`, anthropic==0.122.0 — that mapping has drifted across
+# SDK releases, so this was read from the vendored source in the container, not recalled from
+# memory) and the claude-api skill's error-code reference. Each of these four is a permanent,
+# request-shape/credential/model-identity failure: retrying the byte-identical request cannot
+# change a still-exhausted credit balance, a still-invalid API key, or a model ID the account
+# still cannot access.
+_PERMANENT_ANTHROPIC_ERRORS: Final[tuple[type[anthropic.APIStatusError], ...]] = (
+    anthropic.BadRequestError,  # 400 invalid_request_error
+    anthropic.AuthenticationError,  # 401 authentication_error
+    anthropic.PermissionDeniedError,  # 403 permission_error
+    anthropic.NotFoundError,  # 404 not_found_error -- model ID not found/not accessible
+)
+
+
+def _permanent_stage_error_for(exc: Exception) -> PermanentStageError | None:
+    """`None` for everything retryable (`anthropic.RateLimitError` — 429; `anthropic.
+    InternalServerError` — the SDK's own catch-all for every 5xx it does not special-case,
+    which per `_make_status_error` covers 500/502/503 alike, not just 500; `anthropic.
+    OverloadedError` — 529; `anthropic.APIConnectionError`/`APITimeoutError` — network/timeout;
+    and any exception that isn't one of the four classes named on `_PERMANENT_ANTHROPIC_ERRORS`
+    at all, LLM-related or not) — the caller's bare `raise` then preserves `app.pipeline.
+    base_worker`'s existing retry-with-backoff policy unchanged. See this module's own docstring,
+    "Non-retryable Anthropic failures must not spend the full backoff ladder", for why the four
+    classes below are the exception."""
+    if isinstance(exc, _PERMANENT_ANTHROPIC_ERRORS):
+        return PermanentStageError(
+            f"triage stage hit a non-retryable Anthropic API error ({type(exc).__name__}, "
+            f"HTTP {exc.status_code}, type={exc.type}): {exc}"
+        )
+    return None
 
 
 def _needs_attention(
@@ -210,6 +266,18 @@ def _run_triage(message: StageMessage, *, caller: LLMCaller | None = None) -> di
                         )
                     )
                     session.commit()
+    except Exception as exc:
+        # Wraps both Path B (`triage_top_incidents_for_analysis`) and Path A (`narrate_analysis`)
+        # -- either can raise straight out of `app.agent.client.LiveCaller.create` ->
+        # `anthropic.Anthropic().messages.create`, and neither `app.agent.orchestrator` nor this
+        # function's own body catches Anthropic exceptions anywhere upstream of here (verified:
+        # orchestrator.py only catches `ToolError`/`ValidationError`, unrelated to the API call
+        # itself), so this single point sees every one of them. See module docstring "Non-
+        # retryable Anthropic failures must not spend the full backoff ladder".
+        permanent = _permanent_stage_error_for(exc)
+        if permanent is not None:
+            raise permanent from exc
+        raise
     finally:
         session.close()
 
