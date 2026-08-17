@@ -250,10 +250,20 @@ class LiveCaller:
             kwargs["tools"] = tools
         if tool_choice:
             kwargs["tool_choice"] = tool_choice
-        # **kwargs erases the SDK's overload resolution (stream=True/False), which is what
-        # actually pins the return type to Message vs Stream[...] — this call never sets
-        # `stream`, so it always resolves to the non-streaming Message overload at runtime.
-        return cast(Message, self._client.messages.create(**kwargs))
+        # Streamed, then collapsed back to a single `Message` via `get_final_message()`.
+        #
+        # The SDK refuses a *non*-streaming request whose `max_tokens` implies a generation that
+        # could exceed ten minutes ("Streaming is required for operations that may take longer
+        # than 10 minutes"), and raising the per-turn ceiling to 32768 crossed that line — every
+        # triage run died at the first Analyst call. Streaming is the documented fix and is the
+        # right default for high `max_tokens` regardless: it also removes the request-timeout
+        # cliff on a long generation.
+        #
+        # Callers are unchanged. `get_final_message()` blocks until the stream completes and
+        # returns the same accumulated `Message` — same `content`, `stop_reason`, and `usage`
+        # this method already returned — so nothing downstream has to learn about events.
+        with self._client.messages.stream(**kwargs) as stream:
+            return cast(Message, stream.get_final_message())
 
 
 class FixtureExhaustedError(RuntimeError):

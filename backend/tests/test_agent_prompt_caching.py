@@ -83,6 +83,24 @@ def _count_cache_control(obj: Any) -> int:
     return 0
 
 
+class _FakeStream:
+    """Stands in for `messages.stream`'s context manager. `LiveCaller.create` streams and then
+    collapses the result with `get_final_message()` — the SDK rejects a non-streaming request
+    whose `max_tokens` could run past ten minutes, which the raised per-turn ceiling crosses."""
+
+    def __init__(self, message: Message) -> None:
+        self._message = message
+
+    def __enter__(self) -> _FakeStream:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        return None
+
+    def get_final_message(self) -> Message:
+        return self._message
+
+
 # ---------------------------------------------------------------------------- LiveCaller (no DB)
 
 
@@ -92,11 +110,11 @@ def test_live_caller_wraps_system_as_cached_block(monkeypatch: pytest.MonkeyPatc
     caller = LiveCaller(api_key="sk-ant-not-a-real-key")
     captured: dict[str, Any] = {}
 
-    def fake_create(**kwargs: Any) -> Message:
+    def fake_stream(**kwargs: Any) -> _FakeStream:
         captured.update(kwargs)
-        return _ANY_MESSAGE
+        return _FakeStream(_ANY_MESSAGE)
 
-    monkeypatch.setattr(caller._client.messages, "create", fake_create)
+    monkeypatch.setattr(caller._client.messages, "stream", fake_stream)
 
     caller.create(
         model="claude-opus-5",
@@ -126,11 +144,11 @@ def test_live_caller_system_cache_control_text_is_byte_identical(
     caller = LiveCaller(api_key="sk-ant-not-a-real-key")
     captured: dict[str, Any] = {}
 
-    def fake_create(**kwargs: Any) -> Message:
+    def fake_stream(**kwargs: Any) -> _FakeStream:
         captured.update(kwargs)
-        return _ANY_MESSAGE
+        return _FakeStream(_ANY_MESSAGE)
 
-    monkeypatch.setattr(caller._client.messages, "create", fake_create)
+    monkeypatch.setattr(caller._client.messages, "stream", fake_stream)
 
     for system_prompt in _ALL_SYSTEM_PROMPTS:
         captured.clear()
@@ -156,11 +174,11 @@ def test_live_caller_does_not_add_cache_control_to_messages_or_tools(
     caller = LiveCaller(api_key="sk-ant-not-a-real-key")
     captured: dict[str, Any] = {}
 
-    def fake_create(**kwargs: Any) -> Message:
+    def fake_stream(**kwargs: Any) -> _FakeStream:
         captured.update(kwargs)
-        return _ANY_MESSAGE
+        return _FakeStream(_ANY_MESSAGE)
 
-    monkeypatch.setattr(caller._client.messages, "create", fake_create)
+    monkeypatch.setattr(caller._client.messages, "stream", fake_stream)
 
     messages_in = [{"role": "user", "content": "plain string, unmarked"}]
     tools_in = [build_present_verdict_tool()]
@@ -189,11 +207,11 @@ def test_live_caller_real_analyst_call_stays_under_max_breakpoints(
     caller = LiveCaller(api_key="sk-ant-not-a-real-key")
     captured: dict[str, Any] = {}
 
-    def fake_create(**kwargs: Any) -> Message:
+    def fake_stream(**kwargs: Any) -> _FakeStream:
         captured.update(kwargs)
-        return _ANY_MESSAGE
+        return _FakeStream(_ANY_MESSAGE)
 
-    monkeypatch.setattr(caller._client.messages, "create", fake_create)
+    monkeypatch.setattr(caller._client.messages, "stream", fake_stream)
 
     caller.create(
         model="claude-opus-5",
