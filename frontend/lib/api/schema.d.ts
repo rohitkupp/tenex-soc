@@ -827,6 +827,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/tier2/detector-reliability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Detector Reliability
+         * @description Chart 3: per-detector confirm/dismiss counts pooled across every tenant's analyst
+         *     feedback — see `app.tier2.detector_reliability`'s module docstring for why this route is
+         *     a deliberate, reviewed exception to tenant scoping rather than an accidental leak.
+         */
+        get: operations["get_detector_reliability_api_tier2_detector_reliability_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tier2/first-seen": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get First Seen Propagation
+         * @description Chart 4: for indicators seen by `min_tenants` or more tenants, when each tenant first
+         *     observed it — the early-warning story ("tenant A on day 1, tenant B on day 4").
+         */
+        get: operations["get_first_seen_propagation_api_tier2_first_seen_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tier2/indicator-overlap": {
         parameters: {
             query?: never;
@@ -836,6 +879,27 @@ export interface paths {
         };
         /** Get Indicator Overlap */
         get: operations["get_indicator_overlap_api_tier2_indicator_overlap_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tier2/overlap-distribution": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Overlap Distribution
+         * @description Chart 1: for every indicator signature, how many distinct tenants have seen it,
+         *     bucketed into 1 / 2 / 3+. The 2+ buckets are the cross-tenant signal itself.
+         */
+        get: operations["get_overlap_distribution_api_tier2_overlap_distribution_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -861,17 +925,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/tier2/query": {
+    "/api/tier2/technique-prevalence": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get Technique Prevalence
+         * @description Chart 2: which of the 13 proxy-observable ATT&CK techniques (docs/13 M14,
+         *     `data/kb/mitre/allowlist.yml`) appear in how many tenants — every allowlisted technique
+         *     is returned, including ones observed in zero tenants so far, never a fabricated id.
+         */
+        get: operations["get_technique_prevalence_api_tier2_technique_prevalence_get"];
         put?: never;
-        /** Query Tier2 */
-        post: operations["query_tier2_api_tier2_query_post"];
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1174,6 +1243,28 @@ export interface components {
             precision: number | null;
             /** Synthetic */
             synthetic: boolean;
+        };
+        /** DetectorReliabilityEntryOut */
+        DetectorReliabilityEntryOut: {
+            /** Confirmed */
+            confirmed: number;
+            /** Detector Key */
+            detector_key: string;
+            /** Detector Layer */
+            detector_layer: string;
+            /** Dismissed */
+            dismissed: number;
+        };
+        /**
+         * DetectorReliabilityResponse
+         * @description `total_tenants` is the count of distinct tenants that have contributed *any* analyst
+         *     feedback, pooled across the whole fleet — see `app.tier2.detector_reliability`.
+         */
+        DetectorReliabilityResponse: {
+            /** Items */
+            items: components["schemas"]["DetectorReliabilityEntryOut"][];
+            /** Total Tenants */
+            total_tenants: number;
         };
         /** DetectorWeightChangeOut */
         DetectorWeightChangeOut: {
@@ -1572,6 +1663,30 @@ export interface components {
             /** Suppression Candidates Generated */
             suppression_candidates_generated: string[];
         };
+        /** FirstSeenIndicatorOut */
+        FirstSeenIndicatorOut: {
+            /** Indicator Hash */
+            indicator_hash: string;
+            /** Observations */
+            observations: components["schemas"]["FirstSeenTenantObservationOut"][];
+            /** Tenant Count */
+            tenant_count: number;
+        };
+        /** FirstSeenResponse */
+        FirstSeenResponse: {
+            /** Items */
+            items: components["schemas"]["FirstSeenIndicatorOut"][];
+        };
+        /** FirstSeenTenantObservationOut */
+        FirstSeenTenantObservationOut: {
+            /**
+             * First Observed At
+             * Format: date-time
+             */
+            first_observed_at: string;
+            /** Tenant Hash */
+            tenant_hash: string;
+        };
         /** GraphEdge */
         GraphEdge: {
             /** Event Count */
@@ -1620,6 +1735,15 @@ export interface components {
          *
          *     `verdict` is `null` for an untriaged incident. A recurrence inherits its parent's verdict
          *     (docs/05), so it can be non-null even for an incident the agent never ran on directly.
+         *
+         *     `tags` / `summary` are the deterministic pipeline outputs this class adds: computed once by
+         *     `app.pipeline.stages.correlate` (`app.graph.tags` / `app.graph.summary`) for every incident,
+         *     zero LLM cost. `summary` is never null or empty and is never overwritten by
+         *     `verdict.summary` (the LLM's own, richer narrative, present only once triaged) — the case
+         *     file renders both, labelled: this one always, the LLM's in addition when it exists. See
+         *     `app.models.incident.Incident`'s "tags / summary" docstring section for the full provenance
+         *     split, matching `anomaly_confidence`/`verdict.threat_confidence`'s "two confidences, never
+         *     mixed" precedent (docs/v2_migration change 3).
          */
         IncidentDetail: {
             /**
@@ -1657,6 +1781,10 @@ export interface components {
             signals: components["schemas"]["SignalOut"][];
             /** Status */
             status: string;
+            /** Summary */
+            summary: string;
+            /** Tags */
+            tags: string[];
             /** Title */
             title: string;
             verdict: components["schemas"]["TriageVerdictResponse"] | null;
@@ -1686,6 +1814,14 @@ export interface components {
          *     `disposition`, `citation_valid`, and `mitre_techniques` come from the incident's latest
          *     verdict and are `null`/`[]` when it has not been triaged (docs/07 triages only the top
          *     `MAX_TRIAGE_INCIDENTS`, so an untriaged incident is the normal case, not an error).
+         *
+         *     `tags` is different: `app.pipeline.stages.correlate` computes it deterministically for every
+         *     incident, at zero LLM cost, from the incident's own member signals (`app.graph.tags`) — never
+         *     null, never empty-because-untriaged. Never conflate the two: `mitre_techniques` here is the
+         *     LLM's own contribution (unchanged by this field's addition), `tags` is a machine-computed
+         *     pipeline output that happens to include technique ids too (namespaced `technique:<id>`,
+         *     filtered to the MITRE allowlist) alongside `layer:`/`detector:`/derived tags. See
+         *     `app.graph.tags`'s module docstring for the full provenance split.
          */
         IncidentListItem: {
             /** Anomaly Confidence */
@@ -1718,6 +1854,8 @@ export interface components {
             severity: string;
             /** Signal Count */
             signal_count: number;
+            /** Tags */
+            tags: string[];
             /** Title */
             title: string;
         };
@@ -1993,6 +2131,25 @@ export interface components {
             value: string;
             volume_vs_baseline: components["schemas"]["BaselineComparisonOut"];
         };
+        /**
+         * OverlapBucketOut
+         * @description `bucket` is one of `"1"`, `"2"`, `"3+"` — the number of distinct tenants that have
+         *     seen a given indicator signature. The `"2"`/`"3+"` buckets together are the cross-tenant
+         *     signal itself; `"1"` is the (expected) majority of indicators seen by only one tenant.
+         */
+        OverlapBucketOut: {
+            /** Bucket */
+            bucket: string;
+            /** Indicator Count */
+            indicator_count: number;
+        };
+        /** OverlapDistributionResponse */
+        OverlapDistributionResponse: {
+            /** Buckets */
+            buckets: components["schemas"]["OverlapBucketOut"][];
+            /** Total Indicators */
+            total_indicators: number;
+        };
         /** PeriodicityOut */
         PeriodicityOut: {
             /** Dominant Period S */
@@ -2162,6 +2319,28 @@ export interface components {
             /** Items */
             items: components["schemas"]["SuppressionCandidateOut"][];
         };
+        /**
+         * TechniquePrevalenceEntryOut
+         * @description One row per allowlisted technique (`data/kb/mitre/allowlist.yml`) — always all 13,
+         *     including ones with `tenant_count == 0`, never a fabricated id.
+         */
+        TechniquePrevalenceEntryOut: {
+            /** Signature Count */
+            signature_count: number;
+            /** Technique Id */
+            technique_id: string;
+            /** Technique Name */
+            technique_name: string;
+            /** Tenant Count */
+            tenant_count: number;
+        };
+        /** TechniquePrevalenceResponse */
+        TechniquePrevalenceResponse: {
+            /** Items */
+            items: components["schemas"]["TechniquePrevalenceEntryOut"][];
+            /** Total Tenants With Signatures */
+            total_tenants_with_signatures: number;
+        };
         /** TenantOut */
         TenantOut: {
             /**
@@ -2187,32 +2366,6 @@ export interface components {
             total_signatures: number;
             /** Total Tenants */
             total_tenants: number;
-        };
-        /** Tier2QueryRequest */
-        Tier2QueryRequest: {
-            /** Question */
-            question: string;
-        };
-        /**
-         * Tier2QueryResponse
-         * @description docs/09: `POST /api/tier2/query` -> `{sql, explanation, columns, rows, chart_hint}`,
-         *     always including `sql` — rejected or not (docs/09: "especially then").
-         */
-        Tier2QueryResponse: {
-            /** Chart Hint */
-            chart_hint: string;
-            /** Columns */
-            columns: string[];
-            /** Explanation */
-            explanation: string;
-            /** Rejected */
-            rejected: boolean;
-            /** Rejection Reason */
-            rejection_reason: string | null;
-            /** Rows */
-            rows: unknown[][];
-            /** Sql */
-            sql: string;
         };
         /**
          * TimelinePhaseOut
@@ -3660,6 +3813,70 @@ export interface operations {
             };
         };
     };
+    get_detector_reliability_api_tier2_detector_reliability_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                tenex_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DetectorReliabilityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_first_seen_propagation_api_tier2_first_seen_get: {
+        parameters: {
+            query?: {
+                min_tenants?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: {
+                tenex_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FirstSeenResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_indicator_overlap_api_tier2_indicator_overlap_get: {
         parameters: {
             query?: {
@@ -3681,6 +3898,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IndicatorOverlapResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_overlap_distribution_api_tier2_overlap_distribution_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                tenex_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OverlapDistributionResponse"];
                 };
             };
             /** @description Validation Error */
@@ -3725,7 +3973,7 @@ export interface operations {
             };
         };
     };
-    query_tier2_api_tier2_query_post: {
+    get_technique_prevalence_api_tier2_technique_prevalence_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -3734,11 +3982,7 @@ export interface operations {
                 tenex_session?: string | null;
             };
         };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["Tier2QueryRequest"];
-            };
-        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {
@@ -3746,7 +3990,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Tier2QueryResponse"];
+                    "application/json": components["schemas"]["TechniquePrevalenceResponse"];
                 };
             };
             /** @description Validation Error */

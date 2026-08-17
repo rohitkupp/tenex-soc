@@ -37,6 +37,8 @@ from app.graph.builder import (
 )
 from app.graph.incidents import IncidentCandidate, SignalRef, form_incidents
 from app.graph.recurrence import canonical_text, embed_text, link_recurrence
+from app.graph.summary import summary_for_incident
+from app.graph.tags import compute_incident_tags
 from app.graph.titling import title_for_incident
 from app.learning.initial_weights import load_initial_fusion_weights
 from app.models.base import tenant_scope
@@ -78,6 +80,18 @@ def _pick_primary_entity(candidate: IncidentCandidate) -> EntityKey:
     for s in candidate.signals:
         counts[(s.entity_type, s.entity_value)] += 1
     return max(candidate.seed_entity_keys, key=lambda k: (counts.get(k, 0), k))
+
+
+def _entity_type_counts(candidate: IncidentCandidate) -> dict[str, int]:
+    """`{entity_type: count}` over the incident's full community (`entity_keys`, docs/05 step 3's
+    induced subgraph — seeds plus their 1-hop neighborhood), for `app.graph.summary.
+    summary_for_incident`'s "on {entity phrase}" clause. The same population `entity_ids`
+    persists and the graph endpoint (`GET /api/incidents/{id}/graph`) renders, not just the
+    seeds, so the summary's entity count matches what the analyst sees on the graph tab."""
+    counts: dict[str, int] = defaultdict(int)
+    for entity_type, _value in candidate.entity_keys:
+        counts[entity_type] += 1
+    return dict(counts)
 
 
 def _pick_top_technique(candidate: IncidentCandidate) -> str | None:
@@ -157,18 +171,24 @@ def _run_correlate(message: StageMessage) -> dict[str, Any]:
                 evidence_ids: set[int] = set()
                 for s in candidate.signals:
                     evidence_ids.update(s.evidence_event_ids)
-                tags: set[str] = set()
+                # Event-level enrichment tags (docs/03's enrichment step: threat intel/category
+                # labels written onto `events.enrichment`) -- feeds the recurrence embedding's
+                # canonical text only. Distinct from `incident_tags` below (the new pipeline
+                # output this task adds: technique/layer/detector/derived tags on the *incident*
+                # itself, docs/09 + `app.graph.tags`) -- renamed from the bare `tags` this loop
+                # used before that feature existed, so the two are never confused at a call site.
+                enrichment_tags: set[str] = set()
                 if evidence_ids:
                     for (enrichment,) in session.execute(
                         select(Event.enrichment).where(Event.id.in_(evidence_ids))
                     ):
-                        tags.update((enrichment or {}).get("tags", []))
+                        enrichment_tags.update((enrichment or {}).get("tags", []))
 
                 canonical = canonical_text(
                     technique_ids=[s.mitre_technique for s in candidate.signals],
                     detector_keys=[s.detector_key for s in candidate.signals],
                     entity_types=[k[0] for k in candidate.entity_keys],
-                    enrichment_tags=sorted(tags),
+                    enrichment_tags=sorted(enrichment_tags),
                 )
                 embedding = embed_text(canonical)
                 link = link_recurrence(session, embedding)
@@ -176,6 +196,22 @@ def _run_correlate(message: StageMessage) -> dict[str, Any]:
                 entity_ids = [
                     entity_key_to_id[k] for k in candidate.entity_keys if k in entity_key_to_id
                 ]
+
+                # Deterministic pipeline outputs, computed once here alongside the title and the
+                # recurrence embedding -- zero LLM cost, present for every incident (not just the
+                # top `MAX_TRIAGE_INCIDENTS` an LLM triages). See `app.graph.tags` and
+                # `app.graph.summary` module docstrings for the full rationale, including the
+                # MITRE-allowlist mismatch `compute_incident_tags` guards against.
+                incident_tags = compute_incident_tags(
+                    candidate.signals, is_recurrence=link is not None
+                )
+                incident_summary = summary_for_incident(
+                    signals=candidate.signals,
+                    entity_type_counts=_entity_type_counts(candidate),
+                    top_technique_id=top_technique,
+                    severity=incident_score.severity,
+                )
+
                 incident_row = Incident(
                     analysis_id=message.analysis_id,
                     tenant_id=message.tenant_id,
@@ -185,6 +221,8 @@ def _run_correlate(message: StageMessage) -> dict[str, Any]:
                     anomaly_confidence=incident_score.anomaly_confidence,
                     entity_ids=entity_ids,
                     signal_ids=[s.signal_id for s in candidate.signals],
+                    tags=incident_tags,
+                    summary=incident_summary,
                     recurrence_of=link.recurrence_of if link else None,
                     recurrence_similarity=link.recurrence_similarity if link else None,
                     embedding=embedding,

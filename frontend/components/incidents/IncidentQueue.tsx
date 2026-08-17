@@ -18,6 +18,16 @@ import { SEVERITY_ORDER, dispositionLabel, severityLabel } from "@/lib/severity"
 import { SeverityBar } from "@/components/severity/SeverityBar";
 import { Badge } from "@/components/ui/Badge";
 import { formatScore } from "@/lib/format";
+import { techniqueIdsFromTags } from "@/lib/tags";
+
+/** The union of both technique provenances for one incident, deduplicated — deterministic tags
+ * (`app.graph.tags`, populated for essentially every incident with an L1 rule hit) and the LLM's
+ * own `mitre_techniques` (populated only once triaged). The queue row is a scanning aid, not the
+ * place full provenance detail lives (that's the case file's "Detected" vs "LLM assessment"
+ * rows, `CaseHeader`) — but the two are never silently dropped here either. */
+function allTechniqueIds(incident: IncidentListItem): string[] {
+  return [...new Set([...techniqueIdsFromTags(incident.tags), ...incident.mitre_techniques])];
+}
 
 const DISPOSITIONS: Disposition[] = ["true_positive", "false_positive", "benign", "needs_review"];
 
@@ -50,7 +60,7 @@ export function IncidentQueue({ analysisId, incidents }: IncidentQueueProps) {
 
   const techniques = useMemo(() => {
     const set = new Set<string>();
-    incidents.forEach((i) => i.mitre_techniques.forEach((t) => set.add(t)));
+    incidents.forEach((i) => allTechniqueIds(i).forEach((t) => set.add(t)));
     return [...set].sort();
   }, [incidents]);
 
@@ -64,7 +74,7 @@ export function IncidentQueue({ analysisId, incidents }: IncidentQueueProps) {
         incident.disposition !== dispositionFilter
       )
         return false;
-      if (techniqueFilter !== "all" && !incident.mitre_techniques.includes(techniqueFilter)) return false;
+      if (techniqueFilter !== "all" && !allTechniqueIds(incident).includes(techniqueFilter)) return false;
       if (attentionOnly && !needsAttention(incident)) return false;
       return true;
     });
@@ -214,16 +224,30 @@ export function IncidentQueue({ analysisId, incidents }: IncidentQueueProps) {
                         ↻
                       </span>
                     )}
+                    {incident.tags.includes("multi-layer") && (
+                      <span
+                        title="Corroborated across more than one detection layer"
+                        className="shrink-0 text-xs text-[var(--color-text-lo)]"
+                        aria-label="Multi-layer corroboration"
+                      >
+                        ⛓
+                      </span>
+                    )}
                     {needsAttention(incident) && <Badge variant="outline">needs attention</Badge>}
                   </span>
+                  {/* Techniques — the union of the deterministic tags (`app.graph.tags`,
+                      populated for essentially every incident with an L1 rule hit) and the LLM's
+                      own `mitre_techniques` (populated only once triaged). Full provenance detail
+                      lives in the case file (`CaseHeader`'s "Detected" vs "LLM assessment" rows);
+                      this dense row is a scanning aid, not a claim of authorship. */}
                   <span className="hidden gap-1 sm:flex">
-                    {incident.mitre_techniques.slice(0, 2).map((t) => (
+                    {allTechniqueIds(incident).slice(0, 2).map((t) => (
                       <span key={t} className="rounded border border-[var(--color-border)] px-1.5 py-0.5 font-mono text-xs text-[var(--color-text-mid)]">
                         {t}
                       </span>
                     ))}
-                    {incident.mitre_techniques.length > 2 && (
-                      <span className="text-xs text-[var(--color-text-lo)]">+{incident.mitre_techniques.length - 2}</span>
+                    {allTechniqueIds(incident).length > 2 && (
+                      <span className="text-xs text-[var(--color-text-lo)]">+{allTechniqueIds(incident).length - 2}</span>
                     )}
                   </span>
                   <span className="text-right font-mono text-xs text-[var(--color-text-hi)]">

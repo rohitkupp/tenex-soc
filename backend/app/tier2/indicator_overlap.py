@@ -1,16 +1,16 @@
-"""Query helpers behind `GET /api/tier2/overview` and `GET /api/tier2/indicator-overlap`
-(docs/09). Unlike `app.tier2.nl_to_sql`, these run on the app's own DB session (the caller
-is an authenticated analyst hitting a fixed, developer-written query — not free-form
-LLM-generated SQL), so there is no `tier2_readonly`-role involvement here; the safety
-property these two endpoints rely on is structural instead: `tier2_signatures` (docs/02)
-was never allowed to carry a raw indicator value or a tenant identity in the first place
-(see `app.models.tier2_signature`'s docstring), so there is nothing for a query against it
-to leak regardless of which role runs it.
+"""Query helpers behind `GET /api/tier2/overview`, `GET /api/tier2/indicator-overlap`, and
+`GET /api/tier2/overlap-distribution` (docs/09). These run on the app's own DB session (the
+caller is an authenticated analyst hitting a fixed, developer-written query — not free-form
+LLM-generated SQL, and there is no such query left in this codebase, since the NL-to-SQL
+chatbot that used to make that distinction meaningful is gone), so there is no
+`tier2_readonly`-role involvement here; the safety property these functions rely on is
+structural instead: `tier2_signatures` (docs/02) was never allowed to carry a raw indicator
+value or a tenant identity in the first place (see `app.models.tier2_signature`'s docstring),
+so there is nothing for a query against it to leak regardless of which role runs it.
 
-Both functions read the same two views the NL->SQL role is restricted to
-(`app.tier2.views`), not the base table directly — one definition of "cross-tenant
-overlap," reused rather than re-derived, so the chatbot and the dashboard can never
-silently disagree about what "overlap" means.
+All three functions read the same two views (`app.tier2.views`), not the base table directly
+— one definition of "cross-tenant overlap," reused rather than re-derived, so this module's
+own functions can never silently disagree with each other about what "overlap" means.
 """
 
 from __future__ import annotations
@@ -33,6 +33,19 @@ class IndicatorOverlapRow(NamedTuple):
     last_observed_at: datetime
 
 
+class OverlapBucket(NamedTuple):
+    bucket: str  # "1" | "2" | "3+"
+    indicator_count: int
+
+
+class OverlapDistribution(NamedTuple):
+    total_indicators: int
+    buckets: list[OverlapBucket]
+
+
+_BUCKET_ORDER = ("1", "2", "3+")
+
+
 def list_indicator_overlap(
     session: Session, *, min_tenants: int = 2, limit: int = 50
 ) -> list[IndicatorOverlapRow]:
@@ -51,6 +64,36 @@ def list_indicator_overlap(
     )
     rows = session.execute(text(query), {"min_tenants": min_tenants, "limit": limit}).all()
     return [IndicatorOverlapRow(*row) for row in rows]
+
+
+def list_overlap_distribution(session: Session) -> OverlapDistribution:
+    """Tier 2 chart 1 ("Indicator overlap distribution"): every distinct indicator signature,
+    bucketed by how many tenants have seen it — `1`, `2`, or `3+`. Unlike
+    `list_indicator_overlap` (which only ever returns `tenant_count >= 2` rows, since that is
+    literally what "overlap" means), this includes the `1`-tenant bucket too: the point of a
+    *distribution* is showing that bucket as the expected majority, not hiding it.
+
+    Reads `TIER2_INDICATOR_OVERLAP_VIEW`, same as `list_indicator_overlap` — one definition of
+    "how many tenants saw this indicator," reused rather than re-derived. A `tier2_signatures`
+    row with an empty `indicator_hashes` array (e.g. a signature synced from an incident with
+    no domain/dst-IP entity) contributes no rows to this view at all (nothing to `unnest`), so
+    it is structurally excluded here exactly as it is from `list_indicator_overlap` — not a
+    special case, the same `unnest` semantics both queries already depend on.
+    """
+    # The only interpolated value is TIER2_INDICATOR_OVERLAP_VIEW, a module-level constant
+    # from app.tier2.views, never request data.
+    query = (
+        f"SELECT CASE WHEN tenant_count = 1 THEN '1' "  # noqa: S608
+        f"WHEN tenant_count = 2 THEN '2' ELSE '3+' END AS bucket, "
+        f"COUNT(*) AS indicator_count "
+        f"FROM {TIER2_INDICATOR_OVERLAP_VIEW} GROUP BY 1"
+    )
+    rows = session.execute(text(query)).all()
+    counts = {row.bucket: row.indicator_count for row in rows}
+    buckets = [OverlapBucket(bucket=b, indicator_count=counts.get(b, 0)) for b in _BUCKET_ORDER]
+    return OverlapDistribution(
+        total_indicators=sum(b.indicator_count for b in buckets), buckets=buckets
+    )
 
 
 class IncidentTypeBreakdown(NamedTuple):

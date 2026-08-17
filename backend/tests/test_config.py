@@ -45,7 +45,8 @@ def make_settings(**overrides: Any) -> Settings:
     fields are the only source that outranks env vars, so every caller gets an explicit
     `anthropic_api_key=""` default here unless it says otherwise -- "no key configured" is what
     every test in this file that doesn't ask for a real one means by "default settings". Same
-    defect, same fix, as `tests/test_tier2_nl_to_sql.py`'s `_NO_KEY_SETTINGS`.
+    defect, same fix, as `tests/test_tier2_api.py`'s `_force_no_key_settings` used to apply
+    (that fixture is gone along with the NL-to-SQL chatbot route it guarded).
 
     `supabase_url`/`supabase_service_role_key` get the identical treatment and for the identical
     reason: they gate a real, side-effecting Supabase call

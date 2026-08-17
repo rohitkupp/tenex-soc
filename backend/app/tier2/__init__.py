@@ -1,6 +1,6 @@
 """Tier 2 — cross-tenant threat intelligence (M14, docs/13).
 
-Three things live in this package:
+What lives in this package:
 
 1. **Signature sync** (`signature_sync.py`) — after an incident is triaged, a
    `tier2_signatures` row is emitted: `tenant_hash`, `incident_type`, `mitre_techniques`,
@@ -10,9 +10,19 @@ Three things live in this package:
    for why that table structurally cannot carry tenant identity.
 2. **Cross-tenant indicator overlap** (`indicator_overlap.py`) — "this C2 domain appeared
    in 3 other tenants" without any tenant ever seeing another's raw indicator value.
-3. **NL-to-SQL** (`sql_validator.py`, `nl_to_sql.py`, `readonly_db.py`) — a chatbot over
-   exactly two read-only views, treated as an attack surface (docs/06 "Text-to-SQL
-   safety"), not a feature with security bolted on after.
+3. **Cross-tenant learning charts** (`technique_prevalence.py`, `detector_reliability.py`,
+   `first_seen.py`) — the dashboard behind `/tier2`, all deterministic queries over
+   `tier2_signatures` or, for `detector_reliability.py` specifically, real operational
+   tables pooled across every tenant on purpose — see that module's own docstring.
+4. **`readonly_db.py` / `views.py`** — the dedicated, SELECT-only `tier2_readonly` Postgres
+   role and the two views it may read. These used to back a natural-language-to-SQL chatbot
+   (`POST /api/tier2/query`, `sql_validator.py`, `nl_to_sql.py`) that has since been removed
+   under a hard cost constraint on this task (no code path may make a live Anthropic call).
+   The role/views are kept: `tests/test_tier2_readonly_role.py` and
+   `tests/test_tier2_migration.py` still prove, against the real database, that this role
+   genuinely cannot reach `events`/`users`/tenant-identifying tables — a DB-enforced
+   guarantee worth keeping even with no application caller today, and dropping the role or
+   its migration would be a schema change out of scope for this cleanup.
 
 ## The salt tradeoff (docs/06, stated here explicitly, not buried)
 

@@ -98,12 +98,17 @@ def make_incident(
     severity: str = "high",
     fused_score: float = 0.85,
     anomaly_confidence: float | None = None,
+    tags: list[str] | None = None,
+    summary: str = "Test incident summary.",
 ) -> Incident:
     """`anomaly_confidence` (docs/v2_migration change 3) defaults to the real derivation off
     `fused_score` (`app.detection.fusion.anomaly_confidence_from_fused_score`) rather than an
     independent literal, so a test that only cares about `fused_score` gets a consistent pair for
     free; pass it explicitly when a test needs the two to disagree (e.g. to prove a consumer reads
-    one and not the other)."""
+    one and not the other). `tags`/`summary` (this task's deterministic pipeline outputs,
+    `app.graph.tags`/`app.graph.summary`) default to a small non-empty placeholder rather than
+    `[]`/`""`, matching what `app.pipeline.stages.correlate` always writes for a real incident —
+    a test that needs the *absence* of a tag/technique passes `tags=[]` explicitly."""
     session = get_session_factory()()
     try:
         with tenant_scope(session, tenant_id):
@@ -120,6 +125,8 @@ def make_incident(
                 ),
                 entity_ids=entity_ids or [],
                 signal_ids=signal_ids or [],
+                tags=tags if tags is not None else ["layer:rule"],
+                summary=summary,
                 status="open",
             )
             session.add(incident)

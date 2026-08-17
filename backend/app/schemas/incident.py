@@ -85,6 +85,14 @@ class IncidentListItem(BaseModel):
     `disposition`, `citation_valid`, and `mitre_techniques` come from the incident's latest
     verdict and are `null`/`[]` when it has not been triaged (docs/07 triages only the top
     `MAX_TRIAGE_INCIDENTS`, so an untriaged incident is the normal case, not an error).
+
+    `tags` is different: `app.pipeline.stages.correlate` computes it deterministically for every
+    incident, at zero LLM cost, from the incident's own member signals (`app.graph.tags`) — never
+    null, never empty-because-untriaged. Never conflate the two: `mitre_techniques` here is the
+    LLM's own contribution (unchanged by this field's addition), `tags` is a machine-computed
+    pipeline output that happens to include technique ids too (namespaced `technique:<id>`,
+    filtered to the MITRE allowlist) alongside `layer:`/`detector:`/derived tags. See
+    `app.graph.tags`'s module docstring for the full provenance split.
     """
 
     id: uuid.UUID
@@ -99,6 +107,8 @@ class IncidentListItem(BaseModel):
     disposition: str | None
     citation_valid: bool | None
     mitre_techniques: list[str]
+    # Deterministic, always-populated pipeline output — see this class's own docstring.
+    tags: list[str]
     entity_count: int
     signal_count: int
     recurrence_of: uuid.UUID | None
@@ -121,6 +131,15 @@ class IncidentDetail(BaseModel):
 
     `verdict` is `null` for an untriaged incident. A recurrence inherits its parent's verdict
     (docs/05), so it can be non-null even for an incident the agent never ran on directly.
+
+    `tags` / `summary` are the deterministic pipeline outputs this class adds: computed once by
+    `app.pipeline.stages.correlate` (`app.graph.tags` / `app.graph.summary`) for every incident,
+    zero LLM cost. `summary` is never null or empty and is never overwritten by
+    `verdict.summary` (the LLM's own, richer narrative, present only once triaged) — the case
+    file renders both, labelled: this one always, the LLM's in addition when it exists. See
+    `app.models.incident.Incident`'s "tags / summary" docstring section for the full provenance
+    split, matching `anomaly_confidence`/`verdict.threat_confidence`'s "two confidences, never
+    mixed" precedent (docs/v2_migration change 3).
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -135,6 +154,8 @@ class IncidentDetail(BaseModel):
     status: str
     entity_ids: list[int]
     signal_ids: list[int]
+    tags: list[str]
+    summary: str
     recurrence_of: uuid.UUID | None
     recurrence_similarity: float | None
     created_at: datetime

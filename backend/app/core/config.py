@@ -94,9 +94,11 @@ class Settings(BaseSettings):
     # is the one salt in the whole system that is not per-tenant.
     tier2_indicator_salt: SecretStr = SecretStr(DEV_TIER2_INDICATOR_SALT)
     # Password for the dedicated, SELECT-only `tier2_readonly` Postgres role
-    # (alembic/versions/*_tier2_readonly_role_and_views.py) that the NL->SQL chatbot
-    # executes validated queries as -- never the app's own privileged DB user. Read by
-    # both the migration (to provision/rotate the role's password) and
+    # (alembic/versions/*_tier2_readonly_role_and_views.py) -- never the app's own
+    # privileged DB user. Originally the execution role for an NL->SQL chatbot, now removed
+    # (cost constraint: no live Anthropic calls); the role/migration are kept and still
+    # exercised directly by tests/test_tier2_readonly_role.py -- see app.tier2.readonly_db's
+    # docstring. Read by both the migration (to provision/rotate the role's password) and
     # app.tier2.readonly_db (to connect as it), so the two can never drift apart.
     tier2_readonly_db_password: SecretStr = SecretStr(DEV_TIER2_READONLY_DB_PASSWORD)
 
@@ -146,8 +148,8 @@ class Settings(BaseSettings):
         correlate) always runs regardless; only agentic triage depends on this. Unlike the old
         DEMO_MODE-era version of this property, a false value here is no longer treated as a
         normal, silently-handled state by `app.agent.orchestrator` — see that module's docstring.
-        It still matters to other, independent no-key fallbacks (e.g. `app.tier2.nl_to_sql`'s
-        canned-example path), which is why the property itself stays rather than being inlined."""
+        (Tier 2's own no-key fallback, `app.tier2.nl_to_sql`'s canned-example path, is gone along
+        with that chatbot route — this property's remaining callers are all in the triage path.)"""
         return bool(self.anthropic_api_key.get_secret_value())
 
     @property

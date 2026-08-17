@@ -68,6 +68,8 @@ from app.graph.features import NodeFeatures, compute_node_features, graph_signal
 from app.graph.incidents import IncidentCandidate, SignalRef, form_incidents
 from app.graph.ingest import IngestResult, ingest_log_file
 from app.graph.recurrence import canonical_text, embed_text, link_recurrence
+from app.graph.summary import summary_for_incident
+from app.graph.tags import compute_incident_tags
 from app.graph.timeline import build_timeline
 from app.graph.titling import title_for_incident
 from app.models.base import tenant_scope
@@ -432,6 +434,12 @@ class PersistedIncident:
     recurrence_similarity: float | None
     n_timeline_phases: int
     first_phase_summary: str | None
+    # Deterministic pipeline outputs (this task): `app.graph.tags.compute_incident_tags` /
+    # `app.graph.summary.summary_for_incident` -- same two calls `app.pipeline.stages.correlate`
+    # makes, reused here rather than reimplemented so this verification tool's own output proves
+    # what a live analysis would actually persist.
+    tags: list[str]
+    summary: str
 
 
 @dataclass(slots=True)
@@ -465,6 +473,17 @@ def _pick_primary_entity(candidate: IncidentCandidate) -> EntityKey:
     for s in candidate.signals:
         counts[(s.entity_type, s.entity_value)] += 1
     return max(candidate.seed_entity_keys, key=lambda k: (counts.get(k, 0), k))
+
+
+def _entity_type_counts(candidate: IncidentCandidate) -> dict[str, int]:
+    """Same computation as `app.pipeline.stages.correlate._entity_type_counts` -- kept as a
+    second small copy rather than imported (this module already duplicates `_pick_primary_entity`
+    / `_pick_top_technique` from that stage for the same M10-predates-the-queue-pipeline reason
+    its own module docstring gives)."""
+    counts: dict[str, int] = defaultdict(int)
+    for entity_type, _value in candidate.entity_keys:
+        counts[entity_type] += 1
+    return dict(counts)
 
 
 def _pick_top_technique(candidate: IncidentCandidate) -> str | None:
@@ -606,17 +625,20 @@ def run_scenario(
             evidence_ids: set[int] = set()
             for s in candidate.signals:
                 evidence_ids.update(s.evidence_event_ids)
-            tags: set[str] = set()
+            # Event-level enrichment tags -> recurrence embedding text only. Distinct from
+            # `incident_tags` below -- see `app.pipeline.stages.correlate`'s identical rename for
+            # the same reason.
+            enrichment_tags: set[str] = set()
             if evidence_ids:
                 stmt = select(Event.enrichment).where(Event.id.in_(evidence_ids))
                 for (enrichment,) in session.execute(stmt):
-                    tags.update((enrichment or {}).get("tags", []))
+                    enrichment_tags.update((enrichment or {}).get("tags", []))
 
             text = canonical_text(
                 technique_ids=[s.mitre_technique for s in candidate.signals],
                 detector_keys=[s.detector_key for s in candidate.signals],
                 entity_types=[k[0] for k in candidate.entity_keys],
-                enrichment_tags=sorted(tags),
+                enrichment_tags=sorted(enrichment_tags),
             )
             embedding = embed_text(text)
             link = link_recurrence(session, embedding)
@@ -624,6 +646,15 @@ def run_scenario(
             entity_ids = [
                 entity_key_to_id[k] for k in candidate.entity_keys if k in entity_key_to_id
             ]
+
+            incident_tags = compute_incident_tags(candidate.signals, is_recurrence=link is not None)
+            incident_summary = summary_for_incident(
+                signals=candidate.signals,
+                entity_type_counts=_entity_type_counts(candidate),
+                top_technique_id=top_technique,
+                severity=incident_score.severity,
+            )
+
             incident_row = Incident(
                 analysis_id=ingest.analysis_id,
                 tenant_id=ingest.tenant_id,
@@ -633,6 +664,8 @@ def run_scenario(
                 anomaly_confidence=incident_score.anomaly_confidence,
                 entity_ids=entity_ids,
                 signal_ids=[s.signal_id for s in candidate.signals],
+                tags=incident_tags,
+                summary=incident_summary,
                 recurrence_of=link.recurrence_of if link else None,
                 recurrence_similarity=link.recurrence_similarity if link else None,
                 embedding=embedding,
@@ -658,6 +691,8 @@ def run_scenario(
                     recurrence_similarity=link.recurrence_similarity if link else None,
                     n_timeline_phases=len(timeline),
                     first_phase_summary=timeline[0].summary if timeline else None,
+                    tags=incident_tags,
+                    summary=incident_summary,
                 )
             )
 
@@ -893,6 +928,8 @@ def _print_run(result: RunResult) -> None:
             f"technique={inc.top_technique} timeline_phases={inc.n_timeline_phases} "
             f"first_phase={inc.first_phase_summary!r}"
         )
+        print(f"    tags={inc.tags}")  # noqa: T201
+        print(f"    summary={inc.summary!r}")  # noqa: T201
 
 
 if __name__ == "__main__":

@@ -1,14 +1,22 @@
-"""The Tier 2 view allowlist — the single source of truth shared by three consumers that
-must never drift apart:
+"""The Tier 2 view allowlist — the single source of truth shared by two consumers that must
+never drift apart:
 
 1. `alembic/versions/*_tier2_readonly_role_and_views.py` creates exactly these two views
    and grants the `tier2_readonly` role `SELECT` on exactly these two views (and nothing
    else) -- `tests/test_tier2_readonly_role.py` asserts the live database matches this
    module, not the other way around.
-2. `app.tier2.sql_validator` rejects any generated query whose table references are not a
-   subset of `ALLOWED_VIEWS` -- the second, DB-independent layer of the same allowlist.
-3. `app.tier2.nl_to_sql` renders `VIEW_SCHEMAS` into the system prompt so the model knows
-   what it is allowed to query, instead of guessing at (or hallucinating) column names.
+2. `app.tier2.indicator_overlap`, `app.tier2.technique_prevalence`, and `app.tier2.
+   first_seen` all read these views (not the base `tier2_signatures` table directly) for the
+   dashboard's own deterministic queries -- one definition of "how many tenants saw this,"
+   reused rather than re-derived across every chart.
+
+A third consumer used to exist here: `app.tier2.sql_validator` rejected any NL-to-SQL-
+generated query whose table references were not a subset of `ALLOWED_VIEWS`, and
+`app.tier2.nl_to_sql` rendered `VIEW_SCHEMAS` into the model's system prompt. Both are
+deleted (the chatbot they served is gone, under this task's cost constraint) -- `VIEW_SCHEMAS`
+itself is kept, since `tests/test_tier2_migration.py::test_view_columns_match_the_declared_
+schema` still asserts it against the live database as a drift guard independent of the
+chatbot.
 
 Both views select only from `tier2_signatures` (docs/02), which itself carries no
 `tenant_id`, no raw indicator value, and no principal -- see `app.models.tier2_signature`'s

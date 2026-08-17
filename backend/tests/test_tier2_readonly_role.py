@@ -146,8 +146,9 @@ def test_cannot_write_to_the_views_it_can_read() -> None:
 
 def test_readonly_engine_can_be_used_directly() -> None:
     """`app.tier2.readonly_db.get_readonly_engine` (SQLAlchemy, not raw psycopg) is what
-    `app.tier2.nl_to_sql`/`run_readonly_query` actually use -- proves that path works too,
-    not just a hand-rolled psycopg connection."""
+    `run_readonly_query` uses -- proves that path works too, not just a hand-rolled psycopg
+    connection. (`run_readonly_query`'s only caller, the NL-to-SQL chatbot, is gone -- this
+    still proves the SQLAlchemy engine path itself is sound.)"""
     engine = get_readonly_engine()
     with engine.connect() as conn:
         result = conn.execute(text(f"SELECT * FROM {sorted(ALLOWED_VIEWS)[0]} LIMIT 1"))

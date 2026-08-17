@@ -77,7 +77,7 @@ deleted; two of the three carried content that **moved rather than vanished**.
 | `/analyses/[id]/evidence` | Analysis-wide evidence browser (change 16) |
 | `/analyses/[id]/events` | Raw event explorer, anomalous rows marked and explained |
 | `/learning` | Model performance **and** the learning loop, merged from `/models` |
-| `/tier2` | Cross-tenant analytics + NL→SQL |
+| `/tier2` | Cross-tenant analytics — overview, indicator overlap, and four cross-tenant learning charts (docs/09). The NL→SQL chatbot that used to live here is removed under a hard cost constraint; every chart on this page is deterministic and non-LLM. |
 
 ### Why `/upload` went away
 
@@ -143,7 +143,11 @@ discipline is visible rather than buried in a README.
 `FunnelProgress`, `SeverityBar`, `IncidentTable`, `NarrativeBlock`, `CitationChip`,
 `EventInspector`, `ExplanationRenderer` (dispatches by detector type), `EntityGraph`,
 `TimelinePhases`, `ResponsePlanStepper`, `StateDiff`, `AgentTrace`, `FeedbackControls`,
-`CalibrationChart`, `SqlDisclosure`.
+`CalibrationChart`. Tier 2's charts: `OverlapDistributionChart`, `TechniquePrevalenceChart`,
+`DetectorReliabilityChart`, `FirstSeenChart` — all hand-rolled SVG (no charting library,
+CLAUDE.md's stack table), server-rendered from the four `GET /api/tier2/*` chart routes.
+`SqlDisclosure` (the NL→SQL chatbot's "always show the generated SQL" component) is removed
+along with that route.
 
 `ExplanationRenderer` is the one to get right — it is what makes the ML legible, and legibility
 is the whole point.

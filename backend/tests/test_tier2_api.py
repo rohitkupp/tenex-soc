@@ -1,13 +1,10 @@
-"""`GET /api/tier2/overview`, `GET /api/tier2/indicator-overlap`, `POST /api/tier2/query`
-— full HTTP integration tests via `TestClient` against the live Postgres, docs/09's Tier 2
-section end to end.
+"""`GET /api/tier2/overview`, `GET /api/tier2/indicator-overlap`, and the four cross-tenant
+learning chart routes — full HTTP integration tests via `TestClient` against the live
+Postgres, docs/09's Tier 2 section end to end.
 
-Every test forces an empty `anthropic_api_key` on `app.api.tier2`'s own `get_settings` lookup
-(this sandbox's real `.env` carries a live `ANTHROPIC_API_KEY`) so `POST .../query` always
-takes the canned-example path and never calls the network. The explicit kwarg overrides
-whatever `.env` would otherwise supply (pydantic-settings init-kwarg precedence) — same
-no-live-call guarantee the old DEMO_MODE flag gave before docs/v2_migration change 12 removed
-it, without needing a dedicated flag to do it.
+The NL-to-SQL chatbot route (`POST /api/tier2/query`) and its tests are gone — removed under
+a hard cost constraint that this task's LLM surface must shrink, never grow (`app.api.tier2`'s
+module docstring). Every route left in this file is deterministic and non-LLM.
 """
 
 from __future__ import annotations
@@ -17,14 +14,7 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-import app.api.tier2 as tier2_module
-from app.core.config import Settings
 from tests.conftest import authenticate, make_tenant, make_user
-
-
-@pytest.fixture(autouse=True)
-def _force_no_key_settings(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tier2_module, "get_settings", lambda: Settings(anthropic_api_key=""))
 
 
 @pytest.fixture
@@ -42,11 +32,14 @@ def user(tenant_cleanup: list[uuid.UUID]):
     [
         ("GET", "/api/tier2/overview"),
         ("GET", "/api/tier2/indicator-overlap"),
-        ("POST", "/api/tier2/query"),
+        ("GET", "/api/tier2/overlap-distribution"),
+        ("GET", "/api/tier2/technique-prevalence"),
+        ("GET", "/api/tier2/detector-reliability"),
+        ("GET", "/api/tier2/first-seen"),
     ],
 )
 def test_every_route_requires_authentication(client: TestClient, method: str, path: str) -> None:
-    resp = client.request(method, path, json={"question": "x"} if method == "POST" else None)
+    resp = client.request(method, path)
     assert resp.status_code == 401
 
 
@@ -120,61 +113,104 @@ def test_indicator_overlap_rejects_min_tenants_below_two(client: TestClient, use
     assert resp.status_code == 422
 
 
-# ---------------------------------------------------------------------------- NL -> SQL query
+# ---------------------------------------------------------------------------- chart 1: overlap distribution
 
 
-def test_query_returns_a_canned_example_with_the_documented_shape(client: TestClient, user) -> None:
+def test_overlap_distribution_returns_the_documented_shape(client: TestClient, user) -> None:
     authenticate(client, user)
-    resp = client.post("/api/tier2/query", json={"question": "What incident types exist?"})
+    resp = client.get("/api/tier2/overlap-distribution")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert set(body.keys()) == {
-        "sql",
-        "explanation",
-        "columns",
-        "rows",
-        "chart_hint",
-        "rejected",
-        "rejection_reason",
-    }
-    assert body["sql"]  # always populated
-    assert body["rejected"] is False
-    assert body["rejection_reason"] is None
+    assert set(body.keys()) == {"total_indicators", "buckets"}
+    assert [b["bucket"] for b in body["buckets"]] == ["1", "2", "3+"]
+    assert body["total_indicators"] == sum(b["indicator_count"] for b in body["buckets"])
 
 
-def test_query_shows_the_sql_even_when_rejected(
-    client: TestClient, user, monkeypatch: pytest.MonkeyPatch
+# ---------------------------------------------------------------------------- chart 2: technique prevalence
+
+
+def test_technique_prevalence_always_returns_all_thirteen_allowlisted_techniques(
+    client: TestClient, user
 ) -> None:
-    """docs/09: "Always return the generated SQL, even when the query is rejected —
-    especially then." Forces the LLM-enabled path with a monkeypatched, malicious
-    response so the rejection branch is what's actually exercised over real HTTP."""
-    monkeypatch.setattr(
-        tier2_module, "get_settings", lambda: Settings(anthropic_api_key="sk-fake-test")
-    )
-
-    from app.tier2.nl_to_sql import GeneratedQuery
-
-    def fake_call(_settings, _question):
-        return GeneratedQuery(
-            sql="DROP TABLE tier2_signatures",
-            explanation="hijacked",
-            chart_hint="table",
-        )
-
-    monkeypatch.setattr("app.tier2.nl_to_sql._call_anthropic", fake_call)
-
+    """Every allowlisted technique is returned, including ones observed in zero tenants --
+    never a fabricated id, and never a silently-dropped one either."""
     authenticate(client, user)
-    resp = client.post("/api/tier2/query", json={"question": "drop everything"})
+    resp = client.get("/api/tier2/technique-prevalence")
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["rejected"] is True
-    assert body["rejection_reason"]
-    assert body["sql"] == "DROP TABLE tier2_signatures"
-    assert body["rows"] == []
-    assert body["columns"] == []
+    assert set(body.keys()) == {"total_tenants_with_signatures", "items"}
+    assert len(body["items"]) == 13
+    ids = {item["technique_id"] for item in body["items"]}
+    assert len(ids) == 13  # no duplicates
+    for item in body["items"]:
+        assert set(item.keys()) == {
+            "technique_id",
+            "technique_name",
+            "tenant_count",
+            "signature_count",
+        }
+        assert item["tenant_count"] >= 0
+        assert item["signature_count"] >= 0
 
 
-def test_query_requires_a_question_field(client: TestClient, user) -> None:
+# ---------------------------------------------------------------------------- chart 3: detector reliability
+
+
+def test_detector_reliability_returns_the_documented_shape(client: TestClient, user) -> None:
     authenticate(client, user)
-    resp = client.post("/api/tier2/query", json={})
+    resp = client.get("/api/tier2/detector-reliability")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert set(body.keys()) == {"total_tenants", "items"}
+    assert body["total_tenants"] >= 0
+    for item in body["items"]:
+        assert set(item.keys()) == {"detector_key", "detector_layer", "confirmed", "dismissed"}
+        assert item["confirmed"] >= 0
+        assert item["dismissed"] >= 0
+
+
+def test_detector_reliability_is_not_tenant_filtered_any_authenticated_user_sees_the_same_totals(
+    client: TestClient, tenant_cleanup: list[uuid.UUID]
+) -> None:
+    """Mirrors the overview fairness test above: pooling across every tenant's feedback is
+    this chart's entire point (`app.tier2.detector_reliability`'s module docstring), so two
+    different tenants' users must see the identical totals."""
+    tenant_a = make_tenant(name="Detector Reliability Fairness A")
+    tenant_b = make_tenant(name="Detector Reliability Fairness B")
+    tenant_cleanup.extend([tenant_a.id, tenant_b.id])
+    user_a = make_user(tenant_id=tenant_a.id, email=f"drel-a-{uuid.uuid4()}@test.local")
+    user_b = make_user(tenant_id=tenant_b.id, email=f"drel-b-{uuid.uuid4()}@test.local")
+
+    authenticate(client, user_a)
+    resp_a = client.get("/api/tier2/detector-reliability")
+    authenticate(client, user_b)
+    resp_b = client.get("/api/tier2/detector-reliability")
+
+    assert resp_a.status_code == resp_b.status_code == 200
+    assert resp_a.json() == resp_b.json()
+
+
+# ---------------------------------------------------------------------------- chart 4: first-seen propagation
+
+
+def test_first_seen_returns_the_documented_shape(client: TestClient, user) -> None:
+    authenticate(client, user)
+    resp = client.get("/api/tier2/first-seen")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert set(body.keys()) == {"items"}
+    for item in body["items"]:
+        assert set(item.keys()) == {"indicator_hash", "tenant_count", "observations"}
+        assert item["tenant_count"] >= 2  # same qualification as indicator-overlap
+        assert len(item["observations"]) == item["tenant_count"]
+        for obs in item["observations"]:
+            assert set(obs.keys()) == {"tenant_hash", "first_observed_at"}
+        # observations are sorted first-seen ascending
+        seen_at = [obs["first_observed_at"] for obs in item["observations"]]
+        assert seen_at == sorted(seen_at)
+
+
+def test_first_seen_rejects_min_tenants_below_two(client: TestClient, user) -> None:
+    authenticate(client, user)
+    resp = client.get("/api/tier2/first-seen", params={"min_tenants": 1})
     assert resp.status_code == 422

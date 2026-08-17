@@ -703,6 +703,56 @@
         "title": "DetectorPrecisionPointOut",
         "type": "object"
       },
+      "DetectorReliabilityEntryOut": {
+        "properties": {
+          "confirmed": {
+            "title": "Confirmed",
+            "type": "integer"
+          },
+          "detector_key": {
+            "title": "Detector Key",
+            "type": "string"
+          },
+          "detector_layer": {
+            "title": "Detector Layer",
+            "type": "string"
+          },
+          "dismissed": {
+            "title": "Dismissed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "detector_key",
+          "detector_layer",
+          "confirmed",
+          "dismissed"
+        ],
+        "title": "DetectorReliabilityEntryOut",
+        "type": "object"
+      },
+      "DetectorReliabilityResponse": {
+        "description": "`total_tenants` is the count of distinct tenants that have contributed *any* analyst\nfeedback, pooled across the whole fleet \u2014 see `app.tier2.detector_reliability`.",
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/DetectorReliabilityEntryOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total_tenants": {
+            "title": "Total Tenants",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_tenants",
+          "items"
+        ],
+        "title": "DetectorReliabilityResponse",
+        "type": "object"
+      },
       "DetectorWeightChangeOut": {
         "properties": {
           "changed": {
@@ -1702,6 +1752,67 @@
         "title": "FeedbackResponse",
         "type": "object"
       },
+      "FirstSeenIndicatorOut": {
+        "properties": {
+          "indicator_hash": {
+            "title": "Indicator Hash",
+            "type": "string"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/FirstSeenTenantObservationOut"
+            },
+            "title": "Observations",
+            "type": "array"
+          },
+          "tenant_count": {
+            "title": "Tenant Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "indicator_hash",
+          "tenant_count",
+          "observations"
+        ],
+        "title": "FirstSeenIndicatorOut",
+        "type": "object"
+      },
+      "FirstSeenResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FirstSeenIndicatorOut"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "title": "FirstSeenResponse",
+        "type": "object"
+      },
+      "FirstSeenTenantObservationOut": {
+        "properties": {
+          "first_observed_at": {
+            "format": "date-time",
+            "title": "First Observed At",
+            "type": "string"
+          },
+          "tenant_hash": {
+            "title": "Tenant Hash",
+            "type": "string"
+          }
+        },
+        "required": [
+          "tenant_hash",
+          "first_observed_at"
+        ],
+        "title": "FirstSeenTenantObservationOut",
+        "type": "object"
+      },
       "GraphEdge": {
         "properties": {
           "event_count": {
@@ -1788,7 +1899,7 @@
         "type": "object"
       },
       "IncidentDetail": {
-        "description": "docs/09: \"Full detail: signals with explanations, entities, timeline, verdict, plan.\"\n\nTimeline and plan are their own routes (`/timeline`; `GET /api/incidents/{id}/plan` already\nexists in `app.api.plans`) \u2014 splitting them keeps this response bounded and lets the case\nfile's sections stream in independently, which is what `frontend/app/(dashboard)/analyses/\n[id]/incidents/[iid]` already does.\n\n`verdict` is `null` for an untriaged incident. A recurrence inherits its parent's verdict\n(docs/05), so it can be non-null even for an incident the agent never ran on directly.",
+        "description": "docs/09: \"Full detail: signals with explanations, entities, timeline, verdict, plan.\"\n\nTimeline and plan are their own routes (`/timeline`; `GET /api/incidents/{id}/plan` already\nexists in `app.api.plans`) \u2014 splitting them keeps this response bounded and lets the case\nfile's sections stream in independently, which is what `frontend/app/(dashboard)/analyses/\n[id]/incidents/[iid]` already does.\n\n`verdict` is `null` for an untriaged incident. A recurrence inherits its parent's verdict\n(docs/05), so it can be non-null even for an incident the agent never ran on directly.\n\n`tags` / `summary` are the deterministic pipeline outputs this class adds: computed once by\n`app.pipeline.stages.correlate` (`app.graph.tags` / `app.graph.summary`) for every incident,\nzero LLM cost. `summary` is never null or empty and is never overwritten by\n`verdict.summary` (the LLM's own, richer narrative, present only once triaged) \u2014 the case\nfile renders both, labelled: this one always, the LLM's in addition when it exists. See\n`app.models.incident.Incident`'s \"tags / summary\" docstring section for the full provenance\nsplit, matching `anomaly_confidence`/`verdict.threat_confidence`'s \"two confidences, never\nmixed\" precedent (docs/v2_migration change 3).",
         "properties": {
           "analysis_id": {
             "format": "uuid",
@@ -1872,6 +1983,17 @@
             "title": "Status",
             "type": "string"
           },
+          "summary": {
+            "title": "Summary",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -1897,6 +2019,8 @@
           "status",
           "entity_ids",
           "signal_ids",
+          "tags",
+          "summary",
           "recurrence_of",
           "recurrence_similarity",
           "created_at",
@@ -1964,7 +2088,7 @@
         "type": "object"
       },
       "IncidentListItem": {
-        "description": "The queue row. Deliberately flat and cheap: docs/09 wants a list endpoint an analyst can\npage through, so the expensive parts of the case file (signal explanations, entity rows, the\ngraph) are *not* here \u2014 `entity_count`/`signal_count` are array lengths, not joins.\n\n`disposition`, `citation_valid`, and `mitre_techniques` come from the incident's latest\nverdict and are `null`/`[]` when it has not been triaged (docs/07 triages only the top\n`MAX_TRIAGE_INCIDENTS`, so an untriaged incident is the normal case, not an error).",
+        "description": "The queue row. Deliberately flat and cheap: docs/09 wants a list endpoint an analyst can\npage through, so the expensive parts of the case file (signal explanations, entity rows, the\ngraph) are *not* here \u2014 `entity_count`/`signal_count` are array lengths, not joins.\n\n`disposition`, `citation_valid`, and `mitre_techniques` come from the incident's latest\nverdict and are `null`/`[]` when it has not been triaged (docs/07 triages only the top\n`MAX_TRIAGE_INCIDENTS`, so an untriaged incident is the normal case, not an error).\n\n`tags` is different: `app.pipeline.stages.correlate` computes it deterministically for every\nincident, at zero LLM cost, from the incident's own member signals (`app.graph.tags`) \u2014 never\nnull, never empty-because-untriaged. Never conflate the two: `mitre_techniques` here is the\nLLM's own contribution (unchanged by this field's addition), `tags` is a machine-computed\npipeline output that happens to include technique ids too (namespaced `technique:<id>`,\nfiltered to the MITRE allowlist) alongside `layer:`/`detector:`/derived tags. See\n`app.graph.tags`'s module docstring for the full provenance split.",
         "properties": {
           "anomaly_confidence": {
             "title": "Anomaly Confidence",
@@ -2041,6 +2165,13 @@
             "title": "Signal Count",
             "type": "integer"
           },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
           "title": {
             "title": "Title",
             "type": "string"
@@ -2055,6 +2186,7 @@
           "disposition",
           "citation_valid",
           "mitre_techniques",
+          "tags",
           "entity_count",
           "signal_count",
           "recurrence_of",
@@ -2745,6 +2877,46 @@
         "title": "NotableUser",
         "type": "object"
       },
+      "OverlapBucketOut": {
+        "description": "`bucket` is one of `\"1\"`, `\"2\"`, `\"3+\"` \u2014 the number of distinct tenants that have\nseen a given indicator signature. The `\"2\"`/`\"3+\"` buckets together are the cross-tenant\nsignal itself; `\"1\"` is the (expected) majority of indicators seen by only one tenant.",
+        "properties": {
+          "bucket": {
+            "title": "Bucket",
+            "type": "string"
+          },
+          "indicator_count": {
+            "title": "Indicator Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "bucket",
+          "indicator_count"
+        ],
+        "title": "OverlapBucketOut",
+        "type": "object"
+      },
+      "OverlapDistributionResponse": {
+        "properties": {
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/OverlapBucketOut"
+            },
+            "title": "Buckets",
+            "type": "array"
+          },
+          "total_indicators": {
+            "title": "Total Indicators",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_indicators",
+          "buckets"
+        ],
+        "title": "OverlapDistributionResponse",
+        "type": "object"
+      },
       "PeriodicityOut": {
         "properties": {
           "dominant_period_s": {
@@ -3203,6 +3375,56 @@
         "title": "SuppressionListResponse",
         "type": "object"
       },
+      "TechniquePrevalenceEntryOut": {
+        "description": "One row per allowlisted technique (`data/kb/mitre/allowlist.yml`) \u2014 always all 13,\nincluding ones with `tenant_count == 0`, never a fabricated id.",
+        "properties": {
+          "signature_count": {
+            "title": "Signature Count",
+            "type": "integer"
+          },
+          "technique_id": {
+            "title": "Technique Id",
+            "type": "string"
+          },
+          "technique_name": {
+            "title": "Technique Name",
+            "type": "string"
+          },
+          "tenant_count": {
+            "title": "Tenant Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "technique_id",
+          "technique_name",
+          "tenant_count",
+          "signature_count"
+        ],
+        "title": "TechniquePrevalenceEntryOut",
+        "type": "object"
+      },
+      "TechniquePrevalenceResponse": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/TechniquePrevalenceEntryOut"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "total_tenants_with_signatures": {
+            "title": "Total Tenants With Signatures",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_tenants_with_signatures",
+          "items"
+        ],
+        "title": "TechniquePrevalenceResponse",
+        "type": "object"
+      },
       "TenantOut": {
         "properties": {
           "created_at": {
@@ -3257,77 +3479,6 @@
           "by_incident_type"
         ],
         "title": "Tier2OverviewResponse",
-        "type": "object"
-      },
-      "Tier2QueryRequest": {
-        "properties": {
-          "question": {
-            "title": "Question",
-            "type": "string"
-          }
-        },
-        "required": [
-          "question"
-        ],
-        "title": "Tier2QueryRequest",
-        "type": "object"
-      },
-      "Tier2QueryResponse": {
-        "description": "docs/09: `POST /api/tier2/query` -> `{sql, explanation, columns, rows, chart_hint}`,\nalways including `sql` \u2014 rejected or not (docs/09: \"especially then\").",
-        "properties": {
-          "chart_hint": {
-            "title": "Chart Hint",
-            "type": "string"
-          },
-          "columns": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Columns",
-            "type": "array"
-          },
-          "explanation": {
-            "title": "Explanation",
-            "type": "string"
-          },
-          "rejected": {
-            "title": "Rejected",
-            "type": "boolean"
-          },
-          "rejection_reason": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Rejection Reason"
-          },
-          "rows": {
-            "items": {
-              "items": {},
-              "type": "array"
-            },
-            "title": "Rows",
-            "type": "array"
-          },
-          "sql": {
-            "title": "Sql",
-            "type": "string"
-          }
-        },
-        "required": [
-          "sql",
-          "explanation",
-          "columns",
-          "rows",
-          "chart_hint",
-          "rejected",
-          "rejection_reason"
-        ],
-        "title": "Tier2QueryResponse",
         "type": "object"
       },
       "TimelinePhaseOut": {
@@ -6249,6 +6400,118 @@
         ]
       }
     },
+    "/api/tier2/detector-reliability": {
+      "get": {
+        "description": "Chart 3: per-detector confirm/dismiss counts pooled across every tenant's analyst\nfeedback \u2014 see `app.tier2.detector_reliability`'s module docstring for why this route is\na deliberate, reviewed exception to tenant scoping rather than an accidental leak.",
+        "operationId": "get_detector_reliability_api_tier2_detector_reliability_get",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetectorReliabilityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Detector Reliability",
+        "tags": [
+          "tier2"
+        ]
+      }
+    },
+    "/api/tier2/first-seen": {
+      "get": {
+        "description": "Chart 4: for indicators seen by `min_tenants` or more tenants, when each tenant first\nobserved it \u2014 the early-warning story (\"tenant A on day 1, tenant B on day 4\").",
+        "operationId": "get_first_seen_propagation_api_tier2_first_seen_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "min_tenants",
+            "required": false,
+            "schema": {
+              "default": 2,
+              "maximum": 1000,
+              "minimum": 2,
+              "title": "Min Tenants",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FirstSeenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get First Seen Propagation",
+        "tags": [
+          "tier2"
+        ]
+      }
+    },
     "/api/tier2/indicator-overlap": {
       "get": {
         "operationId": "get_indicator_overlap_api_tier2_indicator_overlap_get",
@@ -6322,6 +6585,56 @@
         ]
       }
     },
+    "/api/tier2/overlap-distribution": {
+      "get": {
+        "description": "Chart 1: for every indicator signature, how many distinct tenants have seen it,\nbucketed into 1 / 2 / 3+. The 2+ buckets are the cross-tenant signal itself.",
+        "operationId": "get_overlap_distribution_api_tier2_overlap_distribution_get",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OverlapDistributionResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Get Overlap Distribution",
+        "tags": [
+          "tier2"
+        ]
+      }
+    },
     "/api/tier2/overview": {
       "get": {
         "operationId": "get_tier2_overview_api_tier2_overview_get",
@@ -6371,9 +6684,10 @@
         ]
       }
     },
-    "/api/tier2/query": {
-      "post": {
-        "operationId": "query_tier2_api_tier2_query_post",
+    "/api/tier2/technique-prevalence": {
+      "get": {
+        "description": "Chart 2: which of the 13 proxy-observable ATT&CK techniques (docs/13 M14,\n`data/kb/mitre/allowlist.yml`) appear in how many tenants \u2014 every allowlisted technique\nis returned, including ones observed in zero tenants so far, never a fabricated id.",
+        "operationId": "get_technique_prevalence_api_tier2_technique_prevalence_get",
         "parameters": [
           {
             "in": "cookie",
@@ -6392,22 +6706,12 @@
             }
           }
         ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Tier2QueryRequest"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "200": {
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Tier2QueryResponse"
+                  "$ref": "#/components/schemas/TechniquePrevalenceResponse"
                 }
               }
             },
@@ -6424,7 +6728,7 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Query Tier2",
+        "summary": "Get Technique Prevalence",
         "tags": [
           "tier2"
         ]

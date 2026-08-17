@@ -4,6 +4,7 @@ import { SeverityBar } from "@/components/severity/SeverityBar";
 import { Badge } from "@/components/ui/Badge";
 import { dispositionLabel, threatConfidenceLabel } from "@/lib/severity";
 import { formatDate, formatScore } from "@/lib/format";
+import { parseTag } from "@/lib/tags";
 
 // 1. Header — docs/10: "title, severity, fused score, disposition, techniques, recurrence link."
 export function CaseHeader({ incident, analysisId }: { incident: IncidentDetail; analysisId: string }) {
@@ -44,8 +45,32 @@ export function CaseHeader({ incident, analysisId }: { incident: IncidentDetail;
         <span className="text-xs text-[var(--color-text-lo)]">Opened {formatDate(incident.created_at)}</span>
       </div>
 
+      {/* Deterministic tags — `app.graph.tags`, computed at correlate time for every incident,
+          separate provenance from the LLM's own `verdict.mitre_techniques` below (CLAUDE.md:
+          "these are separate fields with separate provenance, and the distinction must be
+          legible"). Rendered first and labelled "Detected" so a reader never mistakes a
+          rule/signal/ml hit for an LLM's own hypothesis evaluation. */}
+      {incident.tags.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-[var(--color-text-lo)]">Detected:</span>
+          {incident.tags.map((tag) => {
+            const parsed = parseTag(tag);
+            return (
+              <span
+                key={tag}
+                title={tag}
+                className="rounded border border-[var(--color-border)] px-2 py-0.5 font-mono text-xs text-[var(--color-text-mid)]"
+              >
+                {parsed.label}
+              </span>
+            );
+          })}
+        </div>
+      )}
+
       {techniques.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-xs text-[var(--color-text-lo)]">LLM assessment:</span>
           {techniques.map((t) => (
             <span
               key={t.id}

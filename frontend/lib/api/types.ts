@@ -231,6 +231,15 @@ export interface IncidentListItem {
   disposition: Disposition | null;
   citation_valid: boolean | null;
   mitre_techniques: string[];
+  /**
+   * Deterministic, always-populated pipeline output (`app.graph.tags`, computed at correlate
+   * time — zero LLM cost) — distinct from `mitre_techniques` above, which stays the LLM's own
+   * contribution and is empty until the incident is triaged. Namespaced strings:
+   * `technique:<id>` (MITRE-allowlist-filtered), `layer:<detector_layer>`,
+   * `detector:<detector_key>`, plus unprefixed derived tags `multi-layer`/`recurring`. Verified
+   * against the regenerated `lib/api/schema.d.ts` (`npm run gen:api`) — not a guess.
+   */
+  tags: string[];
   entity_count: number;
   signal_count: number;
   recurrence_of: string | null;
@@ -536,6 +545,15 @@ export interface IncidentDetail {
   status: string;
   entity_ids: number[];
   signal_ids: number[];
+  /** Deterministic, always-present pipeline output — see `IncidentListItem.tags`'s comment. */
+  tags: string[];
+  /**
+   * Deterministic, always-present summary (`app.graph.summary`, computed at correlate time —
+   * zero LLM cost). Never overwritten by `verdict.summary` (the LLM's own, richer narrative,
+   * present only once triaged) — the case file renders both, labelled, per docs/v2_migration
+   * change 3's "two confidences, never mixed" precedent applied to prose.
+   */
+  summary: string;
   recurrence_of: string | null;
   recurrence_similarity: number | null;
   created_at: string;
@@ -898,19 +916,10 @@ export interface IndicatorOverlapEntryOut {
 export interface IndicatorOverlapResponse {
   items: IndicatorOverlapEntryOut[];
 }
-export interface Tier2QueryRequest {
-  question: string;
-}
-export type ChartHint = "table" | "bar" | "line" | "number";
-export interface Tier2QueryResponse {
-  sql: string;
-  explanation: string;
-  columns: string[];
-  rows: unknown[][];
-  chart_hint: ChartHint;
-  rejected: boolean;
-  rejection_reason: string | null;
-}
+// `Tier2QueryRequest`/`Tier2QueryResponse` (the NL-to-SQL chatbot's request/response shapes)
+// removed along with `POST /api/tier2/query` — see docs/09's Tier 2 section. The four
+// cross-tenant learning chart responses added in its place are generated types
+// (`lib/api/tier2-charts.ts`, re-exported from `schema.d.ts`), not hand-written here.
 
 // ---- Events (real schemas, `backend/app/schemas/event.py` verbatim) ----
 

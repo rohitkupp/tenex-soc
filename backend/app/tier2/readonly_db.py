@@ -1,10 +1,18 @@
-"""The second, database-enforced layer docs/06 asks for: `app.tier2.sql_validator` is the
-application-level gate, but every validated Tier 2 query is actually *executed* through a
-connection authenticated as `tier2_readonly` — a dedicated Postgres role, provisioned by
-`alembic/versions/*_tier2_readonly_role_and_views.py`, granted `SELECT` on exactly
-`app.tier2.views.ALLOWED_VIEWS` and nothing else, with `statement_timeout = 5s` set on the
-role itself. Never the app's own privileged `tenex` user — see that migration's docstring
-for why a validator bypass should still hit a wall at the database.
+"""The database-enforced half of docs/06's "Text-to-SQL safety": a dedicated Postgres role,
+`tier2_readonly`, provisioned by `alembic/versions/*_tier2_readonly_role_and_views.py`,
+granted `SELECT` on exactly `app.tier2.views.ALLOWED_VIEWS` and nothing else, with
+`statement_timeout = 5s` set on the role itself. Never the app's own privileged `tenex` user.
+
+**No application code calls `run_readonly_query` today.** It used to be the execution layer
+for `POST /api/tier2/query` (an NL-to-SQL chatbot: `app.tier2.sql_validator` validated the
+LLM-generated SQL, this module ran it as `tier2_readonly`), removed under a hard cost
+constraint that this task's LLM surface must shrink, never grow. This module is kept anyway —
+`tests/test_tier2_readonly_role.py` and `tests/test_tier2_migration.py` connect as this role
+directly and prove, against the real database, that it genuinely cannot reach
+`events`/`users`/`tenants`/anything tenant-identifying, independent of any caller above it.
+That is a real, DB-enforced guarantee worth keeping tested even with no application caller
+right now, and dropping the role or its migration would be a schema change, out of scope for
+removing one chatbot route.
 """
 
 from __future__ import annotations

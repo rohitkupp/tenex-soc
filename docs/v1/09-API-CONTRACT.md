@@ -103,10 +103,17 @@ payload `{confirm: true}` — no accidental clicks.
 |---|---|---|
 | GET | `/api/tier2/overview` | Cross-tenant aggregates |
 | GET | `/api/tier2/indicator-overlap` | Indicators seen across multiple tenants |
-| POST | `/api/tier2/query` | `{question}` → `{sql, explanation, columns, rows, chart_hint}` |
+| GET | `/api/tier2/overlap-distribution` | Chart 1: indicator count by tenant-count bucket (`1`/`2`/`3+`) |
+| GET | `/api/tier2/technique-prevalence` | Chart 2: all 13 allowlisted ATT&CK techniques, tenant count per technique |
+| GET | `/api/tier2/detector-reliability` | Chart 3: per-detector confirm/dismiss counts, pooled across every tenant's analyst feedback |
+| GET | `/api/tier2/first-seen` | Chart 4: for indicators seen by 2+ tenants, each tenant's first-observed timestamp |
 
-`/api/tier2/query` **always returns the generated SQL**, and the UI always displays it before
-results. See `docs/06` for the validation pipeline.
+**`POST /api/tier2/query` (the NL-to-SQL chatbot) has been removed.** It was the one route
+in this section that could make a live Anthropic call; removed under a hard cost constraint
+that this surface must shrink, never grow. Every route above is deterministic and non-LLM,
+including the four cross-tenant learning charts. `app.tier2.nl_to_sql`/`sql_validator` are
+deleted with it; `app.tier2.readonly_db`/`views` (the `tier2_readonly` Postgres role and its
+two allowlisted views) are kept — see `backend/app/tier2/__init__.py`'s docstring.
 
 ## Ops
 

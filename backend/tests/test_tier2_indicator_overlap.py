@@ -15,7 +15,11 @@ from app.core.config import Settings
 from app.core.db import get_session_factory
 from app.models.tier2_signature import Tier2Signature
 from app.tier2.hashing import indicator_hash, tenant_hash
-from app.tier2.indicator_overlap import get_overview, list_indicator_overlap
+from app.tier2.indicator_overlap import (
+    get_overview,
+    list_indicator_overlap,
+    list_overlap_distribution,
+)
 from app.tier2.signature_sync import sync_incident_to_tier2
 from tests.conftest import make_analysis, make_tenant, make_user
 from tests.fixtures.response import make_incident, make_triage_verdict
@@ -190,6 +194,29 @@ def test_overview_totals_reflect_both_tenants(
     assert overview.total_tenants >= 2
     incident_types = {row.incident_type for row in overview.by_incident_type}
     assert "c2_beaconing" in incident_types
+
+
+def test_overlap_distribution_buckets_a_two_tenant_indicator_under_the_two_bucket(
+    two_tenants: dict,
+    tier2_signature_cleanup: list[uuid.UUID],  # noqa: F811
+) -> None:
+    """Tier 2 chart 1: an indicator seen by exactly two tenants must land in the `"2"`
+    bucket, and a lonely, single-tenant indicator must land in `"1"` -- always three
+    buckets present (`"1"`, `"2"`, `"3+"`), even when one of them is zero for this run."""
+    sig_a = _sync_signature_for_tenant(two_tenants["a"], _SHARED_C2_DOMAIN)
+    sig_b = _sync_signature_for_tenant(two_tenants["b"], _SHARED_C2_DOMAIN)
+    tier2_signature_cleanup.extend([sig_a.id, sig_b.id])
+
+    session = get_session_factory()()
+    try:
+        dist = list_overlap_distribution(session)
+    finally:
+        session.close()
+
+    assert [b.bucket for b in dist.buckets] == ["1", "2", "3+"]
+    assert dist.total_indicators == sum(b.indicator_count for b in dist.buckets)
+    two_bucket = next(b for b in dist.buckets if b.bucket == "2")
+    assert two_bucket.indicator_count >= 1
 
 
 def test_shared_salt_is_what_makes_overlap_detectable_at_all(

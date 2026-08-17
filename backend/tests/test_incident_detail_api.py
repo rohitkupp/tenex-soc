@@ -240,6 +240,75 @@ def test_detail_returns_signals_entities_and_verdict(client: TestClient, ctx: di
     assert body["verdict"]["disposition"] == "true_positive"
 
 
+def test_queue_returns_deterministic_tags_for_every_incident(client: TestClient, ctx: dict) -> None:
+    """ "EVERY incident to have a summary by default" / tags "a real pipeline output visible on
+    the dashboard" — both must show up on the queue row, not just the case file, and neither
+    depends on whether the incident was ever triaged."""
+    authenticate(client, ctx["user"])
+    tenant, analysis = ctx["tenant"], ctx["analysis"]
+    make_incident(
+        tenant_id=tenant.id,
+        analysis_id=analysis.id,
+        tags=["technique:T1090", "layer:rule", "multi-layer"],
+    )
+
+    body = client.get(f"/api/analyses/{analysis.id}/incidents").json()
+    assert len(body["items"]) == 1
+    item = body["items"][0]
+    assert item["tags"] == ["technique:T1090", "layer:rule", "multi-layer"]
+    # Untriaged: the LLM's own `mitre_techniques` stays empty, distinct from the deterministic
+    # `tags` field, which is populated regardless (`app.graph.tags` module docstring).
+    assert item["mitre_techniques"] == []
+
+
+def test_detail_returns_tags_and_summary(client: TestClient, ctx: dict) -> None:
+    authenticate(client, ctx["user"])
+    tenant, analysis = ctx["tenant"], ctx["analysis"]
+    incident = make_incident(
+        tenant_id=tenant.id,
+        analysis_id=analysis.id,
+        tags=["detector:signal.beaconing", "layer:signal"],
+        summary="3 signals from the signal layer fired on 1 domain. Fused severity: high.",
+    )
+
+    body = client.get(f"/api/incidents/{incident.id}").json()
+    assert body["tags"] == ["detector:signal.beaconing", "layer:signal"]
+    assert (
+        body["summary"]
+        == "3 signals from the signal layer fired on 1 domain. Fused severity: high."
+    )
+
+
+def test_detail_deterministic_summary_survives_when_an_llm_verdict_exists(
+    client: TestClient, ctx: dict
+) -> None:
+    """ "the deterministic summary survives when an LLM verdict exists" (this task's test list):
+    `Incident.summary` and `TriageVerdict.summary` are separate columns with separate
+    provenance (docs/v2_migration change 3's "two confidences, never mixed" precedent, applied
+    to prose) — triaging an incident must never blank out or overwrite the deterministic one."""
+    authenticate(client, ctx["user"])
+    tenant, analysis = ctx["tenant"], ctx["analysis"]
+    deterministic_summary = (
+        "1 signal from the rule layer fired on 1 domain at 2026-01-01T12:00 UTC. "
+        "1 event supports this finding; top technique Proxy (T1090). Fused severity: high."
+    )
+    incident = make_incident(
+        tenant_id=tenant.id, analysis_id=analysis.id, summary=deterministic_summary
+    )
+    make_triage_verdict(
+        incident_id=incident.id,
+        recommended_actions=[],
+        summary="The LLM's own narrative read of this incident, in prose the analyst reads.",
+    )
+
+    body = client.get(f"/api/incidents/{incident.id}").json()
+    assert body["summary"] == deterministic_summary
+    assert body["verdict"]["summary"] == (
+        "The LLM's own narrative read of this incident, in prose the analyst reads."
+    )
+    assert body["summary"] != body["verdict"]["summary"]
+
+
 def test_detail_verdict_is_null_when_untriaged(client: TestClient, ctx: dict) -> None:
     authenticate(client, ctx["user"])
     incident = make_incident(tenant_id=ctx["tenant"].id, analysis_id=ctx["analysis"].id)

@@ -122,6 +122,15 @@ Signature sync, cross-tenant dashboard, indicator overlap, NL→SQL with full va
 **Accept:** Indicator overlap surfaces across two simulated tenants. Every generated query is
 displayed. A malicious NL prompt cannot produce a mutating or out-of-scope query.
 
+**Later update:** the NL→SQL chatbot described above was removed under a hard cost constraint
+on a later task (no code path may make a live Anthropic call) — see docs/06's "Text-to-SQL
+safety (Tier 2 chatbot) — removed" section. It was replaced with four deterministic,
+non-LLM cross-tenant learning charts (docs/09's Tier 2 section) that answer questions the
+chatbot could have been asked anyway (indicator overlap distribution, technique prevalence,
+detector reliability, first-seen propagation) without any LLM surface at all. The acceptance
+criteria above describe the milestone as originally built and are left as a historical
+record.
+
 ## M15 — Frontend completion
 All routes per `docs/10`. `ExplanationRenderer` for every detector type. Case file screen
 complete. Empty states, keyboard nav, responsive.

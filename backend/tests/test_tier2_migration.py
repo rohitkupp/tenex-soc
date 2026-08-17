@@ -1,9 +1,10 @@
 """Proves the live database (after `alembic upgrade head`) actually matches
-`app.tier2.views` — the drift guard both `app.tier2.sql_validator`'s allowlist and
-`app.tier2.nl_to_sql`'s system prompt depend on being accurate. Also exercises the
-migration's `downgrade()`/`upgrade()` round trip for real, since a migration that only
-ever runs forward in practice is a common place for an untested `downgrade()` to silently
-rot.
+`app.tier2.views` — the drift guard `app.tier2.indicator_overlap`, `app.tier2.
+technique_prevalence`, and `app.tier2.first_seen` all depend on being accurate (previously
+also `app.tier2.sql_validator`'s allowlist and `app.tier2.nl_to_sql`'s system prompt, both
+removed along with the NL-to-SQL chatbot). Also exercises the migration's
+`downgrade()`/`upgrade()` round trip for real, since a migration that only ever runs forward
+in practice is a common place for an untested `downgrade()` to silently rot.
 """
 
 from __future__ import annotations

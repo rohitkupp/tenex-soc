@@ -71,14 +71,32 @@ export default async function CaseFilePage({
       {/* 1. Header */}
       <CaseHeader incident={incident} analysisId={id} />
 
-      {/* 2. Summary */}
-      {incident.verdict?.summary && (
-        <section>
+      {/* 2. Summary — always present (this is a pipeline output now, not an LLM side effect):
+          `incident.summary` is deterministic, computed at correlate time for every incident,
+          zero LLM cost (`app.graph.summary`), and never destructively replaced. When a richer
+          LLM narrative exists (`incident.verdict.summary`) it takes the primary serif slot per
+          docs/10's "richer narrative should take precedence"; the deterministic one still
+          renders underneath, labelled, so both provenances stay legible — never one silently
+          standing in for the other. */}
+      <section className="flex flex-col gap-3">
+        {incident.verdict?.summary ? (
+          <>
+            <p className="max-w-[68ch] font-serif text-[17px] leading-[1.65] text-[var(--color-text-hi)]">
+              {incident.verdict.summary}
+            </p>
+            <div className="max-w-[68ch]">
+              <p className="mb-1 text-xs uppercase tracking-wide text-[var(--color-text-lo)]">
+                Detected automatically, before triage
+              </p>
+              <p className="text-sm leading-[1.6] text-[var(--color-text-mid)]">{incident.summary}</p>
+            </div>
+          </>
+        ) : (
           <p className="max-w-[68ch] font-serif text-[17px] leading-[1.65] text-[var(--color-text-hi)]">
-            {incident.verdict.summary}
+            {incident.summary}
           </p>
-        </section>
-      )}
+        )}
+      </section>
 
       {/* 3. Narrative — the signature element */}
       <section>

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
 
 from pydantic import BaseModel
 
@@ -35,18 +34,72 @@ class IndicatorOverlapResponse(BaseModel):
     items: list[IndicatorOverlapEntryOut]
 
 
-class Tier2QueryRequest(BaseModel):
-    question: str
+# ---------------------------------------------------------------------------- chart 1: overlap distribution
 
 
-class Tier2QueryResponse(BaseModel):
-    """docs/09: `POST /api/tier2/query` -> `{sql, explanation, columns, rows, chart_hint}`,
-    always including `sql` — rejected or not (docs/09: "especially then")."""
+class OverlapBucketOut(BaseModel):
+    """`bucket` is one of `"1"`, `"2"`, `"3+"` — the number of distinct tenants that have
+    seen a given indicator signature. The `"2"`/`"3+"` buckets together are the cross-tenant
+    signal itself; `"1"` is the (expected) majority of indicators seen by only one tenant."""
 
-    sql: str
-    explanation: str
-    columns: list[str]
-    rows: list[list[Any]]
-    chart_hint: str
-    rejected: bool
-    rejection_reason: str | None
+    bucket: str
+    indicator_count: int
+
+
+class OverlapDistributionResponse(BaseModel):
+    total_indicators: int
+    buckets: list[OverlapBucketOut]
+
+
+# ---------------------------------------------------------------------------- chart 2: technique prevalence
+
+
+class TechniquePrevalenceEntryOut(BaseModel):
+    """One row per allowlisted technique (`data/kb/mitre/allowlist.yml`) — always all 13,
+    including ones with `tenant_count == 0`, never a fabricated id."""
+
+    technique_id: str
+    technique_name: str
+    tenant_count: int
+    signature_count: int
+
+
+class TechniquePrevalenceResponse(BaseModel):
+    total_tenants_with_signatures: int
+    items: list[TechniquePrevalenceEntryOut]
+
+
+# ---------------------------------------------------------------------------- chart 3: detector reliability
+
+
+class DetectorReliabilityEntryOut(BaseModel):
+    detector_key: str
+    detector_layer: str
+    confirmed: int
+    dismissed: int
+
+
+class DetectorReliabilityResponse(BaseModel):
+    """`total_tenants` is the count of distinct tenants that have contributed *any* analyst
+    feedback, pooled across the whole fleet — see `app.tier2.detector_reliability`."""
+
+    total_tenants: int
+    items: list[DetectorReliabilityEntryOut]
+
+
+# ---------------------------------------------------------------------------- chart 4: first-seen propagation
+
+
+class FirstSeenTenantObservationOut(BaseModel):
+    tenant_hash: str
+    first_observed_at: datetime
+
+
+class FirstSeenIndicatorOut(BaseModel):
+    indicator_hash: str
+    tenant_count: int
+    observations: list[FirstSeenTenantObservationOut]
+
+
+class FirstSeenResponse(BaseModel):
+    items: list[FirstSeenIndicatorOut]

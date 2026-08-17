@@ -67,8 +67,8 @@ def test_correlate_forms_incidents_with_anomaly_confidence(
     with get_engine().begin() as conn:
         incidents = conn.execute(
             text(
-                "SELECT title, severity, fused_score, anomaly_confidence, entity_ids, signal_ids "
-                "FROM incidents WHERE analysis_id = :aid"
+                "SELECT title, severity, fused_score, anomaly_confidence, entity_ids, signal_ids, "
+                "tags, summary FROM incidents WHERE analysis_id = :aid"
             ),
             {"aid": analysis.id},
         ).all()
@@ -91,6 +91,205 @@ def test_correlate_forms_incidents_with_anomaly_confidence(
     assert n_entities > 0
     assert n_edges > 0
     assert counters["incidents"] == 1
+    # This task's deterministic pipeline outputs -- present on every incident, not just triaged
+    # ones (`app.graph.tags`/`app.graph.summary`).
+    assert incident.tags  # at least `layer:signal` / `detector:signal.beaconing`
+    assert "layer:signal" in incident.tags
+    assert incident.summary
+    assert incident.summary != ""
+
+
+def test_correlate_incident_with_two_allowlisted_techniques_gets_both_tags(
+    tenant_cleanup: list[uuid.UUID],
+) -> None:
+    """ "an incident whose signals carry 2+ techniques gets both tags" (this task's test list)."""
+    tenant = make_tenant()
+    tenant_cleanup.append(tenant.id)
+    user = make_user(tenant_id=tenant.id, email=f"correlate-{uuid.uuid4()}@test.local")
+    analysis = make_analysis(tenant_id=tenant.id, user_id=user.id)
+
+    now = datetime.now(UTC)
+    for i in range(3):
+        make_event(
+            tenant_id=tenant.id,
+            analysis_id=analysis.id,
+            ts=now + timedelta(minutes=i),
+            raw_line_no=i + 1,
+            principal="alice@corp.example",
+            src_ip="10.0.0.5",
+            domain="evil-c2.example",
+            dst_ip="1.2.3.4",
+        )
+
+    # Two signals on the *same* seed entity (the domain) so Louvain places them in one
+    # community/incident -- both allowlisted, both proxy-observable (docs/04's own rule set).
+    make_signal(
+        tenant_id=tenant.id,
+        analysis_id=analysis.id,
+        entity_type="domain",
+        entity_value="evil-c2.example",
+        detector_key="sigma.blocked_then_allowed",
+        detector_layer="rule",
+        mitre_technique="T1090",
+    )
+    make_signal(
+        tenant_id=tenant.id,
+        analysis_id=analysis.id,
+        entity_type="domain",
+        entity_value="evil-c2.example",
+        detector_key="sigma.executable_archive_download_new_domain",
+        detector_layer="rule",
+        mitre_technique="T1105",
+    )
+
+    asyncio.run(correlate.handle(_message(analysis.id, tenant.id)))
+
+    with get_engine().begin() as conn:
+        incidents = conn.execute(
+            text("SELECT tags, summary FROM incidents WHERE analysis_id = :aid"),
+            {"aid": analysis.id},
+        ).all()
+    assert len(incidents) == 1
+    tags = incidents[0].tags
+    assert "technique:T1090" in tags
+    assert "technique:T1105" in tags
+    assert incidents[0].summary
+
+
+def test_correlate_incident_technique_outside_allowlist_is_not_passed_through(
+    tenant_cleanup: list[uuid.UUID],
+) -> None:
+    """ "a technique outside the allowlist is rejected rather than passed through" (this task's
+    test list). T1552.001 is `credentials-in-url.yml`'s own tag and is not one of the 13
+    proxy-observable allowlisted techniques."""
+    tenant = make_tenant()
+    tenant_cleanup.append(tenant.id)
+    user = make_user(tenant_id=tenant.id, email=f"correlate-{uuid.uuid4()}@test.local")
+    analysis = make_analysis(tenant_id=tenant.id, user_id=user.id)
+
+    now = datetime.now(UTC)
+    for i in range(3):
+        make_event(
+            tenant_id=tenant.id,
+            analysis_id=analysis.id,
+            ts=now + timedelta(minutes=i),
+            raw_line_no=i + 1,
+            principal="bob@corp.example",
+            src_ip="10.0.0.6",
+            domain="creds.example",
+        )
+
+    make_signal(
+        tenant_id=tenant.id,
+        analysis_id=analysis.id,
+        entity_type="domain",
+        entity_value="creds.example",
+        detector_key="sigma.credentials_in_url",
+        detector_layer="rule",
+        mitre_technique="T1552.001",
+    )
+
+    asyncio.run(correlate.handle(_message(analysis.id, tenant.id)))
+
+    with get_engine().begin() as conn:
+        incidents = conn.execute(
+            text("SELECT tags, summary FROM incidents WHERE analysis_id = :aid"),
+            {"aid": analysis.id},
+        ).all()
+    assert len(incidents) == 1
+    tags = incidents[0].tags
+    assert not any(t.startswith("technique:") for t in tags)
+    assert "layer:rule" in tags  # the non-technique tags are unaffected
+    assert incidents[0].summary
+
+
+def test_correlate_multi_layer_tag_when_two_layers_corroborate_the_same_entity(
+    tenant_cleanup: list[uuid.UUID],
+) -> None:
+    """ "an incident with signals from 2 layers gets a multi-layer tag" (this task's test list)."""
+    tenant = make_tenant()
+    tenant_cleanup.append(tenant.id)
+    user = make_user(tenant_id=tenant.id, email=f"correlate-{uuid.uuid4()}@test.local")
+    analysis = make_analysis(tenant_id=tenant.id, user_id=user.id)
+
+    now = datetime.now(UTC)
+    for i in range(3):
+        make_event(
+            tenant_id=tenant.id,
+            analysis_id=analysis.id,
+            ts=now + timedelta(minutes=i),
+            raw_line_no=i + 1,
+            principal="alice@corp.example",
+            src_ip="10.0.0.5",
+            domain="evil-c2.example",
+            dst_ip="1.2.3.4",
+        )
+
+    make_signal(
+        tenant_id=tenant.id,
+        analysis_id=analysis.id,
+        entity_type="domain",
+        entity_value="evil-c2.example",
+        detector_key="signal.beaconing",
+        detector_layer="signal",
+    )
+    make_signal(
+        tenant_id=tenant.id,
+        analysis_id=analysis.id,
+        entity_type="domain",
+        entity_value="evil-c2.example",
+        detector_key="sigma.blocked_then_allowed",
+        detector_layer="rule",
+    )
+
+    asyncio.run(correlate.handle(_message(analysis.id, tenant.id)))
+
+    with get_engine().begin() as conn:
+        incidents = conn.execute(
+            text("SELECT tags FROM incidents WHERE analysis_id = :aid"),
+            {"aid": analysis.id},
+        ).all()
+    assert len(incidents) == 1
+    assert "multi-layer" in incidents[0].tags
+
+
+def test_correlate_no_multi_layer_tag_when_single_layer(tenant_cleanup: list[uuid.UUID]) -> None:
+    tenant = make_tenant()
+    tenant_cleanup.append(tenant.id)
+    user = make_user(tenant_id=tenant.id, email=f"correlate-{uuid.uuid4()}@test.local")
+    analysis = make_analysis(tenant_id=tenant.id, user_id=user.id)
+
+    now = datetime.now(UTC)
+    for i in range(3):
+        make_event(
+            tenant_id=tenant.id,
+            analysis_id=analysis.id,
+            ts=now + timedelta(minutes=i),
+            raw_line_no=i + 1,
+            principal="alice@corp.example",
+            src_ip="10.0.0.5",
+            domain="evil-c2.example",
+            dst_ip="1.2.3.4",
+        )
+
+    make_signal(
+        tenant_id=tenant.id,
+        analysis_id=analysis.id,
+        entity_type="domain",
+        entity_value="evil-c2.example",
+        detector_key="signal.beaconing",
+        detector_layer="signal",
+    )
+
+    asyncio.run(correlate.handle(_message(analysis.id, tenant.id)))
+
+    with get_engine().begin() as conn:
+        incidents = conn.execute(
+            text("SELECT tags FROM incidents WHERE analysis_id = :aid"),
+            {"aid": analysis.id},
+        ).all()
+    assert len(incidents) == 1
+    assert "multi-layer" not in incidents[0].tags
 
 
 def test_correlate_with_no_signals_forms_no_incidents(tenant_cleanup: list[uuid.UUID]) -> None:
