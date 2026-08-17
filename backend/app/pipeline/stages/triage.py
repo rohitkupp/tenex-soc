@@ -79,7 +79,12 @@ from app.agent.orchestrator import (
     narrative_columns,
     triage_top_incidents_for_analysis,
 )
-from app.api.analyses import _compute_log_overview, _narrator_overview_payload
+from app.api.analyses import (
+    _compute_domain_semantic_findings,
+    _compute_log_overview,
+    _compute_notable_destinations,
+    _narrator_overview_payload,
+)
 from app.api.incident_detail import analysis_timeline_phases
 from app.core.config import get_settings
 from app.core.db import get_engine, get_session_factory
@@ -260,6 +265,17 @@ def _run_triage(message: StageMessage, *, caller: LLMCaller | None = None) -> di
                 citation_valid=narration_citation_valid,
                 cost_usd=str(narration_cost),
             )
+            # ---- change 8: semantic domain findings, once per analysis ----
+            # This moved here from inside `GET /api/analyses/{id}/overview`, where it ran a live
+            # LLM call on every request — seconds of latency and real tokens per page view.
+            # Computed once, with the rest of this analysis's LLM work, and stored.
+            semantic_findings = _compute_domain_semantic_findings(
+                session,
+                message.tenant_id,
+                message.analysis_id,
+                _compute_notable_destinations(session, message.tenant_id, message.analysis_id),
+            )
+
             # Persist the prose, not just its price. This call has always run here; until the
             # `analyses.narrative` columns existed its output was discarded and the UI had to
             # offer a button that paid for it a second time.
@@ -269,6 +285,10 @@ def _run_triage(message: StageMessage, *, caller: LLMCaller | None = None) -> di
                     .where(Analysis.id == message.analysis_id)
                     .values(
                         llm_cost_usd=func.coalesce(Analysis.llm_cost_usd, 0) + narration_cost,
+                        domain_semantic_findings=[
+                            f.model_dump(mode="json") for f in semantic_findings
+                        ],
+                        domain_semantics_generated_at=datetime.now(UTC),
                         **narrative_columns(narration),
                     )
                 )

@@ -56,6 +56,17 @@ class Analysis(Base, TenantScopedMixin):
         DateTime(timezone=True), nullable=True
     )
 
+    # change 8's semantic domain findings. `GET /analyses/{id}/overview` used to produce these
+    # with a live `assess_domain_semantics` call *inside the request*, so every page load, reload
+    # and tab switch waited on — and paid for — an LLM round trip. That was the single largest
+    # cost in that endpoint. Computed once in `triage` now and read from here.
+    domain_semantic_findings: Mapped[list[dict[str, object]]] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    domain_semantics_generated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     # NOTE: docs/02-DATA-MODEL.md defines this table without a `created_at` column —
     # matched exactly, on purpose. "GET /api/analyses newest first" (docs/09) is
     # therefore implemented by ordering on the parent upload's `created_at` (uploads

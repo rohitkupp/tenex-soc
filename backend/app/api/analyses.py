@@ -718,12 +718,13 @@ def _compute_domain_semantic_findings(
     context._prior_analyst_decisions_block` degrades a failed memory lookup — a missing semantic
     finding is a correct, reportable answer; a 500 on the whole overview page is not).
 
-    **Cost note**, spelled out rather than hidden: unlike every other field on this response, this
-    one can spend real tokens on every call when an analysis actually has rare/first-seen
-    destinations — `app.agent.orchestrator.assess_domain_semantics`'s own docstring covers why
-    that is an accepted tradeoff for now (there is nowhere to persist a computed-once result
-    without a schema migration, which is out of this milestone's ownership boundary) and what the
-    short-circuit for the common, zero-candidate case buys back.
+    **Called once per analysis, from the `triage` stage — never from a request handler.** This
+    spends real tokens and takes seconds. It used to run inline inside `GET /overview`, which
+    meant the analysis page paid for an LLM round trip on every load, every reload and every tab
+    switch, and blocked for 14-17s doing it — comfortably past the frontend's server-render
+    budget, which is what produced the "server-side exception" the analyst saw. The migration
+    that added `analyses.domain_semantic_findings` removed the "nowhere to persist it" reason
+    this note previously gave for accepting that.
     """
     settings = get_settings()
     if not settings.llm_enabled:
@@ -800,9 +801,14 @@ def get_analysis_overview(
         anomaly_count=anomaly_count,
         notable_users=_compute_notable_users(db, current.tenant.id, analysis_id),
         notable_destinations=notable_destinations,
-        domain_semantic_findings=_compute_domain_semantic_findings(
-            db, current.tenant.id, analysis_id, notable_destinations
-        ),
+        # Read, not compute. This used to call `_compute_domain_semantic_findings` inline, which
+        # makes a live Anthropic request — so a GET documented as "safe to call on every page
+        # load" blocked for 14-17s and spent tokens on every load, reload and tab switch. The
+        # pipeline computes these once (`app.pipeline.stages.triage`) and stores them.
+        domain_semantic_findings=[
+            DomainSemanticFinding.model_validate(f)
+            for f in (analysis.domain_semantic_findings or [])
+        ],
         narrative=_stored_narrative(analysis),
     )
 

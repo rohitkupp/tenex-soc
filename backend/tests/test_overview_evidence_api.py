@@ -27,12 +27,13 @@ from typing import Any
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 
 from app.core.config import get_settings
 from app.core.db import get_engine, get_session_factory
 from app.detection.evidence.constants import SIGNAL_BEACONING, SIGNAL_DGA
 from app.graph.builder import REL_ACCESSED
+from app.models.analysis import Analysis
 from app.models.base import tenant_scope
 from app.models.entity import Entity
 from app.models.entity_edge import EntityEdge
@@ -45,6 +46,8 @@ from tests.fixtures.response import (
     make_triage_verdict,
     response_tenant_cleanup,  # noqa: F401
 )
+
+SessionLocal = get_session_factory()
 
 _T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -400,16 +403,66 @@ def test_overview_wires_domain_semantic_candidates_into_the_semantic_pass(
     monkeypatch.setattr(analyses_module, "assess_domain_semantics", _fake_assess)
     monkeypatch.setattr(analyses_module, "get_settings", lambda: _FakeSettings())
 
-    body = client.get(f"/api/analyses/{analysis.id}/overview").json()
+    # The pass is driven by `_compute_domain_semantic_findings`, which the *pipeline* calls once
+    # per analysis. It used to be called from inside `GET /overview`, so this test used to
+    # exercise it through the route; that made a GET documented as "safe on every page load"
+    # block on a live LLM round trip and spend tokens per page view.
+    with SessionLocal() as session:
+        destinations = analyses_module._compute_notable_destinations(
+            session, tenant.id, analysis.id
+        )
+        findings = analyses_module._compute_domain_semantic_findings(
+            session, tenant.id, analysis.id, destinations
+        )
 
     assert len(captured["candidates"]) == 1
     assert captured["candidates"][0]["domain"] == domain.value
 
+    assert len(findings) == 1
+    assert findings[0].domain == domain.value
+    assert findings[0].label == SEMANTIC_INSIGHT_LABEL
+    assert "Microsoft" in findings[0].assessment
+
+
+def test_overview_reads_stored_semantic_findings_without_calling_the_llm(
+    client: TestClient, ctx: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`GET /overview` serves `analyses.domain_semantic_findings` verbatim and must never reach
+    the LLM — the whole point of persisting them. A route that called out per request cost 14-17s
+    and real tokens on every page load, reload and tab switch."""
+    import app.api.analyses as analyses_module
+    from app.schemas.overview import SEMANTIC_INSIGHT_LABEL
+
+    authenticate(client, ctx["user"])
+    analysis = ctx["analysis"]
+
+    stored = [
+        {
+            "domain": "microsoft-security-login-support.com",
+            "assessment": "Impersonates Microsoft's security/login branding.",
+            "rationale": "Combines 'microsoft' with an unrelated base domain.",
+            "evidence_id": "DOMAIN-1",
+        }
+    ]
+    with SessionLocal() as session, tenant_scope(session, ctx["tenant"].id):
+        session.execute(
+            update(Analysis)
+            .where(Analysis.id == analysis.id)
+            .values(domain_semantic_findings=stored)
+        )
+        session.commit()
+
+    def _explode(**kwargs: Any) -> None:
+        raise AssertionError("GET /overview must not call the semantic pass")
+
+    monkeypatch.setattr(analyses_module, "assess_domain_semantics", _explode)
+
+    body = client.get(f"/api/analyses/{analysis.id}/overview").json()
+
     findings = body["domain_semantic_findings"]
     assert len(findings) == 1
-    assert findings[0]["domain"] == domain.value
+    assert findings[0]["domain"] == stored[0]["domain"]
     assert findings[0]["label"] == SEMANTIC_INSIGHT_LABEL
-    assert "Microsoft" in findings[0]["assessment"]
 
 
 def test_overview_domain_semantic_findings_do_not_alter_the_dga_score(
@@ -469,6 +522,22 @@ def test_overview_domain_semantic_findings_do_not_alter_the_dga_score(
 
     monkeypatch.setattr(analyses_module, "assess_domain_semantics", _fake_assess)
     monkeypatch.setattr(analyses_module, "get_settings", lambda: _FakeSettings())
+
+    # Store the semantic finding the way the pipeline now does, then read the overview back.
+    with SessionLocal() as session:
+        destinations = analyses_module._compute_notable_destinations(
+            session, tenant.id, analysis.id
+        )
+        findings = analyses_module._compute_domain_semantic_findings(
+            session, tenant.id, analysis.id, destinations
+        )
+        with tenant_scope(session, tenant.id):
+            session.execute(
+                update(Analysis)
+                .where(Analysis.id == analysis.id)
+                .values(domain_semantic_findings=[f.model_dump(mode="json") for f in findings])
+            )
+            session.commit()
 
     body = client.get(f"/api/analyses/{analysis.id}/overview").json()
 
