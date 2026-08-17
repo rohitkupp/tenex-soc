@@ -25,6 +25,12 @@ from typing import Any, Final
 
 from app.agent.schemas import JUDGE_RUBRIC, NO_KNOWN_MAPPING
 
+# How many incidents `build_narrator_context` describes in full. Path A is one call for a whole
+# analysis, so unlike the per-incident roles its output grows with how busy the upload was; 15 is
+# roughly what fits in `MAX_TOKENS_PER_TURN_BY_ROLE["narrator"]` alongside the timeline phases,
+# with the true total always disclosed in the payload. See that function's docstring.
+MAX_NARRATOR_INCIDENTS: Final = 15
+
 __all__ = [
     "ANALYST_SYSTEM_PROMPT",
     "DOMAIN_SEMANTIC_SYSTEM_PROMPT",
@@ -396,10 +402,42 @@ def build_narrator_context(
 ) -> str:
     """Path A's single user turn: deterministic overview stats + incident list + already-selected
     timeline phases (change 14). Every number here is already computed in SQL/code -- the
-    Narrator's only job is prose over it."""
+    Narrator's only job is prose over it.
+
+    The incident list is capped. It was unbounded, and that is what broke Path A in production: a
+    4,360-event upload correlated into 33 incidents, the Narrator was asked to narrate all of
+    them, and it ran past `MAX_TOKENS_PER_TURN` before it ever emitted its tool call --
+    `SchemaValidationError: narrator hit max_tokens before calling narrate_analysis`, four times,
+    the whole analysis failing at the last stage after every other one had succeeded. Unbounded
+    input producing unbounded output against a fixed ceiling fails on exactly the large, busy
+    upload the summary matters most for.
+
+    `total_incidents` is always the true count and the payload says outright when the detail list
+    is a subset, so the summary reads "33 incidents, the 15 highest-scoring detailed below"
+    rather than silently describing 15 as if they were all of them (CLAUDE.md: a cap that changes
+    what the model can see is disclosed, never silent). Selection is by fused score -- a machine
+    ranking, consistent with the rest of the funnel, never the LLM's own pick.
+    """
+    ranked = sorted(
+        incidents,
+        key=lambda inc: inc.get("fused_score") or inc.get("score") or 0.0,
+        reverse=True,
+    )
+    shown = ranked[:MAX_NARRATOR_INCIDENTS]
     payload = {
         "overview": overview,
-        "incidents": incidents,
+        "total_incidents": len(incidents),
+        "incidents_detailed_below": len(shown),
+        "incident_selection": (
+            "all incidents"
+            if len(shown) == len(incidents)
+            else (
+                f"the {len(shown)} highest-scoring of {len(incidents)} incidents, ranked by fused "
+                "score. Say so when summarising: the other "
+                f"{len(incidents) - len(shown)} exist and are not described here."
+            )
+        ),
+        "incidents": shown,
         "timeline_phases": timeline_phases,
     }
     return wrap_untrusted(payload)

@@ -55,7 +55,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any
+from typing import Any, Final
 
 from pydantic import ValidationError
 from sqlalchemy import func, select, update
@@ -136,11 +136,28 @@ __all__ = [
 log = get_logger(__name__)
 
 MAX_TOKENS_PER_TURN = 8192
+
+# Per-role output ceilings. One shared 8192 was wrong for the narrator and only the narrator:
+# Analyst/Judge/Presenter each run once per *incident* and emit a bounded verdict, so their output
+# size does not grow with the upload. Path A's narrator runs once per *analysis* and writes prose
+# over every incident and timeline phase in it, so its output scales with how busy the upload was.
+# A 4,360-event upload correlating into 33 incidents ran past 8192 before it emitted its tool call
+# and took the whole analysis down at the final stage, having already paid for every incident
+# triaged before it. Raising the ceiling alone would only move the cliff, so the real bound is on
+# the *input* (`prompts.MAX_NARRATOR_INCIDENTS`); this headroom is what keeps a legitimately large
+# summary from clipping under that cap.
+MAX_TOKENS_PER_TURN_BY_ROLE: Final[dict[str, int]] = {"narrator": 16384}
 MAX_ROLE_TURNS = 12  # safety cap independent of the tool-call budget — see _run_tool_role
 MAX_SIGNALS_IN_CONTEXT = 30  # highest-confidence first — see _build_incident_context_block
 MAX_EVIDENCE_IDS_IN_CONTEXT = 20  # per signal/timeline-phase/evidence-payload, same reasoning
 MAX_EVIDENCE_PAYLOADS_IN_CONTEXT = 40  # CLAUDE.md rule 1 — cap before the prompt, not after
 MAX_RETRIEVED_CANDIDATES = 8  # change 4: "a small, evidence-relevant candidate set"
+
+
+def _max_tokens_for(role: str) -> int:
+    """Output ceiling for `role` — see `MAX_TOKENS_PER_TURN_BY_ROLE`."""
+    return MAX_TOKENS_PER_TURN_BY_ROLE.get(role, MAX_TOKENS_PER_TURN)
+
 
 # docs/07 "Bounds": "Input tokens | 60k per incident | Truncate oldest tool results." Checked
 # after every turn against that turn's own `usage.input_tokens`.
@@ -561,7 +578,7 @@ def _run_tool_role(
 
         response = caller.create(
             model=model,
-            max_tokens=MAX_TOKENS_PER_TURN,
+            max_tokens=_max_tokens_for(role),
             system=system_prompt,
             messages=messages,
             tools=tools_for_call,
@@ -698,7 +715,7 @@ def _run_notool_role(
     terminal_name = terminal_tool["name"]
     response = caller.create(
         model=model,
-        max_tokens=MAX_TOKENS_PER_TURN,
+        max_tokens=_max_tokens_for(role),
         system=system_prompt,
         messages=[{"role": "user", "content": user_content}],
         tools=[terminal_tool],
