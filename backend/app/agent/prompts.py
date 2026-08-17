@@ -29,7 +29,7 @@ from app.agent.schemas import JUDGE_RUBRIC, NO_KNOWN_MAPPING
 # analysis, so unlike the per-incident roles its output grows with how busy the upload was; 15 is
 # roughly what fits in `MAX_TOKENS_PER_TURN_BY_ROLE["narrator"]` alongside the timeline phases,
 # with the true total always disclosed in the payload. See that function's docstring.
-MAX_NARRATOR_INCIDENTS: Final = 15
+MAX_NARRATOR_INCIDENTS: Final = 20
 
 __all__ = [
     "ANALYST_SYSTEM_PROMPT",
@@ -428,6 +428,11 @@ def build_narrator_context(
         "overview": overview,
         "total_incidents": len(incidents),
         "incidents_detailed_below": len(shown),
+        # Present as its own field, not left for the model to subtract. The verifier checks every
+        # number in the prose against the numeric leaves of this payload, so a correct figure the
+        # model *derived* (total - shown) appears nowhere in the pool and is flagged as an
+        # unverified claim. Supplying it makes the honest sentence verifiable.
+        "incidents_not_detailed": len(incidents) - len(shown),
         "incident_selection": (
             "all incidents"
             if len(shown) == len(incidents)

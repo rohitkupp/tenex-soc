@@ -3,7 +3,6 @@ import Link from "next/link";
 import { fetchServer } from "@/lib/api/server";
 import type {
   IncidentDetail,
-  IncidentEvidenceResponse,
   IncidentGraph,
   TimelinePhaseOut,
 } from "@/lib/api/types";
@@ -11,7 +10,7 @@ import { CaseHeader } from "@/components/incidents/case/CaseHeader";
 import { NarrativeBlock } from "@/components/incidents/case/NarrativeBlock";
 import { ContradictingEvidence } from "@/components/incidents/case/ContradictingEvidence";
 import { TimelinePhases } from "@/components/incidents/case/TimelinePhases";
-import { EvidenceSection } from "@/components/incidents/case/EvidenceSection";
+import { LazyEvidenceSection } from "@/components/incidents/case/LazyEvidenceSection";
 import { SignalsSection } from "@/components/incidents/case/SignalsSection";
 import { EntityGraph } from "@/components/incidents/case/EntityGraph";
 import { InvestigationGuidance } from "@/components/incidents/case/InvestigationGuidance";
@@ -39,11 +38,13 @@ export default async function CaseFilePage({
 }) {
   const { id, iid } = await params;
 
-  const [incident, timeline, graph, evidence] = await Promise.all([
+  // Evidence is deliberately absent from this batch: the endpoint recomputes every payload
+  // per request (~12s), and awaiting it here is what made the case file exceed Vercel's
+  // server-render budget and throw. `LazyEvidenceSection` fetches it after paint.
+  const [incident, timeline, graph] = await Promise.all([
     fetchServer<IncidentDetail>(`/api/incidents/${iid}`),
     fetchServer<TimelinePhaseOut[]>(`/api/incidents/${iid}/timeline`),
     fetchServer<IncidentGraph>(`/api/incidents/${iid}/graph`),
-    fetchServer<IncidentEvidenceResponse>(`/api/incidents/${iid}/evidence`),
   ]);
 
   if (incident === null) {
@@ -119,8 +120,8 @@ export default async function CaseFilePage({
 
       {/* 6. Evidence — docs/v2_migration change 16, between Timeline and Signals */}
       <section>
-        <SectionHeading>Evidence {evidence ? `(${evidence.items.length})` : ""}</SectionHeading>
-        <EvidenceSection data={evidence} analysisId={id} incidentId={iid} />
+        <SectionHeading>Evidence</SectionHeading>
+        <LazyEvidenceSection analysisId={id} incidentId={iid} />
       </section>
 
       {/* 7. Signals */}

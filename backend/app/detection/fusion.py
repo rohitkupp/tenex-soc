@@ -180,7 +180,29 @@ def score_incident(signals: list[FusionInput], *, community_signal_density: floa
     formation) that have a signal list and a community density in hand and want the final,
     ready-to-persist `(fused_score, severity, anomaly_confidence)` triple in one call.
     """
-    base = fuse_signals([s.confidence for s in signals], [s.fusion_weight for s in signals])
+    # Fuse over the strongest signal *per detector*, not every signal. `fuse_signals` is a
+    # noisy-OR, which assumes each term is independent evidence. Repeated firings of the same
+    # detector on the same incident violate that outright: `signal.beaconing` firing in 40
+    # windows on one src_ip is one behaviour observed 40 times, not 40 independent findings.
+    # Fed every row, the product drives to zero and the score pins at the MAX_FUSED_SCORE
+    # ceiling regardless of how weak the evidence is — 100 signals at c=0.05 already fuse to
+    # 0.994. That is exactly the observed saturation: fifteen incidents all reporting a
+    # fused_score of 0.99 and an anomaly_confidence of 99.0, which tells an analyst nothing
+    # about which to open first.
+    #
+    # Taking the max per detector keeps corroboration *across* methods (the thing the score is
+    # meant to measure, and what `apply_graph_bonus` separately rewards) while refusing to let
+    # one chatty detector manufacture certainty on its own.
+    strongest_by_detector: dict[str, FusionInput] = {}
+    for sig in signals:
+        best = strongest_by_detector.get(sig.detector_key)
+        if best is None or sig.confidence * sig.fusion_weight > best.confidence * best.fusion_weight:
+            strongest_by_detector[sig.detector_key] = sig
+    contributing = list(strongest_by_detector.values())
+
+    base = fuse_signals(
+        [s.confidence for s in contributing], [s.fusion_weight for s in contributing]
+    )
     n_layers = len({s.detector_layer for s in signals})
     fused = apply_graph_bonus(
         base,

@@ -126,7 +126,7 @@ __all__ = [
 
 log = get_logger(__name__)
 
-MAX_TOKENS_PER_TURN = 8192
+MAX_TOKENS_PER_TURN = 32768
 
 # Per-role output ceilings. One shared 8192 was wrong for the narrator and only the narrator:
 # Analyst/Judge/Presenter each run once per *incident* and emit a bounded verdict, so their output
@@ -137,12 +137,12 @@ MAX_TOKENS_PER_TURN = 8192
 # triaged before it. Raising the ceiling alone would only move the cliff, so the real bound is on
 # the *input* (`prompts.MAX_NARRATOR_INCIDENTS`); this headroom is what keeps a legitimately large
 # summary from clipping under that cap.
-MAX_TOKENS_PER_TURN_BY_ROLE: Final[dict[str, int]] = {"narrator": 16384}
+MAX_TOKENS_PER_TURN_BY_ROLE: Final[dict[str, int]] = {"narrator": 32768}
 MAX_ROLE_TURNS = 12  # safety cap independent of the tool-call budget — see _run_tool_role
-MAX_SIGNALS_IN_CONTEXT = 30  # highest-confidence first — see _build_incident_context_block
-MAX_EVIDENCE_IDS_IN_CONTEXT = 20  # per signal/timeline-phase/evidence-payload, same reasoning
-MAX_EVIDENCE_PAYLOADS_IN_CONTEXT = 40  # CLAUDE.md rule 1 — cap before the prompt, not after
-MAX_RETRIEVED_CANDIDATES = 8  # change 4: "a small, evidence-relevant candidate set"
+MAX_SIGNALS_IN_CONTEXT = 60  # highest-confidence first — see _build_incident_context_block
+MAX_EVIDENCE_IDS_IN_CONTEXT = 40  # per signal/timeline-phase/evidence-payload, same reasoning
+MAX_EVIDENCE_PAYLOADS_IN_CONTEXT = 80  # CLAUDE.md rule 1 — cap before the prompt, not after
+MAX_RETRIEVED_CANDIDATES = 20  # change 4: "a small, evidence-relevant candidate set"
 
 
 def _max_tokens_for(role: str) -> int:
@@ -152,7 +152,7 @@ def _max_tokens_for(role: str) -> int:
 
 # docs/07 "Bounds": "Input tokens | 60k per incident | Truncate oldest tool results." Checked
 # after every turn against that turn's own `usage.input_tokens`.
-MAX_INPUT_TOKENS = 60_000
+MAX_INPUT_TOKENS = 180_000
 _TRUNCATED_TOOL_RESULT_PLACEHOLDER = (
     "[earlier tool result omitted to stay within the 60k input-token budget — call the tool "
     "again if you need this data]"
@@ -173,7 +173,7 @@ DOMAIN_SEMANTIC_EFFORT = "low"
 # to domains: capped well before that, and capped by `app.api.analyses._compute_domain_semantic_
 # candidates` *before* it does any of its own per-candidate row lookups, not just here -- this is
 # the single source of truth both sides import from so the two caps can never drift apart.
-MAX_SEMANTIC_DOMAINS_PER_CALL = 12
+MAX_SEMANTIC_DOMAINS_PER_CALL = 20
 
 
 class AgentTimeoutError(Exception):

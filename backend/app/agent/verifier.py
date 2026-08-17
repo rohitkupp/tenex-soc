@@ -146,7 +146,7 @@ _NOISE_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
     re.compile(r"\b(?:EVIDENCE|BASELINE|LOG)-\d+\b"),
     re.compile(r"\bMITRE-T\d{4}(?:\.\d{3})?\b"),
     re.compile(r"\bZSCALER-KB-[\w-]+\b"),
-    re.compile(r"\b\d{4}-\d{2}-\d{2}T[\d:.]+Z?\b"),  # ISO-8601 timestamps
+    re.compile(r"\b\d{4}-\d{2}-\d{2}(?:T[\d:.]+Z?)?\b"),  # ISO-8601 timestamps and bare dates
     re.compile(r"\b\d{1,2}:\d{2}(?::\d{2})?\b"),  # bare clock times / durations (16:19, 02:03:04)
 )
 
@@ -192,8 +192,13 @@ _PERCENT_UNITS: Final[frozenset[str]] = frozenset({"%", "percent", "percentile"}
 
 _NUMBER_RE: Final[re.Pattern[str]] = re.compile(
     r"(?P<num>[-+]?\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+\.\d+|\d+)"
-    r"\s*(?P<unit>%|percent(?:ile)?|kb|mb|gb|tb|bytes?|b|ms|milliseconds?|"
-    r"seconds?|secs?|s|minutes?|mins?|min|hours?|hrs?|hr|h)?",
+    # The `(?![A-Za-z])` sits INSIDE the unit alternation, not after the optional group. After
+    # the group it forced the engine to backtrack into a shorter *number* match to satisfy it
+    # ("99.7th percentile" degraded to 99). Inside, a unit only matches when no letter follows,
+    # and a number with no unit is simply left unitless -- which is what "15 highest-scoring"
+    # needs (previously the bare `h` of "highest" was read as HOURS: 15 * 3600 = 54000).
+    r"\s*(?P<unit>%|(?:percent(?:ile)?|kb|mb|gb|tb|bytes?|b|ms|milliseconds?|"
+    r"seconds?|secs?|s|minutes?|mins?|min|hours?|hrs?|hr|h)(?![A-Za-z]))?",
     re.IGNORECASE,
 )
 
