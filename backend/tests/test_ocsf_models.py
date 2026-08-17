@@ -11,13 +11,16 @@ import pytest
 from pydantic import ValidationError
 
 from app.ocsf import (
+    OS,
     Actor,
+    Device,
     HTTPActivity,
     HttpRequest,
     HttpResponse,
     NetworkEndpoint,
     OCSFEventBase,
     Traffic,
+    normalize_os_type,
 )
 from app.ocsf import User as OcsfUser
 
@@ -110,6 +113,14 @@ def test_http_activity_hot_columns() -> None:
         http_response=HttpResponse(code=200),
         traffic=Traffic(bytes_out=100, bytes_in=2000),
         disposition="allowed",
+        device=Device(
+            hostname="THINKPADSMITH",
+            name="PC11NLPA:5F08D97B",
+            owner="jsmith",
+            os=OS(type=normalize_os_type("Windows OS"), version="Version 10.0.19045"),
+        ),
+        bypassed_traffic=False,
+        flow_type="ZIA",
     )
     hot = event.hot_columns()
     assert hot == {
@@ -129,4 +140,40 @@ def test_http_activity_hot_columns() -> None:
         "bytes_in": 2000,
         "user_agent": "Mozilla/5.0",
         "event_key": "GET:Web Search:allowed:2xx",
+        "hostname": "THINKPADSMITH",
+        "device_name": "PC11NLPA:5F08D97B",
+        "device_owner": "jsmith",
+        "os_type": "windows",
+        "os_version": "Version 10.0.19045",
+        "bypassed_traffic": False,
+        "flow_type": "ZIA",
+        # `tls.ja4_hash` -- a concurrent change's own hot column (JA4 client TLS fingerprint,
+        # docs/v1/zscaler-nss-web-fields.md `%s{ja4_str}`), `None` here since this event sets no
+        # `tls`. Asserted explicitly rather than excluded so this test still catches a future
+        # regression in that column, not just this task's own seven.
+        "ja4_hash": None,
     }
+
+
+def test_http_activity_hot_columns_with_no_device() -> None:
+    """No-fire case: an event with no `device` at all projects every device hot column to
+    `None` rather than raising (`hot_columns` guards `self.device`/`os_` with `if`, not a bare
+    attribute chain)."""
+    event = HTTPActivity(
+        class_uid=4002,
+        category_uid=4,
+        time=_TS,
+        source_type="zscaler",
+        line_no=1,
+        event_key="k",
+        actor=Actor(user=OcsfUser(email_addr="svc@corp.example")),
+        src_endpoint=NetworkEndpoint(ip="10.0.0.9"),
+    )
+    hot = event.hot_columns()
+    assert hot["hostname"] is None
+    assert hot["device_name"] is None
+    assert hot["device_owner"] is None
+    assert hot["os_type"] is None
+    assert hot["os_version"] is None
+    assert hot["bypassed_traffic"] is None
+    assert hot["flow_type"] is None

@@ -86,6 +86,13 @@ def _records(path: Path, source_type: str) -> tuple[list[SimpleEventRecord], int
                     bytes_out=hot["bytes_out"],
                     user_agent=hot["user_agent"],
                     event_key=hot["event_key"],
+                    hostname=hot["hostname"],
+                    device_name=hot["device_name"],
+                    device_owner=hot["device_owner"],
+                    os_type=hot["os_type"],
+                    os_version=hot["os_version"],
+                    bypassed_traffic=hot["bypassed_traffic"],
+                    flow_type=hot["flow_type"],
                     enrichment=enrichment,
                 )
             )

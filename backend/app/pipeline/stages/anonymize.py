@@ -77,7 +77,8 @@ def _privacy_audit(message: StageMessage) -> dict[str, Any]:
         rows = conn.execute(
             text(
                 """
-                SELECT principal, src_ip, dst_ip, url_path, user_agent
+                SELECT principal, src_ip, dst_ip, url_path, user_agent,
+                       hostname, device_name, device_owner
                 FROM events
                 WHERE analysis_id = :analysis_id AND tenant_id = :tenant_id
                 """
@@ -88,13 +89,27 @@ def _privacy_audit(message: StageMessage) -> dict[str, Any]:
         n_events = 0
         n_identifiers = 0
         redaction_counts: dict[str, int] = {}
-        for principal, src_ip, dst_ip, url_path, user_agent in rows:
+        for (
+            principal,
+            src_ip,
+            dst_ip,
+            url_path,
+            user_agent,
+            hostname,
+            device_name,
+            device_owner,
+        ) in rows:
             n_events += 1
             anonymized = anonymize_event(
                 {
                     "principal": principal,
                     "src_ip": str(src_ip) if src_ip is not None else None,
                     "dst_ip": str(dst_ip) if dst_ip is not None else None,
+                    # Asset/device identifiers (this task) — see
+                    # `app.privacy.event_privacy`'s module docstring for the full accounting.
+                    "hostname": hostname,
+                    "device_name": device_name,
+                    "device_owner": device_owner,
                 },
                 tenant_id=message.tenant_id,
                 salt=salt,

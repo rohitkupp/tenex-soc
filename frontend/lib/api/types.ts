@@ -232,12 +232,17 @@ export interface IncidentListItem {
   citation_valid: boolean | null;
   mitre_techniques: string[];
   /**
-   * Deterministic, always-populated pipeline output (`app.graph.tags`, computed at correlate
-   * time — zero LLM cost) — distinct from `mitre_techniques` above, which stays the LLM's own
-   * contribution and is empty until the incident is triaged. Namespaced strings:
-   * `technique:<id>` (MITRE-allowlist-filtered), `layer:<detector_layer>`,
-   * `detector:<detector_key>`, plus unprefixed derived tags `multi-layer`/`recurring`. Verified
-   * against the regenerated `lib/api/schema.d.ts` (`npm run gen:api`) — not a guess.
+   * Deterministic, always-populated pipeline output — two unioned families, both computed at
+   * correlate time, zero LLM cost — distinct from `mitre_techniques` above, which stays the
+   * LLM's own contribution and is empty until the incident is triaged.
+   * `app.graph.tags`: `technique:<id>` (MITRE-allowlist-filtered), `layer:<detector_layer>`,
+   * `detector:<detector_key>`, plus unprefixed derived tags `multi-layer`/`recurring`.
+   * `app.graph.asset_tags` (Tier 2 asset-centric pivoting — "every issue tied to device X"):
+   * `device:<hostname>`, `os:<type>`, `os_version:<major.minor>`, `dept:<department>`,
+   * `location:<location>`, `app:<appname>`, `risk:<band>`, `flow:<type>`, plus unprefixed
+   * derived tags `bypassed-client-connector`/`shared-device`. Parsed via `lib/tags.ts`'s
+   * `parseTag`, never rendered raw. Verified against the regenerated `lib/api/schema.d.ts`
+   * (`npm run gen:api`) — not a guess.
    */
   tags: string[];
   entity_count: number;

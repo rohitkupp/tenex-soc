@@ -1,11 +1,27 @@
 /**
- * `IncidentListItem.tags` / `IncidentDetail.tags` — deterministic, namespaced tag strings
- * (`app.graph.tags`, backend). Parsed here rather than rendered raw so the queue and the case
- * file agree on one presentation for `technique:T1090` / `layer:rule` /
- * `detector:sigma.blocked_then_allowed` / bare derived tags (`multi-layer`, `recurring`).
+ * `IncidentListItem.tags` / `IncidentDetail.tags` — deterministic, namespaced tag strings.
+ * Two independently-computed families share this one flat list (`app.pipeline.stages.correlate`
+ * unions them): `app.graph.tags` (`technique:`/`layer:`/`detector:`/derived `multi-layer`/
+ * `recurring`) and `app.graph.asset_tags` (`device:`/`os:`/`os_version:`/`dept:`/`location:`/
+ * `app:`/`risk:`/`flow:`/derived `bypassed-client-connector`/`shared-device`) — the asset-tag
+ * family exists for Tier 2 asset-centric pivoting ("every issue tied to device X"), see that
+ * module's own docstring for the full per-tag justification. Parsed here rather than rendered
+ * raw so the queue and the case file agree on one presentation for every namespace.
  */
 
-export type TagKind = "technique" | "layer" | "detector" | "derived";
+export type TagKind =
+  | "technique"
+  | "layer"
+  | "detector"
+  | "device"
+  | "os"
+  | "os_version"
+  | "dept"
+  | "location"
+  | "app"
+  | "risk"
+  | "flow"
+  | "derived";
 
 export interface ParsedTag {
   kind: TagKind;
@@ -19,6 +35,14 @@ const PREFIXES: Record<string, TagKind> = {
   "technique:": "technique",
   "layer:": "layer",
   "detector:": "detector",
+  "device:": "device",
+  "os_version:": "os_version", // checked before "os:" — both start with "os"
+  "os:": "os",
+  "dept:": "dept",
+  "location:": "location",
+  "app:": "app",
+  "risk:": "risk",
+  "flow:": "flow",
 };
 
 export function parseTag(raw: string): ParsedTag {

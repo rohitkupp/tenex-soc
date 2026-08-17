@@ -14,6 +14,12 @@ generation, calibration-sample collection) that do not belong in a live queue st
 Louvain community detection lives inside `app.graph.incidents.form_incidents` (docs/05's steps
 1-6 in one function, `python-louvain`'s `best_partition`) — this stage does not call it directly,
 only `form_incidents`.
+
+`incident_tags` is the union of two independently-computed namespaces, both deterministic, both
+computed here: `app.graph.tags.compute_incident_tags` (technique/layer/detector, from the
+incident's signals) and `app.graph.asset_tags.compute_asset_tags` (device/os/dept/location/app/
+risk/flow, from the incident's evidence events) — see the latter's module docstring for why asset
+tags are a separate module rather than folded into the former.
 """
 
 from __future__ import annotations
@@ -29,6 +35,7 @@ from sqlalchemy import select
 from app.core.db import get_engine, get_session_factory
 from app.core.logging import get_logger
 from app.detection.fusion import FusionInput, score_incident
+from app.graph.asset_tags import AssetEvent, compute_asset_tags
 from app.graph.builder import (
     EntityKey,
     build_entity_graph,
@@ -106,6 +113,64 @@ def _pick_top_technique(candidate: IncidentCandidate) -> str | None:
     for t in techniques:
         counts[t] += 1
     return max(sorted(counts), key=lambda t: counts[t])
+
+
+def _fetch_asset_events(session: Any, evidence_ids: set[int]) -> list[AssetEvent]:
+    """One targeted `id IN (...)` query over an incident's own evidence events (never a
+    full-analysis scan) -- the same access pattern the pre-existing `enrichment_tags` fetch below
+    already uses, just widened to the columns `app.graph.asset_tags.compute_asset_tags` needs.
+    `department`/`location`/`app_name`/`risk_score` are not hot columns (docs/02 only lists
+    `hostname`/`os_type`/`os_version`/`device_owner`/`bypassed_traffic`/`flow_type` as new ones
+    for this task) -- pulled out of the already-fetched `ocsf` JSONB in Python, same pattern
+    `enrichment_tags` already uses for `(enrichment or {}).get(...)`."""
+    if not evidence_ids:
+        return []
+    rows = session.execute(
+        select(
+            Event.principal,
+            Event.hostname,
+            Event.os_type,
+            Event.os_version,
+            Event.device_owner,
+            Event.bypassed_traffic,
+            Event.flow_type,
+            Event.enrichment,
+            Event.ocsf,
+        ).where(Event.id.in_(evidence_ids))
+    ).all()
+
+    out: list[AssetEvent] = []
+    for (
+        principal,
+        hostname,
+        os_type,
+        os_version,
+        device_owner,
+        bypassed_traffic,
+        flow_type,
+        enrichment,
+        ocsf,
+    ) in rows:
+        unmapped = (ocsf or {}).get("unmapped") or {}
+        ua_enrichment = (enrichment or {}).get("user_agent") or {}
+        out.append(
+            AssetEvent(
+                principal=principal,
+                hostname=hostname,
+                os_type=os_type,
+                os_version=os_version,
+                device_owner=device_owner,
+                department=unmapped.get("department"),
+                location=unmapped.get("location"),
+                app_name=unmapped.get("app_name"),
+                risk_score=(ocsf or {}).get("risk_score"),
+                bypassed_traffic=bypassed_traffic,
+                flow_type=flow_type,
+                ua_os_type=ua_enrichment.get("os_type"),
+                ua_os_version=ua_enrichment.get("os_version"),
+            )
+        )
+    return out
 
 
 def _run_correlate(message: StageMessage) -> dict[str, Any]:
@@ -205,6 +270,13 @@ def _run_correlate(message: StageMessage) -> dict[str, Any]:
                 incident_tags = compute_incident_tags(
                     candidate.signals, is_recurrence=link is not None
                 )
+                # Asset/inventory tags (this task, `app.graph.asset_tags`) -- a second, unioned
+                # namespace on the same flat `incidents.tags` list, computed from the incident's
+                # evidence events rather than its signals. Merged with a `set` union + `sorted`
+                # (not `+`) so the combined list stays deduplicated and ordered exactly like
+                # `compute_incident_tags`'s own contract promises on its own.
+                asset_events = _fetch_asset_events(session, evidence_ids)
+                incident_tags = sorted({*incident_tags, *compute_asset_tags(asset_events)})
                 incident_summary = summary_for_incident(
                     signals=candidate.signals,
                     entity_type_counts=_entity_type_counts(candidate),

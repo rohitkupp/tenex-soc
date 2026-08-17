@@ -57,6 +57,7 @@ from app.detection.evidence.events_dao import fetch_event_rows
 from app.detection.evidence.run import collect_signal_drafts
 from app.detection.fusion import FusionInput, score_incident
 from app.detection.sigma.runner import run_rules as sigma_run_rules
+from app.graph.asset_tags import AssetEvent, compute_asset_tags
 from app.graph.builder import (
     EntityKey,
     GraphEvent,
@@ -507,6 +508,62 @@ def _pick_top_technique(candidate: IncidentCandidate) -> str | None:
     return max(sorted(counts), key=lambda t: counts[t])
 
 
+def _fetch_asset_events(session: Session, evidence_ids: set[int]) -> list[AssetEvent]:
+    """`app.pipeline.stages.correlate._fetch_asset_events`, duplicated rather than imported --
+    this module's own top-of-file precedent (`app.graph.tags.compute_incident_tags` is imported,
+    but the incident-persistence loop itself is a parallel reimplementation, not a call into the
+    live stage) applies equally to its `compute_asset_tags` sibling. See that function's docstring
+    for the query shape."""
+    if not evidence_ids:
+        return []
+    rows = session.execute(
+        select(
+            Event.principal,
+            Event.hostname,
+            Event.os_type,
+            Event.os_version,
+            Event.device_owner,
+            Event.bypassed_traffic,
+            Event.flow_type,
+            Event.enrichment,
+            Event.ocsf,
+        ).where(Event.id.in_(evidence_ids))
+    ).all()
+
+    out: list[AssetEvent] = []
+    for (
+        principal,
+        hostname,
+        os_type,
+        os_version,
+        device_owner,
+        bypassed_traffic,
+        flow_type,
+        enrichment,
+        ocsf,
+    ) in rows:
+        unmapped = (ocsf or {}).get("unmapped") or {}
+        ua_enrichment = (enrichment or {}).get("user_agent") or {}
+        out.append(
+            AssetEvent(
+                principal=principal,
+                hostname=hostname,
+                os_type=os_type,
+                os_version=os_version,
+                device_owner=device_owner,
+                department=unmapped.get("department"),
+                location=unmapped.get("location"),
+                app_name=unmapped.get("app_name"),
+                risk_score=(ocsf or {}).get("risk_score"),
+                bypassed_traffic=bypassed_traffic,
+                flow_type=flow_type,
+                ua_os_type=ua_enrichment.get("os_type"),
+                ua_os_version=ua_enrichment.get("os_version"),
+            )
+        )
+    return out
+
+
 def run_scenario(
     *,
     scenario: str,
@@ -648,6 +705,8 @@ def run_scenario(
             ]
 
             incident_tags = compute_incident_tags(candidate.signals, is_recurrence=link is not None)
+            asset_events = _fetch_asset_events(session, evidence_ids)
+            incident_tags = sorted({*incident_tags, *compute_asset_tags(asset_events)})
             incident_summary = summary_for_incident(
                 signals=candidate.signals,
                 entity_type_counts=_entity_type_counts(candidate),

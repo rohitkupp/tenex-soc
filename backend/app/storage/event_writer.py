@@ -38,6 +38,14 @@ class EventRecord(Protocol):
     bytes_out: int | None
     user_agent: str | None
     event_key: str | None
+    hostname: str | None            # Client Connector device hostname (this task)
+    device_name: str | None         # opaque device identifier (this task)
+    device_owner: str | None        # the asset's assigned user (this task)
+    os_type: str | None             # normalized OS type (this task)
+    os_version: str | None          # raw OS version string (this task)
+    bypassed_traffic: bool | None   # (this task)
+    flow_type: str | None           # (this task)
+    ja4_hash: str | None            # JA4 client TLS fingerprint (Phase 2, this task)
     ocsf: dict[str, Any]            # full OCSF-normalized event
     enrichment: dict[str, Any]      # {} until M5's enrichment stage runs
 ```
@@ -96,6 +104,14 @@ _COPY_COLUMNS: tuple[str, ...] = (
     "bytes_out",
     "user_agent",
     "event_key",
+    "hostname",
+    "device_name",
+    "device_owner",
+    "os_type",
+    "os_version",
+    "bypassed_traffic",
+    "flow_type",
+    "ja4_hash",
     "ocsf",
     "enrichment",
 )
@@ -132,6 +148,14 @@ class EventRecord(Protocol):
     bytes_out: int | None
     user_agent: str | None
     event_key: str | None
+    hostname: str | None
+    device_name: str | None
+    device_owner: str | None
+    os_type: str | None
+    os_version: str | None
+    bypassed_traffic: bool | None
+    flow_type: str | None
+    ja4_hash: str | None  # Phase 2 (this task) — JA4 client TLS fingerprint, `%s{ja4_str}`
     ocsf: dict[str, Any]
     enrichment: dict[str, Any]
 
@@ -162,6 +186,14 @@ class SimpleEventRecord:
     bytes_out: int | None = None
     user_agent: str | None = None
     event_key: str | None = None
+    hostname: str | None = None
+    device_name: str | None = None
+    device_owner: str | None = None
+    os_type: str | None = None
+    os_version: str | None = None
+    bypassed_traffic: bool | None = None
+    flow_type: str | None = None
+    ja4_hash: str | None = None
     enrichment: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
@@ -195,6 +227,14 @@ _OPTIONAL_FIELDS = (
     "bytes_out",
     "user_agent",
     "event_key",
+    "hostname",
+    "device_name",
+    "device_owner",
+    "os_type",
+    "os_version",
+    "bypassed_traffic",
+    "flow_type",
+    "ja4_hash",
     "enrichment",
 )
 
@@ -221,6 +261,14 @@ def _to_copy_row(
         record.bytes_out,
         record.user_agent,
         record.event_key,
+        record.hostname,
+        record.device_name,
+        record.device_owner,
+        record.os_type,
+        record.os_version,
+        record.bypassed_traffic,
+        record.flow_type,
+        record.ja4_hash,
         Jsonb(record.ocsf),
         Jsonb(record.enrichment),
     )

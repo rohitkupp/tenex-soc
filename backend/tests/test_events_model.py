@@ -84,7 +84,11 @@ def _seed(analysis_id: uuid.UUID, tenant_id: uuid.UUID, n: int) -> None:
 # ------------------------------------------------------------ schema, exactly as docs/02
 
 
-def test_events_table_has_exactly_the_five_documented_indexes() -> None:
+def test_events_table_has_exactly_the_six_documented_indexes() -> None:
+    """docs/02's original five, plus the one Phase 2 detection-field index this task adds
+    (`ix_events_analysis_id_ja4_hash`, migration `c2a71f5e9d34`) — see `app.models.event.Event`'s
+    own comment for why `ja4_str` is the one Phase 2 field that earns a dedicated index where the
+    other nineteen new fields (rides in `ocsf` JSONB only) don't."""
     with get_engine().connect() as conn:
         rows = conn.execute(
             text("SELECT indexname, indexdef FROM pg_indexes WHERE tablename = 'events'")
@@ -98,12 +102,14 @@ def test_events_table_has_exactly_the_five_documented_indexes() -> None:
         "ix_events_analysis_id_domain",
         "ix_events_analysis_id_src_ip",
         "ix_events_ocsf_gin",
+        "ix_events_analysis_id_ja4_hash",
     }
     assert "(analysis_id, ts)" in by_name["ix_events_analysis_id_ts"]
     assert "(analysis_id, principal, ts)" in by_name["ix_events_analysis_id_principal_ts"]
     assert "(analysis_id, domain)" in by_name["ix_events_analysis_id_domain"]
     assert "(analysis_id, src_ip)" in by_name["ix_events_analysis_id_src_ip"]
     assert "USING gin (ocsf jsonb_path_ops)" in by_name["ix_events_ocsf_gin"]
+    assert "(analysis_id, ja4_hash)" in by_name["ix_events_analysis_id_ja4_hash"]
 
 
 def test_events_tenant_id_has_no_foreign_key_and_no_bare_index() -> None:

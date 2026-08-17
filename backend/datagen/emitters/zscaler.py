@@ -83,6 +83,41 @@ FIELDS: Final[tuple[str, ...]] = (
     "dlpdictionaries",
     "location",
     "department",
+    # Asset/device extension (this task, docs/v1/zscaler-nss-web-fields.md "Zscaler Client
+    # Connector Device Information" + "Miscellaneous") -- `app.parsers.zscaler`'s literal NSS
+    # token names, appended rather than interspersed so the original 25-field order (and every
+    # existing hand-written fixture line built against it) is untouched.
+    "devicehostname",
+    "devicename",
+    "deviceostype",
+    "deviceosversion",
+    "deviceowner",
+    "bypassed_traffic",
+    "flow_type",
+    # Phase 2 detection-field extension (this task, docs/v1/zscaler-nss-web-fields.md "SSL/TLS",
+    # "Server Connection", "Sandbox", "File Type Control", "Network", "Threat Protection") --
+    # `app.parsers.zscaler`'s literal NSS token names, appended (not interspersed) for the same
+    # reason the device extension above is.
+    "ja4_str",
+    "df_hostname",
+    "df_hosthead",
+    "ssldecrypted",
+    "is_sslselfsigned",
+    "is_sslexpiredca",
+    "is_ssluntrustedca",
+    "srvcertvalidityperiod",
+    "srvocspresult",
+    "sha256",
+    "bamd5",
+    "srcip_country",
+    "dstip_country",
+    "is_src_cntry_risky",
+    "is_dst_cntry_risky",
+    "upload_filename",
+    "upload_filetype",
+    "filetype",
+    "unscannabletype",
+    "threatseverity",
 )
 
 FIELD_INDEX: Final[dict[str, int]] = {name: i for i, name in enumerate(FIELDS)}
@@ -131,6 +166,137 @@ _BLOCK_PAGE_BYTES: Final[int] = 1180
 _HUMAN_MAX_REQUEST_BYTES: Final[int] = 8_000_000
 _MAX_BYTES: Final[int] = 2_000_000_000
 _MIN_BYTES: Final[int] = 64
+
+
+# ---------------------------------------------------------------------------- device profile
+#
+# Zscaler Client Connector device fields (docs/v1/zscaler-nss-web-fields.md), stable per
+# principal — "one stable hostname/model per simulated user" (this task's brief), the same
+# fingerprint-per-user discipline `datagen.org.DeviceFingerprint` already established for
+# `user_agent`/`os_family`. Deliberately built from `user.device` and `stable_hash` alone, not a
+# new field on `datagen.org.User` — `Org.fingerprint()` content-hashes the whole org
+# (`Org.to_dict`), and adding a column there would change every seeded org's fingerprint for a
+# property this module can derive from data the `User` already carries.
+
+# `datagen.realism.UserAgentSpec.os_family` -> Zscaler's own `deviceostype` wire enum (this task's
+# brief gives the exact five values). Real users' devices only ever carry `desktop`/`mobile`
+# `os_family` values (docs/11 "human user agents are desktop-only"); `Linux` never appears on a
+# human's `device.os_family` today, but is mapped here anyway for the same forward-compatibility
+# reason `app.privacy.event_privacy` keeps unreachable-today allowlist entries.
+_DEVICEOSTYPE_BY_OS_FAMILY: Final[dict[str, str]] = {
+    "Windows": "Windows OS",
+    "macOS": "MAC OS",
+    "iOS": "iOS",
+    "Android": "Android OS",
+    "Linux": "Other OS",
+}
+_HOSTNAME_PREFIX_BY_OS_FAMILY: Final[dict[str, str]] = {
+    "Windows": "DESKTOP",
+    "macOS": "MBP",
+    "iOS": "IPHONE",
+    "Android": "ANDROID",
+    "Linux": "LNX",
+}
+# Plausible, deterministic per-family OS version strings — a handful of pinned builds, same
+# "a real fleet has a handful of pinned builds, not a continuous random draw" reasoning
+# `datagen.realism.UserAgentMix`'s own docstring gives for fixed browser version strings.
+_WINDOWS_OS_VERSIONS: Final[tuple[str, ...]] = (
+    "10.0.19045",
+    "10.0.22631",
+    "11.0.22631",
+    "11.0.26100",
+)
+_MACOS_OS_VERSIONS: Final[tuple[tuple[str, str], ...]] = (
+    ("14.4.1", "23E224"),
+    ("14.6.1", "23G93"),
+    ("13.6.7", "22G720"),
+    ("15.1", "24B83"),
+)
+_IOS_OS_VERSIONS: Final[tuple[str, ...]] = ("17.4.1", "17.6.1", "18.1")
+_ANDROID_OS_VERSIONS: Final[tuple[str, ...]] = ("13", "14", "15")
+
+# A small, generic "shared account" name pool — real-world sources of owner/login divergence
+# (kiosk terminals, contractor loaners, front-desk machines), not a fabricated *other employee*
+# identity. Deterministic ~1-in-32 draw per user (`app.graph.asset_tags`'s `shared-device` tag
+# exists to catch exactly this).
+_SHARED_DEVICE_OWNER_POOL: Final[tuple[str, ...]] = (
+    "contractor1",
+    "labuser",
+    "frontdesk",
+    "kiosk01",
+    "tempstaff",
+)
+_SHARED_DEVICE_OWNER_RATE_DENOM: Final[int] = 32
+
+_FLOW_ZIA: Final[str] = "ZIA"
+_FLOW_VPN: Final[str] = "VPN"
+_FLOW_ZPA: Final[str] = "ZPA"
+_FLOW_DIRECT: Final[str] = "Direct"
+# ~1-in-20 remote-page requests get tagged ZPA (private app access) instead of the VPN default —
+# deterministic on the existing per-event `path_seeds` draw, no new RNG stream.
+_ZPA_OVERRIDE_MODULUS: Final[int] = 20
+_HUMAN_BYPASS_RATE: Final[float] = 0.02
+
+
+@dataclass(frozen=True, slots=True)
+class DeviceProfile:
+    """`(devicehostname, devicename, deviceostype, deviceosversion, deviceowner)` for one
+    principal — `None` for every field when the principal has no Client Connector device at all
+    (service accounts: unmanaged/headless hosts, realistic corpus shape in its own right, and
+    exactly the traffic `app.enrichment.user_agent_enrichment`'s useragent-derived OS fallback
+    exists to cover, since it has no explicit device field to fall back *from* otherwise)."""
+
+    hostname: str | None
+    device_name: str | None
+    os_type: str | None
+    os_version: str | None
+    owner: str | None
+
+
+def _device_profile(user: User) -> DeviceProfile:
+    if user.is_service_account:
+        return DeviceProfile(None, None, None, None, None)
+
+    device = user.device
+    h = stable_hash(f"{user.key}|device")
+    prefix = _HOSTNAME_PREFIX_BY_OS_FAMILY.get(device.os_family, "PC")
+    hostname = f"{prefix}-{user.username.upper()}"
+    device_name = f"{hostname}:{h:032X}"[:64]
+    devicetype = _DEVICEOSTYPE_BY_OS_FAMILY.get(device.os_family, "Other OS")
+
+    version: str | None
+    if device.os_family == "Windows":
+        version = f"Version {_WINDOWS_OS_VERSIONS[h % len(_WINDOWS_OS_VERSIONS)]}"
+    elif device.os_family == "macOS":
+        num, build = _MACOS_OS_VERSIONS[h % len(_MACOS_OS_VERSIONS)]
+        version = f"Version {num} (Build {build})"
+    elif device.os_family == "iOS":
+        version = f"Version {_IOS_OS_VERSIONS[h % len(_IOS_OS_VERSIONS)]}"
+    elif device.os_family == "Android":
+        version = f"Version {_ANDROID_OS_VERSIONS[h % len(_ANDROID_OS_VERSIONS)]}"
+    else:
+        version = None
+
+    owner = user.username
+    if h % _SHARED_DEVICE_OWNER_RATE_DENOM == 0:
+        owner = _SHARED_DEVICE_OWNER_POOL[h % len(_SHARED_DEVICE_OWNER_POOL)]
+
+    return DeviceProfile(hostname, device_name, devicetype, version, owner)
+
+
+def _apply_device_fields(fields: dict[str, Any], profile: DeviceProfile) -> None:
+    """Set the device keys on `fields` only when `profile` actually has a device — an absent
+    key falls back to the `"None"` sentinel through `ZScalerEmitter._default` exactly like every
+    other optional field (`threatname`, `reason`, ...) already does, so a service-account record
+    costs nothing extra for fields it doesn't have."""
+    if profile.hostname is None:
+        return
+    fields["devicehostname"] = profile.hostname
+    fields["devicename"] = profile.device_name
+    fields["deviceostype"] = profile.os_type
+    fields["deviceowner"] = profile.owner
+    if profile.os_version is not None:
+        fields["deviceosversion"] = profile.os_version
 
 
 # ---------------------------------------------------------------------------- categories
@@ -393,6 +559,131 @@ def _apportion(weights: Sequence[float], total: int) -> list[int]:
     return counts
 
 
+# ---------------------------------------------------------------------------- phase 2 detection
+# fields (this task, docs/v1/zscaler-nss-web-fields.md "SSL/TLS", "Server Connection", "Sandbox",
+# "Network", "Threat Protection"). Mostly-benign defaults live here; the malicious profile
+# (stable JA4 across rotating domains, self-signed short-validity cert, a reused malware hash) is
+# injected by the scenario modules that need it via `extra={...}` on `build_event`/`inject`, not
+# here -- see `s01_c2_beaconing.py`/`s09_multi_domain_c2_failover.py`.
+
+# ISO 3166-1 alpha-2 -> full country name, for the office countries `OFFICE_CATALOG`
+# (`datagen.realism`) actually uses -- `srcip_country`/`dstip_country`'s own documented examples
+# ("Afghanistan", "Portugal") are full names, not codes.
+_COUNTRY_NAME_BY_ISO2: Final[dict[str, str]] = {
+    "US": "United States",
+    "IE": "Ireland",
+    "GB": "United Kingdom",
+    "DE": "Germany",
+    "SG": "Singapore",
+    "IN": "India",
+    "AU": "Australia",
+    "JP": "Japan",
+    "CA": "Canada",
+}
+
+# Countries the benign path never routes through -- reserved for a scenario that deliberately
+# wants `is_dst_cntry_risky = Yes` (this task does not ship one; noted here so the pool exists the
+# day a detector wants to exercise it).
+_RISKY_COUNTRIES: Final[tuple[str, ...]] = ("Russia", "North Korea", "Iran")
+
+# Most enterprise TLS-inspecting proxies inspect the large majority of HTTPS traffic; the
+# uninspected minority is real (M365/UCaaS bypass categories, `docs/v1/zscaler-nss-web-fields.md`
+# `%s{externalspr}`'s own examples), not a generator artifact.
+_SSL_NOT_INSPECTED_RATE: Final[float] = 0.05
+_CERT_VALIDITY_PERIODS: Final[tuple[str, ...]] = (
+    "Short (0-3 months)",
+    "Medium (3-12 months)",
+    "Long (More than 12 months)",
+)
+# Legit, long-lived sites skew long/medium-validity; a short-validity cert on otherwise-normal
+# traffic is rare (Let's Encrypt 90-day certs on smaller sites) but not zero.
+_CERT_VALIDITY_WEIGHTS: Final[tuple[float, ...]] = (0.05, 0.35, 0.60)
+_CERT_VALIDITY_CDF: Final[np.ndarray] = _cdf(_CERT_VALIDITY_WEIGHTS)
+
+_FILETYPES: Final[tuple[str, ...]] = ("PDF Documents", "Office Documents", "Images", "Archive")
+_FILETYPE_WEIGHTS: Final[tuple[float, ...]] = (0.35, 0.30, 0.25, 0.10)
+_FILETYPE_CDF: Final[np.ndarray] = _cdf(_FILETYPE_WEIGHTS)
+# Share of "download"-kind requests that populate `filetype` at all -- most download-shaped
+# requests in the benign corpus are images/scripts pulled as page sub-resources, not the small
+# minority that are genuinely a document/archive download File Type Control would classify.
+_FILETYPE_POPULATED_RATE: Final[float] = 0.35
+# Of those, an even smaller share get a `sha256`/`bamd5` pair -- Sandbox only hashes files it
+# actually submitted for analysis, not every download.
+_FILE_HASH_RATE: Final[float] = 0.08
+
+
+def _country_for_office(office_country_iso2: str) -> str:
+    return _COUNTRY_NAME_BY_ISO2.get(office_country_iso2, office_country_iso2)
+
+
+@lru_cache(maxsize=16384)
+def _dst_country_for(domain: str) -> str:
+    """Stable per destination domain, same `stable_hash`-keyed-cache discipline as
+    `categorize`/`server_ip` above -- a real site's hosting country does not change request to
+    request. Weighted toward the USA (where most of `_SERVER_ANCHORS`' real-world CDN/cloud
+    ranges actually sit) with a long tail of other major hosting markets, so `n_unique_countries`
+    (docs/04 L3 "Device" family) has real variance to measure in the benign corpus."""
+    pool = ("United States",) * 6 + ("Ireland", "Germany", "Singapore", "Japan", "United Kingdom")
+    return pool[stable_hash(f"{domain}|dst-country") % len(pool)]
+
+
+@lru_cache(maxsize=16384)
+def _cert_posture(domain: str) -> tuple[str, str]:
+    """`(srvcertvalidityperiod, srvocspresult)` for one domain, stable per domain -- a real site's
+    certificate doesn't change validity bucket or OCSP status request to request. `srvocspresult`
+    is `Good` for the entire benign path; `Revoked` is reserved for a scenario that wants it,
+    never produced here (a revoked-but-still-served certificate is itself an attack/
+    misconfiguration signal, not benign background noise)."""
+    idx = int(
+        np.searchsorted(_CERT_VALIDITY_CDF, (stable_hash(f"{domain}|cert") % 10_000) / 10_000)
+    )
+    return _CERT_VALIDITY_PERIODS[idx], "Good"
+
+
+def _ja4_fingerprint(cohort_key: str) -> str:
+    """A deterministic, JA4-shaped fingerprint (`t13d190900_<12 hex>_<12 hex>`, matching the
+    PDF's own example format) for a given cohort key. Real JA4 hashes a client's actual TLS
+    ClientHello (protocol version, cipher list order, extension list, ALPN); this generator has no
+    real TLS handshake to hash, so it derives a stable fingerprint per cohort from `stable_hash`
+    instead -- the same cohort (e.g. `"Chrome|Windows"`, or one implant's own identity string)
+    always produces the same fingerprint, because a real browser+OS combination's TLS stack -- or
+    a real implant's TLS library -- does not change request to request; different cohorts produce
+    different fingerprints with overwhelming probability. This one primitive is what makes both
+    "many users on the same browser/OS share one JA4" (benign clustering, realistic: a JA4 is a
+    function of the TLS library, not the individual) and "one C2 implant keeps one stable JA4
+    across its whole rotating-domain campaign" (the cross-tenant detection signal this task's
+    Phase 2 design note calls out for `ja4_str`) fall out of the same code path."""
+    a = stable_hash(cohort_key) & 0xFFFFFFFFFFFF
+    b = stable_hash(f"{cohort_key}|ja4b") & 0xFFFFFFFFFFFF
+    return f"t13d190900_{a:012x}_{b:012x}"
+
+
+def _threat_severity(riskscore: int) -> str:
+    """docs/v1/zscaler-nss-web-fields.md `%s{threatseverity}`'s own documented bucketing of
+    `%d{riskscore}`: Critical 90-100, High 75-89, Medium 46-74, Low 1-45, None 0. Computed
+    directly from the same `riskscore` this emitter already assigns per event -- unlike the
+    sparse fields above, every real transaction gets *some* threatseverity value, so this is not
+    gated on any other field the way `filetype`/file hashes are."""
+    if riskscore <= 0:
+        return "None"
+    if riskscore >= 90:
+        return "Critical"
+    if riskscore >= 75:
+        return "High"
+    if riskscore >= 46:
+        return "Medium"
+    return "Low"
+
+
+def _fake_hash(seed: str, length: int) -> str:
+    """A stable, hex-digit-shaped placeholder hash of the requested length -- not a real SHA-256/
+    MD5 of any actual file content (there is no real file here to hash), same "shaped like the
+    real thing, not computed from it" discipline `_device_profile`'s `device_name` already uses
+    for its own hash-suffixed identifier."""
+    digits = f"{stable_hash(seed):x}" * 8
+    return digits[:length]
+
+
 # ---------------------------------------------------------------------------- serialization
 
 
@@ -554,6 +845,13 @@ class ZScalerEmitter:
         dst_ip: str | None = None,
         location: str | None = None,
         department: str | None = None,
+        devicehostname: str | None = None,
+        devicename: str | None = None,
+        deviceostype: str | None = None,
+        deviceosversion: str | None = None,
+        deviceowner: str | None = None,
+        bypassed_traffic: int | None = None,
+        flow_type: str | None = None,
         extra: dict[str, Any] | None = None,
     ) -> EventRecord:
         """A crafted, fully-formed ZScaler record. Unlabelled — pass it to `ScenarioContext.add`.
@@ -588,6 +886,13 @@ class ZScalerEmitter:
             ("referer", referer),
             ("dlpengine", dlpengine),
             ("dlpdictionaries", dlpdictionaries),
+            ("devicehostname", devicehostname),
+            ("devicename", devicename),
+            ("deviceostype", deviceostype),
+            ("deviceosversion", deviceosversion),
+            ("deviceowner", deviceowner),
+            ("bypassed_traffic", bypassed_traffic),
+            ("flow_type", flow_type),
         ):
             if value is not None:
                 fields[key] = value
@@ -618,6 +923,22 @@ class ZScalerEmitter:
         """
         kwargs.setdefault("location", user.office.code)
         kwargs.setdefault("department", user.department)
+        # Device fields (this task): an injected/malicious event still comes from the user's own
+        # device — dropping them here would make every scenario-injected event a silent exception
+        # to "indistinguishable from a benign one on every field the scenario isn't deliberately
+        # manipulating" (this method's own docstring), and would starve the asset-tag bank of the
+        # one thing it exists to support: tagging *incidents* (which are formed from exactly this
+        # injected traffic) by device.
+        profile = _device_profile(user)
+        if profile.hostname is not None:
+            kwargs.setdefault("devicehostname", profile.hostname)
+            kwargs.setdefault("devicename", profile.device_name)
+            kwargs.setdefault("deviceostype", profile.os_type)
+            kwargs.setdefault("deviceowner", profile.owner)
+            if profile.os_version is not None:
+                kwargs.setdefault("deviceosversion", profile.os_version)
+        kwargs.setdefault("flow_type", _FLOW_DIRECT if user.is_service_account else _FLOW_ZIA)
+        kwargs.setdefault("bypassed_traffic", 0)
         record = self.build_event(
             ts=ts,
             principal=user.principal,
@@ -742,11 +1063,13 @@ class ZScalerEmitter:
         hosts: list[str] = []
         cats: list[UrlCategory] = []
         ips: list[str] = []
+        remote_flags: list[bool] = []
         home_ip, office_ip = user.home_geo.ip, user.office_ip
         for page, k in enumerate(sizes.tolist()):
             hosts.extend([page_domains[page]] * k)
             cats.extend([page_cats[page]] * k)
             ips.extend([home_ip if remote[page] else office_ip] * k)
+            remote_flags.extend([remote[page]] * k)
 
         ts_l = ts.tolist()
         kind_l = kind_idx.tolist()
@@ -756,6 +1079,21 @@ class ZScalerEmitter:
         req_l = req.astype(np.int64).tolist()
         browser_ua = user.device.user_agent
         location, department, principal = user.office.code, user.department, user.principal
+        device_profile = _device_profile(user)
+        # Flow type (docs/v1/zscaler-nss-web-fields.md `%s{flow_type}`): VPN for a remote page,
+        # ZIA (Client Connector -> the ZIA cloud) for an office one, with a small deterministic
+        # ZPA (private-app-access) override — reuses `path_seeds`, no new RNG draw. `bypassed`:
+        # a small minority of transactions bypass the Client Connector (design brief: "most
+        # traffic not bypassed, a small minority bypassed").
+        bypassed = (np_rng.random(total) < _HUMAN_BYPASS_RATE).tolist()
+        # Phase 2 detection fields (this task). `browser_ja4_cohort` is per-user-device, not
+        # per-user: the same browser+OS combination always produces the same JA4 (see
+        # `_ja4_fingerprint`'s own docstring), which is what makes "many users share a JA4"
+        # realistic clustering rather than an artifact. `ssl_inspected`/`src_country` are
+        # per-batch draws/values, not per-domain, so they live here rather than inside the loop.
+        ssl_inspected = (np_rng.random(total) >= _SSL_NOT_INSPECTED_RATE).tolist()
+        browser_ja4_cohort = f"{user.device.browser_family}|{user.device.os_family}"
+        src_country = _country_for_office(user.office.country)
 
         for i in range(min(total, n)):
             host = hosts[i]
@@ -787,11 +1125,42 @@ class ZScalerEmitter:
                 "riskscore": min(cat.risk + (25 if is_blocked else 0), _MAX_RISK),
                 "location": location,
                 "department": department,
+                "flow_type": _FLOW_ZPA
+                if path_seeds[i] % _ZPA_OVERRIDE_MODULUS == 0
+                else (_FLOW_VPN if remote_flags[i] else _FLOW_ZIA),
+                "bypassed_traffic": 1 if bypassed[i] else 0,
             }
+            _apply_device_fields(fields, device_profile)
             if is_blocked:
                 fields["reason"] = "Blocked by URL Filtering policy"
             if wants_referer[i]:
                 fields["referer"] = f"https://{host}/"
+
+            # Phase 2 detection fields (this task) — see the module-level "phase 2 detection
+            # fields" section above for the helper functions and the reasoning behind each rate.
+            ja4_cohort = automation_ua if (automated[i] and automation_ua) else browser_ja4_cohort
+            fields["ja4_str"] = _ja4_fingerprint(ja4_cohort)
+            inspected = ssl_inspected[i]
+            fields["ssldecrypted"] = "Yes" if inspected else "No"
+            fields["srcip_country"] = src_country
+            fields["is_src_cntry_risky"] = "No"
+            fields["dstip_country"] = _dst_country_for(host)
+            fields["is_dst_cntry_risky"] = "No"
+            fields["threatseverity"] = _threat_severity(int(fields["riskscore"]))
+            if inspected:
+                validity_period, ocsp_result = _cert_posture(host)
+                fields["is_sslselfsigned"] = "No"
+                fields["is_sslexpiredca"] = "No"
+                fields["is_ssluntrustedca"] = "Pass"
+                fields["srvcertvalidityperiod"] = validity_period
+                fields["srvocspresult"] = ocsp_result
+            if kind_l[i] == _KIND_DOWNLOAD and seed % 100 < int(_FILETYPE_POPULATED_RATE * 100):
+                ftype = _FILETYPES[int(np.searchsorted(_FILETYPE_CDF, (seed % 10_000) / 10_000))]
+                fields["filetype"] = ftype
+                if (seed // 7) % 100 < int(_FILE_HASH_RATE * 100):
+                    fields["sha256"] = _fake_hash(f"{host}|{seed}|sha256", 64)
+                    fields["bamd5"] = _fake_hash(f"{host}|{seed}|md5", 32)
+
             yield EventRecord(
                 ts=datetime.fromtimestamp(ts_l[i], tz=UTC),
                 source=SourceType.ZSCALER,
@@ -944,32 +1313,77 @@ class ZScalerEmitter:
         ua = user.device.user_agent
         location, department = user.office.code, user.department
         principal, client_ip = user.principal, user.office_ip
+        # Service accounts run on unmanaged/headless hosts — no Client Connector device, so
+        # `_device_profile` returns all-`None` and `_apply_device_fields` below is a no-op (the
+        # realistic "these fields genuinely don't exist for this traffic" case, see
+        # `DeviceProfile`'s docstring). `flow_type`/`bypassed_traffic` still apply independent of
+        # Client Connector enrollment: unmanaged servers forward `Direct`, and — never having a
+        # Client Connector to bypass in the first place — never trip the bypass flag.
+        device_profile = _device_profile(user)
+        # Phase 2 detection fields (this task). One JA4 cohort per service account's own
+        # automation client (`browser_family` holds tool names like `curl`/`aws-cli`/`rclone` for
+        # service accounts, `datagen.org`) — a stable per-account fingerprint, same reasoning as
+        # the human path's per-browser one. `ssl_inspected`/`src_country` are per-batch, like the
+        # human path.
+        ssl_inspected = (np_rng.random(total) >= _SSL_NOT_INSPECTED_RATE).tolist()
+        ja4_cohort = user.device.browser_family
+        src_country = _country_for_office(user.office.country)
         for i in range(total):
             host = domains[host_l[i]]
             cat = catalog.category(host)
             code = status_l[i]
-            prefix, suffix = _SERVICE_PATHS[seed_l[i] % len(_SERVICE_PATHS)]
+            seed = seed_l[i]
+            prefix, suffix = _SERVICE_PATHS[seed % len(_SERVICE_PATHS)]
+            fields: dict[str, Any] = {
+                "serverip": server_ip(host),
+                "host": host,
+                "url": f"{prefix}{seed}{suffix}",
+                "requestmethod": METHODS[method_l[i]],
+                "status": code,
+                "requestsize": req_l[i],
+                "responsesize": _NO_BODY_BYTES if code in _NO_BODY else resp_l[i],
+                "useragent": ua,
+                "action": "Allowed",
+                "urlcategory": cat.name,
+                "urlsupercategory": cat.supercategory,
+                "appname": catalog.appname(host),
+                "appclass": cat.appclass,
+                "riskscore": cat.risk,
+                "location": location,
+                "department": department,
+                "flow_type": _FLOW_DIRECT,
+                "bypassed_traffic": 0,
+            }
+            _apply_device_fields(fields, device_profile)
+
+            # Phase 2 detection fields (this task) — see `_human_batch` for the same wiring and
+            # the helper functions' own docstrings.
+            fields["ja4_str"] = _ja4_fingerprint(ja4_cohort)
+            inspected = ssl_inspected[i]
+            fields["ssldecrypted"] = "Yes" if inspected else "No"
+            fields["srcip_country"] = src_country
+            fields["is_src_cntry_risky"] = "No"
+            fields["dstip_country"] = _dst_country_for(host)
+            fields["is_dst_cntry_risky"] = "No"
+            fields["threatseverity"] = _threat_severity(int(fields["riskscore"]))
+            if inspected:
+                validity_period, ocsp_result = _cert_posture(host)
+                fields["is_sslselfsigned"] = "No"
+                fields["is_sslexpiredca"] = "No"
+                fields["is_ssluntrustedca"] = "Pass"
+                fields["srvcertvalidityperiod"] = validity_period
+                fields["srvocspresult"] = ocsp_result
+            if kind_idx[i] == _KIND_DOWNLOAD and seed % 100 < int(_FILETYPE_POPULATED_RATE * 100):
+                ftype = _FILETYPES[int(np.searchsorted(_FILETYPE_CDF, (seed % 10_000) / 10_000))]
+                fields["filetype"] = ftype
+                if (seed // 7) % 100 < int(_FILE_HASH_RATE * 100):
+                    fields["sha256"] = _fake_hash(f"{host}|{seed}|sha256", 64)
+                    fields["bamd5"] = _fake_hash(f"{host}|{seed}|md5", 32)
+
             yield EventRecord(
                 ts=datetime.fromtimestamp(ts_l[i], tz=UTC),
                 source=SourceType.ZSCALER,
                 principal=principal,
-                fields={
-                    "serverip": server_ip(host),
-                    "host": host,
-                    "url": f"{prefix}{seed_l[i]}{suffix}",
-                    "requestmethod": METHODS[method_l[i]],
-                    "status": code,
-                    "requestsize": req_l[i],
-                    "responsesize": _NO_BODY_BYTES if code in _NO_BODY else resp_l[i],
-                    "useragent": ua,
-                    "action": "Allowed",
-                    "urlcategory": cat.name,
-                    "urlsupercategory": cat.supercategory,
-                    "appname": catalog.appname(host),
-                    "appclass": cat.appclass,
-                    "riskscore": cat.risk,
-                    "location": location,
-                    "department": department,
-                },
+                fields=fields,
                 src_ip=client_ip,
             )

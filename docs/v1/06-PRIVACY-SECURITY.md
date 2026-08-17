@@ -25,6 +25,91 @@ def pseudonymize(value: str, kind: str, salt: bytes) -> str:
 salt across tenants so cross-tenant overlap is detectable. That is a deliberate privacy/utility
 tradeoff and it belongs in the README as such, not buried.
 
+### Sensitive fields, concretely — asset/device tag bank (this task)
+
+The "hostnames"/"device IDs" categories above are not hypothetical: the Zscaler Client Connector
+device fields this task's asset tag bank added (`docs/v1/zscaler-nss-web-fields.md`) are real,
+live identifiers on every event, and the doc's own example (`devicehostname`'s documented sample
+value, `THINKPADSMITH`, embeds the literal surname "SMITH") makes plain that a device hostname is
+an identifier, not inventory metadata.
+
+| `events` column | Kind | Pseudonymize prefix |
+|---|---|---|
+| `hostname` (Client Connector device hostname) | `host` | `h_` |
+| `device_name` (opaque device identifier) | `device` | `dev_` |
+| `device_owner` (the asset's assigned user) | `user` | `u_` |
+
+`os_type`, `os_version`, `bypassed_traffic`, `flow_type` are **not** in this table — categorical/
+behavioral metadata, the same do-NOT status `user_agent`/`http_method` already have.
+
+Enforced at the same two points as every other identifier, never a new third one:
+
+1. **At rest, audited, never rewritten** — `app.pipeline.stages.anonymize`'s privacy-audit pass
+   now includes all three fields in its pseudonymization count, alongside `principal`/`src_ip`/
+   `dst_ip`. Detection and the dashboard keep the real values — that tenant's own analyst is
+   entitled to see them, same as every other identifier on this list.
+2. **Never exposed to the LLM at all**, which is stricter than "pseudonymized at the boundary":
+   `app.agent.tools._serialize_event`'s explicit field allowlist does not include any of the three
+   — device/asset data is irrelevant to the disposition/narrative/technique judgement the LLM is
+   scoped to (CLAUDE.md rule 5), and this task's own requirement is that the tagging service itself
+   contain no LLM. A field that never crosses the boundary needs no pseudonymization *at* that
+   boundary to already be safe; `app.privacy.event_privacy._PSEUDONYMIZE_FIELDS` still carries the
+   mapping above so the plumbing is correct and tested the moment anything *does* need to show one
+   of these fields to a model.
+3. **Never reaches Tier 2** — `app.tier2.signature_sync.sync_incident_to_tier2` reads
+   `verdict.mitre_techniques`/`incident.entity_ids`/`incident.fused_score`/`incident.embedding`;
+   it does not read `incident.tags` at all, so the new `device:`/`os:`/... tags (which do carry
+   real, unpseudonymized values at rest, same trust boundary as `entities.value`) never reach the
+   cross-tenant `tier2_signatures` table. Verified by reading that function, not assumed.
+
+### Sensitive fields, concretely — Phase 2 detection fields (this task)
+
+Three of the twenty fields landed by this task's Phase 2 are identifiers, not metadata, and route
+through the HMAC path differently from every field above — not because the rule is different, but
+because *what "correlatable" needs to mean* is different for them.
+
+| Field | Kind | Why it's sensitive | Route |
+|---|---|---|---|
+| `ja4_str` → `events.ja4_hash` | client TLS fingerprint | Tracking-capable: identifies a client's TLS stack (browser/OS/library combination) independent of IP or cookies | `pseudonymize.indicator_hash`, **shared** cross-tenant salt |
+| `sha256` / `bamd5` → `ocsf.file.hash_*` | file identifier | Identifies a specific file (malware sample or transferred document) | `pseudonymize.indicator_hash`, **shared** cross-tenant salt |
+| `df_hostname` / `df_hosthead` → top-level `df_hostname`/`df_hosthead` | hostname | A domain-fronting SNI/Host-header pair is itself a hostname, docs/06's existing "hostnames" category | `pseudonymize`, **per-tenant** salt (same kind and route as `hostname`/`device_name` above) |
+
+**Why `ja4_str` and the file hashes deliberately do *not* follow `domain`'s do-NOT-pseudonymize
+rule, and do not follow `hostname`'s per-tenant-salt route either — they get their own third
+treatment.** The existing two-way split above (pseudonymize under a per-tenant salt vs. never
+pseudonymize at all, for domains) implicitly assumes only two cases exist: "this value must stay
+correlatable within one tenant" and "this value must stay in threat-intel-usable plaintext."
+`ja4_str`/`sha256`/`bamd5` are a third case this task's brief names explicitly: values whose
+entire *point*, per this task's Phase 2 design note, is staying correlatable **across** tenants —
+"the same JA4 across unrelated domains is a strong C2 signal, and a better cross-tenant Tier 2
+indicator than a domain" (ja4_str), and file hashes are the textbook unambiguous cross-tenant
+indicator. A per-tenant salt would make the identical real-world fingerprint or file hash hash to
+a different pseudonym in every tenant, silently making that exact overlap undetectable — the same
+failure mode this doc's own Tier 2 exception already exists to prevent for domains/dst IPs, now
+extended to two more kinds (`app.privacy.pseudonymize._INDICATOR_KINDS`: `domain`, `ip`,
+`file_hash`, `ja4`). Staying in plaintext (the `domain` treatment) is not an option either, unlike
+a domain: a raw file hash or TLS fingerprint reaching an LLM prompt or a UI render is not itself
+harmful the way a raw username would be, but CLAUDE.md rule 4 ("pseudonymize before any external
+call") is about consistent boundary discipline, not about which specific fields are individually
+dangerous — every identifier crossing the tenant boundary goes through *some* HMAC path, and for
+these three the shared-salt one is the only choice that does not sabotage their own reason for
+existing.
+
+**Where this is wired today, and where it is deliberately not.** `events.ja4_hash` is a hot
+column (this task's one Phase 2 index — see `app.models.event.Event`), so it is registered in
+`app.privacy.event_privacy`'s accounting (that module's own docstring explains why it is
+*excluded* from `_PSEUDONYMIZE_FIELDS`, the per-tenant table, rather than included). `sha256`/
+`bamd5` are not hot columns — `ocsf` JSONB only (`app.ocsf.common.File`) — so no hot-column-shaped
+function reaches them at all today, the same status `urlcategory`/`threatname` already have.
+Neither the LLM-prompt call site (`app.agent.tools._serialize_event` — untouched by this task,
+under the "nothing under `app/agent/` may execute" cost constraint) nor a Tier 2 signature-sync
+call site consumes any of the three yet; this section documents the *routing decision*
+(`indicator_hash`, shared salt) so that whichever future change wires either boundary up starts
+from a made decision instead of rediscovering the domain/ja4/file-hash-overlap tradeoff from
+scratch. `df_hostname`/`df_hosthead` need no new routing decision at all — they are hostnames,
+docs/06's do/do-NOT list already covers them, and they are **not yet** wired into either boundary
+for the same reason (no live call site exists to wire).
+
 ## Secret & PII redaction
 
 Applied to free-text fields before storage and before any prompt. Patterns in

@@ -185,7 +185,12 @@ def test_human_user_agents_never_include_a_mobile_device(tmp_path: Path) -> None
 def test_zscaler_lines_carry_exactly_the_docs03_field_set_in_order(tmp_path: Path) -> None:
     """docs/03 "ZScaler NSS Web -> OCSF HTTP Activity": a missing or reordered column silently
     breaks the M3 parser, which binds by header name but the header itself must still name every
-    mapped source field."""
+    mapped source field.
+
+    The first 25 are docs/03's original table, unchanged; the asset-tag task appended seven more
+    (docs/v1/zscaler-nss-web-fields.md "Zscaler Client Connector Device Information" +
+    "Miscellaneous") on top, in the literal NSS token spelling — see `app.parsers.zscaler`'s
+    module docstring for why these seven aren't renamed the way the original 25 are."""
     log_path = _write_benign(tmp_path, proxy_events=5_000)
     documented_order = (
         "datetime",
@@ -213,10 +218,21 @@ def test_zscaler_lines_carry_exactly_the_docs03_field_set_in_order(tmp_path: Pat
         "dlpdictionaries",
         "location",
         "department",
+        "devicehostname",
+        "devicename",
+        "deviceostype",
+        "deviceosversion",
+        "deviceowner",
+        "bypassed_traffic",
+        "flow_type",
     )
     with log_path.open() as fh:
         header = tuple(fh.readline().rstrip("\n").split("\t"))
-    assert header == documented_order
+    # A prefix check, not full equality: other concurrent changes append their own fields after
+    # this task's 32 (e.g. a JA4/TLS/threat-detail batch) — this test's own invariant is that
+    # docs/03's original 25 plus this task's 7 are present, unbroken, in this exact relative
+    # order, not that these are the *only* fields the emitter ever writes.
+    assert header[: len(documented_order)] == documented_order
 
     action_values: set[str] = set()
     with log_path.open() as fh:

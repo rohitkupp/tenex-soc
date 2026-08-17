@@ -41,8 +41,25 @@ PREFIX: Final[dict[PseudonymKind, str]] = {
 # deliberately not reachable through `PREFIX`/`pseudonymize()` -- domains must never be
 # pseudonymized on the normal per-tenant path (see the do-NOT list in this package's
 # `__init__` docstring).
-_INDICATOR_KINDS = ("domain", "ip")
-INDICATOR_PREFIX: Final[dict[str, str]] = {"domain": "d", "ip": "ip"}
+#
+# `file_hash`/`ja4` (Phase 2 detection fields, this task -- docs/v1/zscaler-nss-web-fields.md
+# "Sandbox", "SSL/TLS") join `domain`/`ip` here for a reason specific to them: unlike
+# `principal`/`src_ip`/the device fields (which only ever need to stay *self-consistent within
+# one tenant*, exactly what `pseudonymize()`'s per-tenant salt gives), a file hash
+# (`sha256`/`bamd5`) or a JA4 client fingerprint is valuable specifically *because* the same raw
+# value can recur across unrelated tenants -- that recurrence is the whole Tier 2 signal ("this
+# exact malware hash / this exact TLS fingerprint showed up in three other tenants too"). Hashing
+# either one under a per-tenant salt would make the same real-world indicator hash to a different
+# pseudonym in every tenant, silently making that overlap uncomputable -- the identical failure
+# mode this comment's sibling note already states for `domain`/`ip`. So `file_hash`/`ja4` route
+# through *this* function, with the shared salt, at both boundaries CLAUDE.md rule 4 cares about
+# (an LLM prompt, a Tier 2 signature) -- there is no second, per-tenant-salted pseudonym for them
+# to also carry, unlike the identity fields in `PREFIX` above. `sha256` and `bamd5` (MD5) share
+# one `file_hash` kind rather than getting `sha256`/`md5` kinds of their own: a Tier 2 consumer
+# cares whether *this file* recurred, not which algorithm produced the hash string that proves it,
+# and the two algorithms' outputs never collide in value space regardless.
+_INDICATOR_KINDS = ("domain", "ip", "file_hash", "ja4")
+INDICATOR_PREFIX: Final[dict[str, str]] = {"domain": "d", "ip": "ip", "file_hash": "fh", "ja4": "j"}
 
 
 def pseudonymize(value: str, kind: str, salt: bytes) -> str:
@@ -58,7 +75,9 @@ def pseudonymize(value: str, kind: str, salt: bytes) -> str:
     return f"{PREFIX[kind]}_{digest[:12]}"
 
 
-def indicator_hash(value: str, kind: Literal["domain", "ip"], shared_salt: bytes) -> str:
+def indicator_hash(
+    value: str, kind: Literal["domain", "ip", "file_hash", "ja4"], shared_salt: bytes
+) -> str:
     """docs/06's Tier 2 exception, quoted here in full because it is easy to misread as
     "reuse pseudonymize() with a different salt" -- it is not:
 
@@ -66,11 +85,20 @@ def indicator_hash(value: str, kind: Literal["domain", "ip"], shared_salt: bytes
         cross-tenant overlap is detectable. That is a deliberate privacy/utility
         tradeoff[.]"
 
-    This is the *only* place a domain is ever hashed anywhere in this package -- and only
-    for constructing `tier2_signatures.indicator_hashes` (docs/02), a Tier 2/M14 concern
-    outside this package's ownership to write. `pseudonymize()` above must never be called
-    with a domain; this function must never be called with a tenant's own `pseudonym_salt`.
-    Callers are responsible for passing the genuinely shared, cross-tenant salt.
+    `file_hash` (`sha256`/`bamd5`) and `ja4` (`ja4_str`) extend that same exception to two more
+    Phase 2 detection fields (this task) for the identical reason -- see `_INDICATOR_KINDS`'s own
+    comment above for the full argument: both are indicators whose entire Tier 2 value depends on
+    the *same raw value* hashing to the *same pseudonym* across tenants, which a per-tenant salt
+    would break.
+
+    This is the *only* place a domain (or now a file hash / JA4 fingerprint) is ever hashed
+    anywhere in this package -- and only for constructing `tier2_signatures.indicator_hashes`
+    (docs/02) or an equivalent LLM-prompt-boundary citation, a Tier 2/agent-context concern outside
+    this package's ownership to call (CLAUDE.md's "nothing under `app/agent/` may execute"
+    constraint on this task means that call site is not wired up here). `pseudonymize()` above
+    must never be called with a domain, a file hash, or a JA4 fingerprint; this function must
+    never be called with a tenant's own `pseudonym_salt`. Callers are responsible for passing the
+    genuinely shared, cross-tenant salt.
     """
     if kind not in _INDICATOR_KINDS:
         raise ValueError(f"unknown indicator kind: {kind!r}; expected one of {_INDICATOR_KINDS}")

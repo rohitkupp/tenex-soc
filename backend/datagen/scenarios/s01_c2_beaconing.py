@@ -91,6 +91,21 @@ _C2_THREAT: Final[dict[str, Any]] = {
     "reason": "Advanced Threat Protection: command and control callback",
 }
 
+# `sha256`/`bamd5` (docs/v1/zscaler-nss-web-fields.md "Sandbox", this task's Phase 2): "ideal
+# unambiguous Tier 2 cross-tenant indicators" per this task's own brief — a file hash recurring
+# across otherwise-unrelated tenants is as close to unambiguous ground truth as an indicator gets.
+# The values below are the real, publicly documented hashes of the EICAR standard antivirus test
+# file (not fabricated to look plausible) — fittingly, `%s{threatname}`'s own PDF example (p.31)
+# is literally "EICAR Test File". Reused as the fixed identity of every one of this implant's
+# result uploads across the whole campaign, the same "one stable indicator, many events" shape
+# `implant_ja4` uses in `s09_multi_domain_c2_failover.py`.
+_C2_FILE_HASH: Final[dict[str, str]] = {
+    "sha256": "275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0",
+    "bamd5": "44d88612fea8a8f36de82e1278abb02",
+    "upload_filename": "results.dat",
+    "upload_filetype": "Windows Executables",
+}
+
 # Where in the corpus window the implant starts. Bounded away from both edges so the detector
 # sees the full run and the baseline has clean history in front of it.
 _START_FRACTION: Final[tuple[float, float]] = (0.15, 0.65)
@@ -198,6 +213,7 @@ class BeaconingScenario(Scenario):
                 bytes_out=bytes_out,
                 bytes_in=0 if status == 204 else bytes_in,
                 category=category,
+                extra=dict(_C2_FILE_HASH) if is_upload else None,
                 **threat,
             )
             emitted += 1

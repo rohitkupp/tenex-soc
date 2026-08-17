@@ -81,13 +81,69 @@ Assume the standard NSS feed format. Tab- or comma-delimited with a header, or J
 | `reason` | `unmapped.block_reason` | — |
 | `referer` | `http_request.referrer` | — |
 | `dlpengine` / `dlpdictionaries` | `unmapped.dlp_*` | — |
-| `location` / `department` | `actor.user.groups` | — |
+| `location` / `department` | `actor.user.groups`, and (also) `unmapped.location` / `unmapped.department` | — |
 
 `action` normalization: `Allowed → allowed`, `Blocked → blocked`, everything else → `other`.
 
 This table is implemented and verified — kept exactly as shipped. It is also the one concrete
 proof that the OCSF argument above is real: every hot column here is a normalized OCSF path, not
 a raw ZScaler field name, and every detector in `docs/04` reads only these columns.
+
+**These 25 field names are the wire names our parser expects, not always Zscaler's own NSS
+tokens** — `docs/v1/zscaler-nss-web-fields.md` is the full field-catalogue reference (every
+documented NSS `%s{...}`/`%d{...}` token, one section per the source PDF's own headings) plus its
+own "Task 2 — reconciliation" section establishing *why* 15 of these 25 names differ from
+Zscaler's own terse tokens (`login`→`user`, `cip`→`clientip`, `dept`→`department`, ...): a real,
+independently-attested SIEM-side "friendlier field name" convention for the key=value NSS feed
+variant, not drift introduced by this project. Read that section before renaming anything here.
+
+### Asset/device extension (docs/v1/zscaler-nss-web-fields.md "Zscaler Client Connector Device
+### Information" + "Miscellaneous")
+
+Seven more fields, added on top of the original 25 — the literal NSS tokens this time (no prior
+"friendly" name to preserve continuity with, since this parser never emitted them before):
+
+| ZScaler field | OCSF path | Hot column |
+|---|---|---|
+| `devicehostname` | `device.hostname` | `hostname` |
+| `devicename` | `device.name` | `device_name` |
+| `deviceowner` | `device.owner` | `device_owner` |
+| `deviceostype` | `device.os.type` (normalized via `app.ocsf.normalize_os_type`) | `os_type` |
+| `deviceosversion` | `device.os.version` (raw, verbatim) | `os_version` |
+| `bypassed_traffic` | `bypassed_traffic` (top-level, `%d` 0/1 → bool) | `bypassed_traffic` |
+| `flow_type` | `flow_type` (top-level) | `flow_type` |
+
+`device` is `None` when a transaction carries none of `devicehostname`/`devicename`/`deviceowner`/
+`deviceostype`/`deviceosversion` — real and common: service-account/server traffic never has a
+Client Connector device (`datagen.emitters.zscaler._device_profile`'s own docstring). For that
+traffic, `app.enrichment.user_agent_enrichment` derives an OS type/version fallback from
+`useragent` alone (same `normalize_os_type` vocabulary), consumed only by asset-tag computation
+(`app.graph.asset_tags`), never promoted into the hot `os_type`/`os_version` columns — an explicit
+device field always wins when both exist.
+
+Not wired in (catalogued in the field-inventory doc, not parsed): `devicemodel`, `devicetype`,
+`deviceappversion`, `ztunnelversion`, `external_devid`, `bypassed_etime`, and this device-field
+family's own obfuscated/hex-encoded variants (`odevicehostname`, `odevicename`, `odeviceowner`,
+`edevicename`, `edevicehostname`) — none backs a tag, a detector, or an evidence citation today.
+(The *original 25 fields'* encoding variants are a different, separate change — see "Encoding
+variants" below; do not read this sentence as covering those.)
+
+## Encoding variants
+
+The NSS feed's field list is customer-configurable per column, and the spec documents three wire
+variants a real feed can substitute for a plain field: **obfuscated** (`o` prefix — the value is a
+random string, not the real one), **Base64** (`b64` prefix), and **hex-encoded** (`e` prefix,
+non-printable ASCII `<=0x20`/`>=0x7F` as `%HH`). Full extracted lists, the per-field
+cross-reference against the 25-field table above, and the obfuscated-field handling decision live
+in `docs/v1/zscaler-nss-web-fields.md`. In short: `bind_header` already binds columns by the
+literal header text, so `app/parsers/zscaler.py` resolves whichever variant a header actually
+declares for the twelve of those 25 fields with a documented encoded form (`user`, `clientip`,
+`host`, `url`, `useragent`, `urlcategory`, `threatname`, `referer`, `dlpengine`,
+`dlpdictionaries`, `location`, `department`). Base64/hex decode to the real value (malformed
+encoding is a recorded `ParseFailure`, never a silent pass-through); obfuscated fields are nulled
+and the field name recorded in `unmapped.obfuscated_fields` rather than either fabricating an
+identity from a random string or dropping the fact silently. The device-field family's own
+obfuscated/hex variants are out of scope here — see the paragraph above.
 
 ## Enrichment
 

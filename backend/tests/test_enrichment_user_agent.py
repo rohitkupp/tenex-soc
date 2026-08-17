@@ -100,3 +100,51 @@ def test_scanning_tool_keywords_are_flagged_automation() -> None:
     for ua in ["sqlmap/1.7.2#stable", "nmap NSE", "Mozilla/5.0 (compatible; Nikto/2.5.0)"]:
         result = enrich_user_agent(ua)
         assert result is not None and result.is_automation_tool is True, ua
+
+
+# ---------------------------------------------------------------------------- useragent-derived
+# OS fallback (this task, docs/11 "derive OS family/version from useragent")
+
+
+def test_windows_ua_derives_normalized_os_type_and_version() -> None:
+    result = enrich_user_agent(BROWSER_UAS[0])  # "Windows NT 10.0"
+    assert result is not None
+    assert result.os_type == "windows"
+    assert result.os_version == "10"
+
+
+def test_macos_ua_derives_normalized_os_type_and_dotted_version() -> None:
+    result = enrich_user_agent(BROWSER_UAS[1])  # "Intel Mac OS X 10_15_7"
+    assert result is not None
+    assert result.os_type == "macos"
+    assert result.os_version == "10.15.7"
+
+
+def test_ios_ua_derives_ios_os_type() -> None:
+    result = enrich_user_agent(BROWSER_UAS[4])  # "iPhone; CPU iPhone OS 18_1"
+    assert result is not None
+    assert result.os_type == "ios"
+
+
+def test_android_ua_derives_android_os_type() -> None:
+    result = enrich_user_agent(BROWSER_UAS[2])  # "Linux; Android 14; Pixel 8"
+    assert result is not None
+    assert result.os_type == "android"
+
+
+def test_linux_automation_ua_derives_linux_os_type() -> None:
+    """`curl/8.7.1` alone carries no OS token (ua-parser resolves no OS at all for a bare tool
+    string) -- the Linux `AUTOMATION_AGENTS` fixture that does carry one is the PowerShell UA,
+    which is wrapped in a `Windows NT` string despite representing a Windows automation host."""
+    result = enrich_user_agent(
+        "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0"
+    )
+    assert result is not None
+    assert result.os_type == "linux"
+
+
+def test_ua_with_no_resolvable_os_leaves_os_fields_none() -> None:
+    result = enrich_user_agent("curl/8.7.1")
+    assert result is not None
+    assert result.os_type is None
+    assert result.os_version is None

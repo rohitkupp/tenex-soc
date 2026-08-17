@@ -24,12 +24,17 @@ that tenant's own UI -- never a prompt, a Tier 2 record, or a log line.
 cross-tenant indicator overlap is detectable -- a deliberate privacy/utility tradeoff, not an
 inconsistency with the do-NOT-pseudonymize-domains rule above (that rule is about the normal
 per-tenant event/prompt path; this is a distinct mechanism entirely). See
-`pseudonymize.py`'s `indicator_hash` docstring.
+`pseudonymize.py`'s `indicator_hash` docstring. Phase 2 detection fields (this task) extend the
+same exception to two more identifier kinds: `file_hash` (`sha256`/`bamd5`) and `ja4` (`ja4_str`)
+-- both are indicators whose Tier 2 value depends on the same raw value hashing identically
+across tenants, exactly like a domain, so they route through `indicator_hash`'s shared salt at
+*both* boundaries this package cares about (an LLM prompt and a Tier 2 signature), not through
+`pseudonymize`'s per-tenant one -- see `_INDICATOR_KINDS`'s comment in `pseudonymize.py`.
 
 Public surface:
 
     pseudonymize(value: str, kind: str, salt: bytes) -> str
-    indicator_hash(value: str, kind: Literal["domain", "ip"], shared_salt: bytes) -> str
+    indicator_hash(value: str, kind: Literal["domain", "ip", "file_hash", "ja4"], shared_salt: bytes) -> str
     anonymize_event(event: Mapping, *, tenant_id, salt: bytes) -> AnonymizedEvent
     anonymize_events(events, *, tenant_id, salt: bytes) -> list[AnonymizedEvent]
     redact_text(text: str) -> RedactionResult

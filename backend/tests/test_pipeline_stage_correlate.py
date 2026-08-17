@@ -292,6 +292,130 @@ def test_correlate_no_multi_layer_tag_when_single_layer(tenant_cleanup: list[uui
     assert "multi-layer" not in incidents[0].tags
 
 
+def test_correlate_forms_asset_tags_from_evidence_events(tenant_cleanup: list[uuid.UUID]) -> None:
+    """`app.graph.asset_tags` end to end: device/os/dept/location/app/risk/flow tags plus the two
+    derived tags (`bypassed-client-connector`, `shared-device`) all land on the same
+    `incidents.tags` array `app.graph.tags` already populates."""
+    tenant = make_tenant()
+    tenant_cleanup.append(tenant.id)
+    user = make_user(tenant_id=tenant.id, email=f"correlate-{uuid.uuid4()}@test.local")
+    analysis = make_analysis(tenant_id=tenant.id, user_id=user.id)
+
+    now = datetime.now(UTC)
+    event_ids = [
+        make_event(
+            tenant_id=tenant.id,
+            analysis_id=analysis.id,
+            ts=now + timedelta(minutes=i),
+            raw_line_no=i + 1,
+            principal="jsmith@corp.example",
+            src_ip="10.0.0.5",
+            domain="evil-c2.example",
+            dst_ip="1.2.3.4",
+            hostname="THINKPADSMITH",
+            device_name="PC11NLPA:5F08D97B",
+            device_owner="contractor1",  # diverges from principal's login -> shared-device
+            os_type="windows",
+            os_version="Version 10.0.19045",
+            bypassed_traffic=True,
+            flow_type="VPN Tunnel",
+            ocsf={
+                "unmapped": {
+                    "department": "Sales",
+                    "location": "US-CA",
+                    "app_name": "Dropbox",
+                },
+                "risk_score": 95,
+            },
+        ).id
+        for i in range(3)
+    ]
+
+    make_signal(
+        tenant_id=tenant.id,
+        analysis_id=analysis.id,
+        entity_type="domain",
+        entity_value="evil-c2.example",
+        detector_key="signal.beaconing",
+        confidence=0.9,
+        evidence_event_ids=event_ids,
+    )
+
+    asyncio.run(correlate.handle(_message(analysis.id, tenant.id)))
+
+    with get_engine().begin() as conn:
+        incidents = conn.execute(
+            text("SELECT tags FROM incidents WHERE analysis_id = :aid"), {"aid": analysis.id}
+        ).all()
+    assert len(incidents) == 1
+    tags = incidents[0].tags
+    assert "device:THINKPADSMITH" in tags
+    assert "os:windows" in tags
+    assert "os_version:10.0" in tags
+    assert "dept:Sales" in tags
+    assert "location:US-CA" in tags
+    assert "app:Dropbox" in tags
+    assert "risk:critical" in tags
+    assert "flow:vpn-tunnel" in tags
+    assert "bypassed-client-connector" in tags
+    assert "shared-device" in tags
+    # Signal-derived tags (`app.graph.tags`) still present alongside — one union, not two lists.
+    assert "layer:signal" in tags
+
+
+def test_correlate_asset_tags_absent_when_evidence_events_carry_no_device_data(
+    tenant_cleanup: list[uuid.UUID],
+) -> None:
+    """No-fire case: evidence events with no device fields at all (the service-account/headless
+    shape `datagen.emitters.zscaler._device_profile` produces) contribute zero asset tags,
+    without raising."""
+    tenant = make_tenant()
+    tenant_cleanup.append(tenant.id)
+    user = make_user(tenant_id=tenant.id, email=f"correlate-{uuid.uuid4()}@test.local")
+    analysis = make_analysis(tenant_id=tenant.id, user_id=user.id)
+
+    now = datetime.now(UTC)
+    event_ids = [
+        make_event(
+            tenant_id=tenant.id,
+            analysis_id=analysis.id,
+            ts=now + timedelta(minutes=i),
+            raw_line_no=i + 1,
+            principal="svc-etl-airflow@corp.example",
+            src_ip="10.0.0.9",
+            domain="evil-c2.example",
+            dst_ip="1.2.3.4",
+        ).id
+        for i in range(3)
+    ]
+
+    make_signal(
+        tenant_id=tenant.id,
+        analysis_id=analysis.id,
+        entity_type="domain",
+        entity_value="evil-c2.example",
+        detector_key="signal.beaconing",
+        confidence=0.9,
+        evidence_event_ids=event_ids,
+    )
+
+    asyncio.run(correlate.handle(_message(analysis.id, tenant.id)))
+
+    with get_engine().begin() as conn:
+        incidents = conn.execute(
+            text("SELECT tags FROM incidents WHERE analysis_id = :aid"), {"aid": analysis.id}
+        ).all()
+    assert len(incidents) == 1
+    tags = incidents[0].tags
+    assert not any(
+        t.startswith(("device:", "os:", "os_version:", "dept:", "location:", "app:", "risk:"))
+        for t in tags
+    )
+    assert "bypassed-client-connector" not in tags
+    assert "shared-device" not in tags
+    assert "layer:signal" in tags  # the signal-derived tags are unaffected
+
+
 def test_correlate_with_no_signals_forms_no_incidents(tenant_cleanup: list[uuid.UUID]) -> None:
     tenant = make_tenant()
     tenant_cleanup.append(tenant.id)

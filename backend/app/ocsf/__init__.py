@@ -13,11 +13,15 @@ from __future__ import annotations
 
 from app.ocsf.base import OCSFEventBase
 from app.ocsf.common import (
+    OS,
     Actor,
     Api,
     ApiService,
     AutonomousSystem,
+    Certificate,
     Cloud,
+    Device,
+    File,
     GeoCoordinates,
     HttpRequest,
     HttpResponse,
@@ -25,9 +29,11 @@ from app.ocsf.common import (
     Malware,
     NetworkEndpoint,
     Resource,
+    Tls,
     Traffic,
     Url,
     User,
+    normalize_os_type,
 )
 from app.ocsf.http_activity import CATEGORY_UID as HTTP_ACTIVITY_CATEGORY_UID
 from app.ocsf.http_activity import CLASS_UID as HTTP_ACTIVITY_CLASS_UID
@@ -38,11 +44,15 @@ OCSFEvent = HTTPActivity
 __all__ = [
     "HTTP_ACTIVITY_CATEGORY_UID",
     "HTTP_ACTIVITY_CLASS_UID",
+    "OS",
     "Actor",
     "Api",
     "ApiService",
     "AutonomousSystem",
+    "Certificate",
     "Cloud",
+    "Device",
+    "File",
     "GeoCoordinates",
     "HTTPActivity",
     "HttpRequest",
@@ -53,7 +63,9 @@ __all__ = [
     "OCSFEvent",
     "OCSFEventBase",
     "Resource",
+    "Tls",
     "Traffic",
     "Url",
     "User",
+    "normalize_os_type",
 ]

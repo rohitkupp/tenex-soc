@@ -44,6 +44,13 @@ def make_event(
     user_agent: str | None = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0.0.0",
     event_key: str | None = None,
     ocsf: dict[str, Any] | None = None,
+    hostname: str | None = None,
+    device_name: str | None = None,
+    device_owner: str | None = None,
+    os_type: str | None = None,
+    os_version: str | None = None,
+    bypassed_traffic: bool | None = None,
+    flow_type: str | None = None,
 ) -> Event:
     """A real `events` row (docs/02) for agent-tool and citation-verifier tests. Every hot
     column defaults to a plausible, boring value so a test only has to override what it cares
@@ -72,6 +79,13 @@ def make_event(
                 user_agent=user_agent,
                 event_key=event_key,
                 ocsf=ocsf or {},
+                hostname=hostname,
+                device_name=device_name,
+                device_owner=device_owner,
+                os_type=os_type,
+                os_version=os_version,
+                bypassed_traffic=bypassed_traffic,
+                flow_type=flow_type,
             )
             session.add(event)
             session.commit()

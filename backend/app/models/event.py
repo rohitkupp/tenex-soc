@@ -39,7 +39,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import BigInteger, ForeignKey, Index, Integer, Text
+from sqlalchemy import BigInteger, Boolean, ForeignKey, Index, Integer, Text
 from sqlalchemy.dialects.postgresql import INET, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import DateTime, Uuid
@@ -83,6 +83,37 @@ class Event(Base, TenantScopedMixin):
     user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
     event_key: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # --- device/asset hot columns (this task) ---
+    # Zscaler Client Connector device fields (docs/v1/zscaler-nss-web-fields.md), projected from
+    # `ocsf->device` exactly like every other hot column here is a projection of `ocsf` (module
+    # docstring). `hostname` is deliberately not called `device_hostname`: `app.privacy.
+    # event_privacy` already reserved that exact key, `"hostname": "host"`, for "a client
+    # machine's own hostname, distinct from `domain`" before any parser emitted one — this is that
+    # field, arriving under the name that module was already waiting for. Unindexed, like
+    # `user_agent`/`http_method` above: nothing here is on the five-index list docs/02 curates,
+    # consistent with those two already-unindexed hot columns.
+    hostname: Mapped[str | None] = mapped_column(Text, nullable=True)
+    device_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    device_owner: Mapped[str | None] = mapped_column(Text, nullable=True)
+    os_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    os_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    bypassed_traffic: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    flow_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # --- Phase 2 detection-field hot column (this task) ---
+    # `ja4_str` (docs/v1/zscaler-nss-web-fields.md "SSL/TLS") is the one Phase 2 field promoted to
+    # a hot, indexed column — the task's own framing is that it is "a better cross-tenant Tier 2
+    # indicator than a domain" precisely because malware rotates domains and IPs far more readily
+    # than its TLS stack, so cheap, indexed "same JA4, different domain" lookups across an
+    # analysis's whole event set are the query this column exists to make fast. Every other Phase
+    # 2 field (cert posture, file hashes, domain fronting, geo risk, upload metadata,
+    # threat severity) rides in `ocsf` JSONB only, unindexed — the same treatment
+    # `urlcategory`/`appname`/`threatname`/... already get; promoting all twenty to hot columns
+    # would be scope well beyond what any of them individually earns today. Unlike `principal`/
+    # `src_ip`/`domain`, this is not one of docs/02's original five hot-column indexes, so it gets
+    # its own dedicated index below rather than folding into an existing composite one.
+    ja4_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     ocsf: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     enrichment: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, server_default="{}")
 
@@ -98,4 +129,7 @@ class Event(Base, TenantScopedMixin):
             postgresql_using="gin",
             postgresql_ops={"ocsf": "jsonb_path_ops"},
         ),
+        # Sixth index, added by this task's Phase 2 — see `ja4_hash`'s own comment above for why
+        # this one field earns it where the other nineteen Phase 2 fields don't.
+        Index("ix_events_analysis_id_ja4_hash", "analysis_id", "ja4_hash"),
     )

@@ -18,7 +18,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.ocsf.common import Actor, NetworkEndpoint
+from app.ocsf.common import Actor, Device, NetworkEndpoint
 
 
 class OCSFEventBase(BaseModel):
@@ -39,6 +39,9 @@ class OCSFEventBase(BaseModel):
     actor: Actor = Field(default_factory=Actor)
     src_endpoint: NetworkEndpoint = Field(default_factory=NetworkEndpoint)
     dst_endpoint: NetworkEndpoint | None = None
+    # Zscaler Client Connector device info (docs/v1/zscaler-nss-web-fields.md), `None` when the
+    # transaction carries no device fields at all — see `app.ocsf.common.Device`'s own docstring.
+    device: Device | None = None
 
     # docs/03's escape hatch: "Include the `unmapped` escape hatch the doc references." Any
     # source field that has no first-class OCSF home lands here, keyed by a short, stable name

@@ -126,6 +126,26 @@ class MultiDomainFailoverScenario(Scenario):
         user_agent = self._user_agent(ctx, rng, victim)
         # Two-octet block shared by every sibling — the signal `graph.shared_infra` looks for.
         anchor = f"{rng.randint(20, 209)}.{rng.randint(0, 255)}"
+        # JA4 client TLS fingerprint (docs/v1/zscaler-nss-web-fields.md "SSL/TLS", this task's
+        # Phase 2): drawn once and reused for every sibling domain below, on purpose — a real
+        # implant's TLS library does not change when it fails over to the next domain, which is
+        # exactly what makes "one JA4, several otherwise-unrelated (different DGA strings) rotating
+        # domains" a stronger cross-tenant indicator than any single domain (this task's own
+        # design note: malware rotates domains and IPs, rarely its TLS stack). Paired with a
+        # self-signed, short-validity certificate — the C2 infrastructure profile a legitimate
+        # site essentially never presents (`app.parsers.zscaler`'s benign generator path never
+        # emits `is_sslselfsigned=Yes`/`srvcertvalidityperiod=Short` at all, so this is a genuine,
+        # not merely rare, contrast).
+        implant_ja4 = f"t13d191000_{rng.hex_token(6)}_{rng.hex_token(6)}"
+        implant_tls_extra: dict[str, Any] = {
+            "ja4_str": implant_ja4,
+            "ssldecrypted": "Yes",
+            "is_sslselfsigned": "Yes",
+            "is_sslexpiredca": "No",
+            "is_ssluntrustedca": "Fail",
+            "srvcertvalidityperiod": "Short (0-3 months)",
+            "srvocspresult": "Unknown",
+        }
 
         est_span_s = self.n_domains * (
             self.burst_events * self.interval_s + sum(_FAILOVER_GAP_MIN) / 2 * 60.0
@@ -152,6 +172,7 @@ class MultiDomainFailoverScenario(Scenario):
                     bytes_out=rng.randint(*_POLL_OUT_BYTES),
                     bytes_in=0 if status == 204 else rng.randint(*_POLL_IN_BYTES),
                     category=self._category(),
+                    extra=implant_tls_extra,
                 )
                 total += 1
                 ts += timedelta(seconds=self._sleep_s(rng))

@@ -96,14 +96,39 @@ def test_same_principal_across_two_events_gets_the_same_pseudonym() -> None:
     assert out_a["principal"] == out_b["principal"]
 
 
-def test_forward_compatible_hostname_session_device_fields_pseudonymize_when_present() -> None:
-    """These three kinds have no live parser field yet (see module docstring) but must
-    already work the moment one exists."""
-    event = {"hostname": "WORKSTATION-42", "session_id": "sess-abc123", "device_id": "dev-xyz"}
+def test_device_asset_fields_pseudonymize_when_present() -> None:
+    """`hostname`/`device_name`/`device_owner` (the asset-tag task's device hot columns) go
+    through the same treatment as `principal`/`src_ip` -- see module docstring."""
+    event = {
+        "hostname": "WORKSTATION-42",
+        "device_name": "PC11NLPA:5F08D97B",
+        "device_owner": "jsmith",
+    }
     out = anonymize_event(event, tenant_id="tenant-a", salt=SALT).event
     assert out["hostname"] == pseudonymize("WORKSTATION-42", "host", SALT)
+    assert out["device_name"] == pseudonymize("PC11NLPA:5F08D97B", "device", SALT)
+    assert out["device_owner"] == pseudonymize("jsmith", "user", SALT)
+
+
+def test_forward_compatible_session_id_pseudonymizes_when_present() -> None:
+    """`session_id` has no live parser field yet (see module docstring) but must already work
+    the moment one exists."""
+    event = {"session_id": "sess-abc123"}
+    out = anonymize_event(event, tenant_id="tenant-a", salt=SALT).event
     assert out["session_id"] == pseudonymize("sess-abc123", "session", SALT)
-    assert out["device_id"] == pseudonymize("dev-xyz", "device", SALT)
+
+
+def test_device_metadata_fields_are_not_pseudonymized() -> None:
+    """`os_type`/`os_version`/`bypassed_traffic`/`flow_type` are categorical/behavioral, not
+    identifiers -- same do-NOT status as `user_agent`/`http_method` (module docstring)."""
+    event = {
+        "os_type": "windows",
+        "os_version": "10.0.19045",
+        "bypassed_traffic": True,
+        "flow_type": "ZIA",
+    }
+    out = anonymize_event(event, tenant_id="tenant-a", salt=SALT).event
+    assert out == event
 
 
 def test_anonymize_events_batch_preserves_order() -> None:

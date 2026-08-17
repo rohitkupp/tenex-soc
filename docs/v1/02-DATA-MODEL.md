@@ -77,6 +77,20 @@ CREATE TABLE events (
   bytes_out BIGINT,
   user_agent TEXT,
   event_key TEXT,          -- discretized token, Drain3-templated on url_path (see docs/03)
+  -- device/asset hot columns — asset-tag task, docs/v1/zscaler-nss-web-fields.md
+  hostname TEXT,           -- Client Connector device hostname (not the URL host — that's `domain`)
+  device_name TEXT,        -- opaque device identifier
+  device_owner TEXT,       -- the asset's assigned user (may diverge from `principal`)
+  os_type TEXT,            -- normalized: windows|macos|ios|android|linux|chromeos|other
+  os_version TEXT,         -- raw, verbatim device OS version string
+  bypassed_traffic BOOLEAN,-- traffic that bypassed the Client Connector
+  flow_type TEXT,          -- Direct|Loopback|VPN|VPN Tunnel|ZIA|ZPA
+  -- Phase 2 detection-field hot column — encoding-variant + detection-field task,
+  -- docs/v1/zscaler-nss-web-fields.md. The one field of twenty new ones promoted to a hot,
+  -- indexed column; the other nineteen (certificate posture, file hashes, domain fronting, geo
+  -- risk, upload metadata, threat severity) ride in `ocsf` JSONB only.
+  ja4_hash TEXT,            -- JA4 client TLS fingerprint (pseudonymize via the shared indicator
+                             -- salt at the LLM/Tier 2 boundary, docs/06 — not the per-tenant one)
   ocsf JSONB NOT NULL,
   enrichment JSONB NOT NULL DEFAULT '{}'
 );
@@ -86,6 +100,7 @@ CREATE INDEX ON events (analysis_id, principal, ts);
 CREATE INDEX ON events (analysis_id, domain);
 CREATE INDEX ON events (analysis_id, src_ip);
 CREATE INDEX ON events USING GIN (ocsf jsonb_path_ops);
+CREATE INDEX ON events (analysis_id, ja4_hash);
 ```
 
 ## Detection
@@ -402,3 +417,54 @@ migration artifact rather than a genuine hypothesis-evaluation judgement — a r
 mistake a mechanical bucketing for reasoning. `downgrade()` reverses both from bucket midpoints;
 lossy by construction in both directions, but it always round-trips to a valid, fully populated
 schema rather than leaving NULLs.
+
+
+## Device/asset hot columns & the asset tag bank — this task
+
+Migration `f4c8a1d9e2b6`, seven new `events` columns (`hostname`, `device_name`, `device_owner`,
+`os_type`, `os_version`, `bypassed_traffic`, `flow_type`, listed in the `events` table above) —
+the "critical gap" this task closes: Zscaler Client Connector device fields
+(`docs/v1/zscaler-nss-web-fields.md`) had no column to land in, so the parser had nothing to map
+them to and `incidents.tags` had no device data to aggregate. No new `incidents` column: that
+table's `tags TEXT[]` (migration `356bd7cbdfe9`) already exists as a flat, namespaced list —
+`app.graph.asset_tags.compute_asset_tags` adds a second family of namespaces
+(`device:`/`os:`/`os_version:`/`dept:`/`location:`/`app:`/`risk:`/`flow:`, plus derived
+`bypassed-client-connector`/`shared-device`) onto the *same* column, unioned with
+`app.graph.tags.compute_incident_tags`'s technique/layer/detector tags at correlate time
+(`app.pipeline.stages.correlate`), not a second array.
+
+No index on any of the seven — consistent with `user_agent`/`http_method`/`action` (already
+unindexed hot columns on this table): asset-tag computation reads them through a targeted
+`id IN (...)` query over one incident's own evidence events, never a full-table scan.
+
+`hostname`/`device_name`/`device_owner` are identifiers (docs/06's do list: "usernames... IPs,
+hostnames... device IDs") and are pseudonymized at the LLM/Tier 2 boundary exactly like
+`principal`/`src_ip` — see docs/06's own addendum on this. `os_type`/`os_version`/
+`bypassed_traffic`/`flow_type` are categorical/behavioral metadata, not identifiers, and stay
+plaintext at every boundary, the same status `user_agent`/`http_method` already have.
+
+
+## Phase 2 detection fields — encoding-variant + detection-field task
+
+Migration `c2a71f5e9d34`, one new `events` column (`ja4_hash`, listed in the `events` table
+above) plus its own dedicated index — the only one of twenty new Phase 2 detection fields
+(`docs/v1/zscaler-nss-web-fields.md` "SSL/TLS", "Server Connection", "Sandbox", "File Type
+Control", "Network", "Threat Protection") promoted to a hot column. The rest (certificate
+posture, file hashes, domain fronting, geo risk, upload metadata, threat severity) ride in `ocsf`
+JSONB only, unindexed — the same treatment `urlcategory`/`appname`/`threatname` already get; see
+`app.models.event.Event`'s own comment for why `ja4_str` specifically earns the column (a better
+cross-tenant Tier 2 indicator than a domain, per this task's own design note — an indexed
+`(analysis_id, ja4_hash)` lookup is the "same fingerprint, different domain" query that value
+depends on being cheap).
+
+`ja4_hash` is an identifier (a client TLS fingerprint) but does **not** follow `hostname`/
+`device_name`'s per-tenant pseudonymization route above — it routes through
+`app.privacy.pseudonymize.indicator_hash`'s *shared*, cross-tenant salt instead, at whichever
+boundary eventually serializes it to an LLM prompt or a Tier 2 signature (not wired up by this
+task — see docs/06's own Phase 2 addendum for the full reasoning). `sha256`/`bamd5` (also
+identifiers, also indicator-hash-routed by the same reasoning) are not hot columns at all —
+`ocsf.file` JSONB only — so no column-level privacy decision applies to them here.
+
+No backfill for `ja4_hash`: rows written before this revision were parsed by a version of
+`app.parsers.zscaler` that never read `%s{ja4_str}`, so every existing row gets `NULL`, the
+honest state for a historical row (same policy the device columns above already established).
