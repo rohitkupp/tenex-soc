@@ -23,7 +23,7 @@ x-worker-env: &worker-env
   S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD:?}
   S3_BUCKET: tenex-uploads
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-  ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-5}
+  ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-sonnet-5}
   # The two spend controls. Both are in docker-compose.yml and were missing here, so production
   # ran on code defaults and the cap was *unsettable*: putting MAX_TRIAGE_INCIDENTS in the VM's
   # .env did nothing, because nothing passed it into the container. That is how a verification
@@ -32,8 +32,10 @@ x-worker-env: &worker-env
   #
   # Keep these defaults identical to docker-compose.yml. Drift between the two files is the bug
   # itself, not the values. Note what the ceiling costs before raising it: measured on
-  # claude-opus-5, one triaged incident runs roughly $0.70-$2.70 depending on how many turns the
-  # Analyst spends investigating, so 15 is a ~$10-40 upload.
+  # claude-opus-5, one triaged incident ran roughly $0.70-$2.70 depending on how many turns the
+  # Analyst spent investigating, so 15 was a ~$10-40 upload. The switch to claude-sonnet-5 cuts
+  # the rate to $3/$15 from $5/$25 (a ~0.6x multiplier on both), putting a triaged incident near
+  # $0.40-$1.60 and 15 of them near $6-24 -- still the largest single lever on spend here.
   MAX_TRIAGE_INCIDENTS: ${MAX_TRIAGE_INCIDENTS:-15}
   AGENT_MAX_TOOL_CALLS: ${AGENT_MAX_TOOL_CALLS:-8}
   JWT_SECRET: ${JWT_SECRET:?}

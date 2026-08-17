@@ -5,8 +5,10 @@ the one place fixture recording/replay happens (docs/07 "Determinism"; CLAUDE.md
 ## The docs/07 correction this milestone is authorized to make
 
 docs/07 says `temperature=0` for determinism. **That is wrong for the model this build targets.**
-Sampling parameters (`temperature`, `top_p`, `top_k`) are removed on `claude-opus-5` — sending
-`temperature` returns a 400. `LiveCaller.create` below never sends it, under any circumstance;
+Sampling parameters (`temperature`, `top_p`, `top_k`) are removed on both models in
+`_MODEL_RATES` — sending `temperature` returns a 400, verified live against `claude-sonnet-5`
+("`temperature` is deprecated for this model") as well as `claude-opus-5`, so switching between
+them changes nothing here. `LiveCaller.create` below never sends it, under any circumstance;
 `docs/07-AGENT.md`'s "Determinism" section has been corrected to say so (the one doc edit this
 package is authorized to make). Determinism instead comes from schema-validated tool output
 (`app.agent.schemas`) plus recorded fixtures (`FixtureCaller` below) — never from the sampling
@@ -38,55 +40,118 @@ import anthropic
 from anthropic.types import Message
 
 __all__ = [
-    "MIN_CACHEABLE_PREFIX_TOKENS",
     "FixtureCaller",
     "FixtureExhaustedError",
     "LLMCaller",
     "LiveCaller",
+    "ModelRates",
+    "min_cacheable_prefix_tokens",
+    "model_rates",
     "RecordingCaller",
     "estimate_cost_usd",
 ]
 
-# Claude Opus 5 pricing, per the claude-api skill's cached rate card (SKILL.md "Current Models"):
-# $5.00 / 1M input tokens, $25.00 / 1M output tokens. Cache write/read multipliers are the
-# standard ones documented in shared/prompt-caching.md (1.25x write for the default 5-minute
-# TTL, 0.1x read). `LiveCaller.create` below now actually sets `cache_control` (see its own
-# docstring) -- these multipliers are what make `estimate_cost_usd` charge the real, cheaper
-# rate for the tokens that landed in cache instead of silently over-reporting cost at the full
-# input rate.
-_INPUT_RATE_PER_MTOK = Decimal("5.00")
-_OUTPUT_RATE_PER_MTOK = Decimal("25.00")
+# Per-model rate card and cache floor, both from the claude-api skill (SKILL.md "Current Models"
+# and shared/prompt-caching.md). These were two hardcoded Opus 5 constants until the switch to
+# Sonnet 5, and both were wrong in a way nothing would have reported:
+#
+#   - Pricing. Sonnet 5 is $3/$15, not Opus 5's $5/$25, so leaving the constants alone would have
+#     over-stated every `cost_usd` this app renders by ~1.67x. Cost is user-visible here (the run
+#     summary, the eval cost report), so a stale rate card is a wrong number on the screen, not a
+#     rounding detail. The list price is used deliberately even though Sonnet 5 carries a $2/$10
+#     introductory rate through 2026-08-31: an estimate that reads slightly high during the intro
+#     window and stays correct after it expires beats one that silently under-reports from
+#     September onward. Cost guards should err toward over-reporting.
+#
+#   - Cache floor. Sonnet 5's minimum cacheable prefix is 1024 tokens, *twice* Opus 5's 512 -- the
+#     minimum is not monotonic across generations. A `cache_control` marker below the floor is a
+#     silent no-op: `cache_creation_input_tokens` just stays 0 forever, with no error.
+#
+# Both live in one table keyed by model id, and `model_rates` raises on an unknown key rather than
+# defaulting. An unknown model quietly priced at whatever the last model cost is precisely the
+# stale-hardcoded-list failure this repo has already hit four times.
 _CACHE_WRITE_MULTIPLIER = Decimal("1.25")
 _CACHE_READ_MULTIPLIER = Decimal("0.1")
 _MTOK = Decimal(1_000_000)
 
-# claude-api skill, shared/prompt-caching.md: minimum cacheable prefix for claude-opus-5 is 512
-# tokens (down from 1024 on Opus 4.8) -- a `cache_control` marker on a shorter block is a silent
-# no-op (`cache_creation_input_tokens` stays 0, no error). Every one of `app.agent.prompts`'
-# five system prompts is 4.8k-7.4k chars -- at a deliberately conservative 5 chars/token estimate
-# (real English/JSON text runs closer to ~4, so this under-counts tokens, never over-counts) the
-# smallest still clears roughly 950 estimated tokens, comfortably above this floor before even
-# counting the tool schemas the same breakpoint also covers; the incident-context block Analyst
-# additionally caches (`app.agent.orchestrator._run_tool_role`) runs tens of thousands of chars.
-# See `tests/test_agent_prompt_caching.py::test_system_prompts_clear_min_cacheable_prefix`.
-MIN_CACHEABLE_PREFIX_TOKENS = 512
+
+@dataclass(frozen=True)
+class ModelRates:
+    """Pricing and the prompt-cache floor for one model id."""
+
+    input_per_mtok: Decimal
+    output_per_mtok: Decimal
+    min_cacheable_prefix_tokens: int
+
+
+_MODEL_RATES: Final[dict[str, ModelRates]] = {
+    "claude-sonnet-5": ModelRates(Decimal("3.00"), Decimal("15.00"), 1024),
+    "claude-opus-5": ModelRates(Decimal("5.00"), Decimal("25.00"), 512),
+}
+
+
+def model_rates(model: str) -> ModelRates:
+    """Rates for `model`, raising on an unrecognised id.
+
+    Deliberately strict. Falling back to a default would reintroduce exactly the bug this table
+    replaces -- a model swap that silently keeps billing at the previous model's rate.
+    """
+    try:
+        return _MODEL_RATES[model]
+    except KeyError:
+        known = ", ".join(sorted(_MODEL_RATES))
+        raise ValueError(
+            f"no rate card for model {model!r} -- add it to app.agent.client._MODEL_RATES "
+            f"(known: {known}). Pricing and the prompt-cache minimum are both model-specific "
+            "and neither has a safe default."
+        ) from None
+
+
+def _configured_model() -> str:
+    # Imported lazily: this module is deliberately free of app config at import time so that
+    # fixture replay in tests needs nothing but the file on disk.
+    from app.core.config import get_settings
+
+    return get_settings().anthropic_model
+
+
+def min_cacheable_prefix_tokens(model: str | None = None) -> int:
+    """Minimum cacheable prefix for `model`, defaulting to the configured one.
+
+    Every one of `app.agent.prompts`' five system prompts was measured against the real tokenizer
+    (`client.messages.count_tokens`, a free endpoint) rather than estimated: the smallest,
+    `DOMAIN_SEMANTIC_SYSTEM_PROMPT`, is 1,546 tokens and the largest, `PRESENTER_SYSTEM_PROMPT`,
+    is 2,468 -- so all five clear Sonnet 5's 1024 floor with room to spare, before even counting
+    the tool schemas the same breakpoint covers. Those measurements also showed the prompts run
+    ~3.1 chars/token, far denser than the 5 chars/token the guard test used to assume; at the old
+    ratio the smallest prompt estimated to 969 tokens and would have looked like it *failed* a
+    1024 floor it actually clears by 50%.
+    See `tests/test_agent_prompt_caching.py::test_system_prompts_clear_min_cacheable_prefix`.
+    """
+    return model_rates(model or _configured_model()).min_cacheable_prefix_tokens
+
 
 _CACHE_CONTROL_EPHEMERAL: Final[dict[str, str]] = {"type": "ephemeral"}
 
 
-def estimate_cost_usd(usage: Any) -> Decimal:
+def estimate_cost_usd(usage: Any, model: str | None = None) -> Decimal:
     """`usage` is an `anthropic.types.Usage` (or anything with the same four attributes, e.g. a
-    running total accumulated across several turns). Cache fields default to 0 when unset."""
+    running total accumulated across several turns). Cache fields default to 0 when unset.
+
+    `model` defaults to the configured one, so a model swap repriced every call site at once
+    rather than leaving six of them on a stale literal.
+    """
+    rates = model_rates(model or _configured_model())
     input_tokens = Decimal(getattr(usage, "input_tokens", 0) or 0)
     output_tokens = Decimal(getattr(usage, "output_tokens", 0) or 0)
     cache_creation = Decimal(getattr(usage, "cache_creation_input_tokens", 0) or 0)
     cache_read = Decimal(getattr(usage, "cache_read_input_tokens", 0) or 0)
 
     cost = (
-        input_tokens * _INPUT_RATE_PER_MTOK
-        + output_tokens * _OUTPUT_RATE_PER_MTOK
-        + cache_creation * _INPUT_RATE_PER_MTOK * _CACHE_WRITE_MULTIPLIER
-        + cache_read * _INPUT_RATE_PER_MTOK * _CACHE_READ_MULTIPLIER
+        input_tokens * rates.input_per_mtok
+        + output_tokens * rates.output_per_mtok
+        + cache_creation * rates.input_per_mtok * _CACHE_WRITE_MULTIPLIER
+        + cache_read * rates.input_per_mtok * _CACHE_READ_MULTIPLIER
     ) / _MTOK
     return cost.quantize(Decimal("0.000001"))
 

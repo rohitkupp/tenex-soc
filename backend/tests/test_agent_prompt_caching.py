@@ -30,7 +30,13 @@ import pytest
 from anthropic.types import Message
 
 from app.agent import prompts
-from app.agent.client import MIN_CACHEABLE_PREFIX_TOKENS, LiveCaller, estimate_cost_usd
+from app.agent.client import (
+    _MODEL_RATES,
+    LiveCaller,
+    estimate_cost_usd,
+    min_cacheable_prefix_tokens,
+    model_rates,
+)
 from app.agent.orchestrator import ANALYST_TOOLS, triage_incident
 from app.agent.schemas import build_present_verdict_tool, build_submit_judgement_tool
 from app.core.db import get_session_factory
@@ -225,19 +231,32 @@ def test_live_caller_real_analyst_call_stays_under_max_breakpoints(
         "DOMAIN_SEMANTIC_SYSTEM_PROMPT",
     ],
 )
-def test_system_prompts_clear_min_cacheable_prefix(name: str) -> None:
-    """claude-api skill, shared/prompt-caching.md: claude-opus-5's minimum cacheable prefix is
-    512 tokens; a `cache_control` marker below that is a silent no-op (no error, just
-    `cache_creation_input_tokens: 0` forever). No live call is allowed to measure real tokens, so
-    this uses a deliberately conservative (i.e. UNDER-counting) 5-chars-per-token estimate --
-    English/JSON text runs closer to ~4 chars/token in practice, so this bound only ever
-    under-states the real count, never over-states it, keeping the assertion safe in the
-    direction that matters (a false pass here would mean caching silently no-ops in production)."""
+@pytest.mark.parametrize("model", sorted(_MODEL_RATES))
+def test_system_prompts_clear_min_cacheable_prefix(name: str, model: str) -> None:
+    """claude-api skill, shared/prompt-caching.md: a `cache_control` marker on a block below the
+    model's minimum cacheable prefix is a silent no-op (no error, just
+    `cache_creation_input_tokens: 0` forever).
+
+    Parametrized over *every* model in the rate card, not just the configured one, because the
+    floor is model-specific and non-monotonic across generations: Sonnet 5's is 1024, twice Opus
+    5's 512. A switch between the two must not be able to silently disable caching, so both are
+    asserted at all times and adding a model to `_MODEL_RATES` automatically extends this guard.
+
+    No live call is allowed here (CI must never need a key), so this estimates from character
+    count. The 4-chars-per-token divisor is still deliberately conservative -- these prompts were
+    measured against the real tokenizer at ~3.1 chars/token (1,546 tokens for the smallest,
+    `DOMAIN_SEMANTIC_SYSTEM_PROMPT`) -- so the bound under-states the true count and keeps the
+    assertion safe in the direction that matters: a false *pass* would mean caching silently
+    no-ops in production. The previous 5-chars-per-token divisor was over-conservative to the
+    point of being misleading, estimating that same prompt at 969 tokens and making it look like
+    it failed a 1024 floor it in fact clears by 50%.
+    """
     text = getattr(prompts, name)
-    conservative_token_estimate = len(text) // 5
-    assert conservative_token_estimate > MIN_CACHEABLE_PREFIX_TOKENS, (
+    conservative_token_estimate = len(text) // 4
+    floor = min_cacheable_prefix_tokens(model)
+    assert conservative_token_estimate > floor, (
         f"{name} is only ~{conservative_token_estimate} conservative-estimated tokens "
-        f"({len(text)} chars) — too close to the {MIN_CACHEABLE_PREFIX_TOKENS}-token minimum "
+        f"({len(text)} chars) — too close to {model}'s {floor}-token minimum "
         "for the cache_control marker on it to reliably take effect"
     )
 
@@ -503,27 +522,48 @@ class _Usage:
         self.cache_read_input_tokens = cache_read_input_tokens
 
 
-def test_estimate_cost_usd_prices_cache_write_at_1_25x_input_rate() -> None:
-    """$5.00/MTok input rate * 1.25 write multiplier -- a cache-write token costs 25% more than
-    a fresh input token, never the same and never less."""
-    fresh = estimate_cost_usd(_Usage(input_tokens=1_000_000))
-    written = estimate_cost_usd(_Usage(cache_creation_input_tokens=1_000_000))
-    assert fresh == Decimal("5.000000")
-    assert written == Decimal("6.250000")
+# Published list rates from the claude-api skill's rate card (SKILL.md "Current Models"), written
+# out as literals rather than read from `_MODEL_RATES` so that this genuinely pins the table to
+# the rate card. Deriving the expectation from the table under test would make these tautologies
+# that pass no matter how wrong the numbers get. Sonnet 5's $2/$10 introductory rate through
+# 2026-08-31 is deliberately not encoded -- see `_MODEL_RATES`' comment on why the app prices at
+# list.
+_PUBLISHED_RATES = [
+    ("claude-opus-5", Decimal("5.00"), Decimal("25.00")),
+    ("claude-sonnet-5", Decimal("3.00"), Decimal("15.00")),
+]
+
+
+@pytest.mark.parametrize(("model", "input_rate", "output_rate"), _PUBLISHED_RATES)
+def test_estimate_cost_usd_prices_cache_write_at_1_25x_input_rate(
+    model: str, input_rate: Decimal, output_rate: Decimal
+) -> None:
+    """A cache-write token costs 25% more than a fresh input token, never the same and never
+    less -- at whichever model's input rate applies."""
+    fresh = estimate_cost_usd(_Usage(input_tokens=1_000_000), model=model)
+    written = estimate_cost_usd(_Usage(cache_creation_input_tokens=1_000_000), model=model)
+    assert fresh == input_rate.quantize(Decimal("0.000001"))
+    assert written == (input_rate * Decimal("1.25")).quantize(Decimal("0.000001"))
     assert written == fresh * Decimal("1.25")
 
 
-def test_estimate_cost_usd_prices_cache_read_at_0_1x_input_rate() -> None:
-    """$5.00/MTok input rate * 0.1 read multiplier -- a cache-read token costs a tenth of a fresh
-    input token. This is the multiplier that makes the whole optimization pay off."""
-    fresh = estimate_cost_usd(_Usage(input_tokens=1_000_000))
-    read = estimate_cost_usd(_Usage(cache_read_input_tokens=1_000_000))
-    assert fresh == Decimal("5.000000")
-    assert read == Decimal("0.500000")
+@pytest.mark.parametrize(("model", "input_rate", "output_rate"), _PUBLISHED_RATES)
+def test_estimate_cost_usd_prices_cache_read_at_0_1x_input_rate(
+    model: str, input_rate: Decimal, output_rate: Decimal
+) -> None:
+    """A cache-read token costs a tenth of a fresh input token. This is the multiplier that makes
+    the whole optimization pay off."""
+    fresh = estimate_cost_usd(_Usage(input_tokens=1_000_000), model=model)
+    read = estimate_cost_usd(_Usage(cache_read_input_tokens=1_000_000), model=model)
+    assert fresh == input_rate.quantize(Decimal("0.000001"))
+    assert read == (input_rate * Decimal("0.1")).quantize(Decimal("0.000001"))
     assert read == fresh * Decimal("0.1")
 
 
-def test_estimate_cost_usd_sums_all_four_token_classes() -> None:
+@pytest.mark.parametrize(("model", "input_rate", "output_rate"), _PUBLISHED_RATES)
+def test_estimate_cost_usd_sums_all_four_token_classes(
+    model: str, input_rate: Decimal, output_rate: Decimal
+) -> None:
     """A real post-caching response usually carries all three input classes at once (a fresh
     delta, a cache write, and/or a cache read) plus output — `estimate_cost_usd` must price and
     sum every one of them, not just `input_tokens`/`output_tokens`."""
@@ -534,12 +574,20 @@ def test_estimate_cost_usd_sums_all_four_token_classes() -> None:
         cache_read_input_tokens=44_000,
     )
     expected = (
-        Decimal(1_000) * Decimal("5.00")
-        + Decimal(200) * Decimal("25.00")
-        + Decimal(6_000) * Decimal("5.00") * Decimal("1.25")
-        + Decimal(44_000) * Decimal("5.00") * Decimal("0.1")
+        Decimal(1_000) * input_rate
+        + Decimal(200) * output_rate
+        + Decimal(6_000) * input_rate * Decimal("1.25")
+        + Decimal(44_000) * input_rate * Decimal("0.1")
     ) / Decimal(1_000_000)
-    assert estimate_cost_usd(usage) == expected.quantize(Decimal("0.000001"))
+    assert estimate_cost_usd(usage, model=model) == expected.quantize(Decimal("0.000001"))
+
+
+def test_model_rates_rejects_unknown_model() -> None:
+    """An unrecognised model id must raise, not fall back to some default rate. A silent fallback
+    is how a model swap keeps billing at the previous model's price -- the exact failure this
+    table was introduced to prevent."""
+    with pytest.raises(ValueError, match="no rate card for model"):
+        model_rates("claude-not-a-real-model")
 
 
 def test_estimate_cost_usd_matches_pre_caching_behavior_when_cache_fields_absent() -> None:
@@ -554,4 +602,11 @@ def test_estimate_cost_usd_matches_pre_caching_behavior_when_cache_fields_absent
 
     bare = _BareUsage(input_tokens=1_000, output_tokens=500)
     full = _Usage(input_tokens=1_000, output_tokens=500)
-    assert estimate_cost_usd(bare) == estimate_cost_usd(full) == Decimal("0.017500")
+    # Pinned to Opus 5 explicitly: the point of the assertion is that a missing cache attribute
+    # defaults to 0, which needs a fixed rate to compare against, not whichever model happens to
+    # be configured.
+    assert (
+        estimate_cost_usd(bare, model="claude-opus-5")
+        == estimate_cost_usd(full, model="claude-opus-5")
+        == Decimal("0.017500")
+    )

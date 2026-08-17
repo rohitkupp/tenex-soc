@@ -32,9 +32,19 @@ log "Unpacking and restarting"
 "${SSH[@]}" --command "
   set -euo pipefail
   mkdir -p ${REMOTE_DIR}
-  # --keep-newer-files would leave stale deletions behind; extract over the top instead, and
-  # leave .env alone because it is not in the archive at all.
+  # Extracting over the top is not enough: tar only *adds and overwrites*, so a file deleted from
+  # git survives on the VM forever. That is not hypothetical -- ten modules deleted in the
+  # evidence-first rename stayed behind on a previous deploy, and the stale copy raised
+  # \`AttributeError: SourceType.OKTA\` inside a worker until it was cleaned by hand.
+  #
+  # So: remove exactly the paths the previous archive delivered, then extract the new one and
+  # record the new list. Precise rather than \`rm -rf\` because the production .env files are placed
+  # out of band and are not in the archive -- never in the manifest, so never removed.
+  if [ -f ~/.tenex-shipped-manifest ]; then
+    (cd ${REMOTE_DIR} && tr '\n' '\0' < ~/.tenex-shipped-manifest | xargs -0 -r rm -f)
+  fi
   tar -xzf ~/tenex-src.tar.gz -C ${REMOTE_DIR}
+  tar -tzf ~/tenex-src.tar.gz | grep -v '/$' > ~/.tenex-shipped-manifest
   cd ${REMOTE_DIR}
   sudo docker compose -f deploy/gcp/compose.prod.yml up -d --build
   sudo docker compose -f deploy/gcp/compose.prod.yml exec -T api alembic upgrade head
@@ -49,14 +59,37 @@ URL="https://${IP//./-}.sslip.io/api/health"
 # starting and come back 502 — which reads like a failed deploy when it is a healthy one caught
 # a second early. 60 s is generous; a real failure still surfaces, just as a timeout.
 log "Waiting for ${URL}"
+API_UP=""
 for _ in $(seq 1 30); do
   if BODY=$(curl -fsS --max-time 5 "${URL}" 2>/dev/null); then
     echo "${BODY}"
-    log "Deployed."
-    exit 0
+    API_UP=1
+    break
   fi
   sleep 2
 done
 
-echo "health check never came up after 60s — check: sudo docker logs tenex-soc-api-1" >&2
-exit 1
+if [[ -z "${API_UP}" ]]; then
+  echo "health check never came up after 60s — check: sudo docker logs tenex-soc-api-1" >&2
+  exit 1
+fi
+
+# A healthy /api/health proves the *API* is up and proves nothing about the nine worker
+# containers behind the queues. The stale-module breakage above crash-looped a worker while the
+# API served 200s throughout, so this script reported a clean deploy over a pipeline that could
+# not run a single stage. Fail on any container not in `running`, and name it.
+log "Verifying every service is running"
+BAD=$("${SSH[@]}" --command "
+  cd ${REMOTE_DIR}
+  sudo docker compose -f deploy/gcp/compose.prod.yml ps --format '{{.Service}} {{.State}}' \
+    | awk '\$2 != \"running\" {print}'
+")
+if [[ -n "${BAD}" ]]; then
+  echo "deploy left services not running:" >&2
+  echo "${BAD}" >&2
+  echo "check: sudo docker compose -f deploy/gcp/compose.prod.yml logs <service>" >&2
+  exit 1
+fi
+
+log "Deployed — API healthy, all services running."
+exit 0

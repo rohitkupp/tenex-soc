@@ -170,7 +170,16 @@ class SigmaRule:
 
     @property
     def mitre_techniques(self) -> tuple[str, ...]:
-        return tuple(t.removeprefix("attack.t").upper() for t in self.tags if _is_technique(t))
+        """Canonical ATT&CK ids (`T1105`, `T1071.001`) from Sigma's lowercase `attack.tNNNN` tags.
+
+        Strips `attack.` and not `attack.t`: the `t` is part of the technique id, and removing it
+        yielded a bare number (`'1105'`). That failed silently in two places at once, because
+        nothing downstream validates the shape -- incident titles rendered as `"1105 — src_ip ..."`
+        instead of naming the technique, and every id missed `app.graph.mitre_allowlist`'s
+        canonical `T`-prefixed entries, so `compute_incident_tags` dropped *all* of them and no
+        incident ever carried a `technique:` tag at all.
+        """
+        return tuple(t.removeprefix("attack.").upper() for t in self.tags if _is_technique(t))
 
     @property
     def primary_mitre_technique(self) -> str | None:

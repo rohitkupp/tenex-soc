@@ -1,9 +1,15 @@
 """ZScaler NSS Web proxy logs — the highest-volume source in the corpus (docs/11).
 
-Tab-delimited NSS Web feed with a header line, carrying exactly the twenty-five fields docs/03
-maps to OCSF HTTP Activity (4002), in that document's order. The header is what makes the file
-sniffable and what lets the M3 parser bind columns by name rather than position; `FIELD_INDEX`
-is exported so the parser never has to restate the order.
+Tab-delimited NSS Web feed with a header line, carrying all 181 fields
+`docs/v1/zscaler-nss-web-fields.md` documents from the NSS Web Logs feed reference — docs/03's
+original 25 (still that document's own order, unchanged, first in `FIELDS`), the 27 promoted
+across two later changes (device/asset + detection-relevant TLS/threat/network fields), and
+~129 more added by this task's full-width widening (docs/v1/11-SYNTHETIC-DATA.md "Full width,
+and the 25/52-of-181 extraction contract"). `app/parsers/zscaler.py` only ever extracts the first
+52 by name; the rest are catalogued, realistic, and internally consistent, but deliberately not
+parsed — see `FIELDS`'s own comment block and `_apply_wide_fields` for why and how. The header is
+what makes the file sniffable and what lets the M3 parser bind columns by name rather than
+position; `FIELD_INDEX` is exported so the parser never has to restate the order.
 
 Two format decisions worth stating, because a parser written against a guess would break:
 
@@ -12,7 +18,10 @@ Two format decisions worth stating, because a parser written against a guess wou
   duplicate the host and put a URL where the parser expects a path.
 * Absent values are the literal string `None`, which is what NSS emits for a clean transaction.
   Records only carry the fields they actually set and `serialize` fills the rest from
-  `_FIELD_DEFAULTS`, so a benign event costs sixteen dict entries rather than twenty-five.
+  `_FIELD_DEFAULTS` (the original 25) or `_apply_wide_fields`'s own per-event derivation (the
+  full-width catalogue) — a benign event's `fields` dict still costs far fewer entries than
+  `len(FIELDS)`, just no longer sixteen: the full-width catalogue's own defaulting happens through
+  `_apply_wide_fields`, called once per event, not through a static table.
 
 Line numbers: the header occupies physical line 1, so a driver that writes it must call
 `assign_line_numbers(records, start=1 + ZScalerEmitter.header_lines)` for the line numbers in
@@ -20,7 +29,9 @@ Line numbers: the header occupies physical line 1, so a driver that writes it mu
 
 Volume: ~2M events. Every numeric draw is vectorised on the seeded numpy engine and records are
 yielded batch by batch, so the emitter never holds more than `_BATCH` events at once. The one
-thing not vectorised is `EventRecord` construction itself.
+thing not vectorised is `EventRecord` construction itself (and, since this task, `_apply_wide_fields`'s
+per-event full-width derivation — `_mix`-based rather than `hashlib`-based specifically to keep
+that unvectorised cost small at ~2M events, see that function's own section docstring).
 """
 
 from __future__ import annotations
@@ -47,6 +58,7 @@ __all__ = [
     "KINDS",
     "METHODS",
     "NAMED_CATEGORIES",
+    "RISKY_COUNTRIES",
     "SECURITY_CATEGORIES",
     "STATUS_CODES",
     "UrlCategory",
@@ -118,6 +130,193 @@ FIELDS: Final[tuple[str, ...]] = (
     "filetype",
     "unscannabletype",
     "threatseverity",
+    # ------------------------------------------------------------------------------------------
+    # Full-catalogue widening (this task, docs/v1/zscaler-nss-web-fields.md). The application
+    # only ever *extracts* the 52 fields above (docs/03's 25 plus the 27 promoted across the two
+    # changes right above this comment) -- everything below exists so the raw file this generator
+    # produces is genuinely ~150-column, the width a real NSS export configured with "every
+    # field" would be, and the extraction step above has 100+ unmapped columns to correctly
+    # ignore rather than 0. `app/parsers/zscaler.py` is deliberately NOT changed to read any of
+    # these (CLAUDE.md: "do not add a tag just because a field exists"; these fields back no tag,
+    # detector, or citation today) -- they are catalogued, realistic, and internally consistent,
+    # not wired.
+    #
+    # Every field below uses the PDF's own literal `%s{...}`/`%d{...}` token -- there is no prior
+    # "friendly" name to preserve continuity with for a field this generator has never emitted
+    # before (same reasoning the device-field extension above already gives for why *it* uses
+    # literal tokens). Nothing here renames or duplicates a field already represented above
+    # (`login`/`dept`/`cip`/`sip`/`reqmethod`/`respcode`/`reqsize`/`respsize`/`ua`/`urlcat`/
+    # `urlsupercat`/`malwarecat`/`dlpeng`/`dlpdict` already live under this file's original 25
+    # SIEM-normalized names -- see docs/v1/zscaler-nss-web-fields.md "Task 2 — reconciliation").
+    #
+    # Grouped by the field-reference doc's own section headings, in that doc's own order.
+    # Date/Time -- every one of these is a different rendering of the same instant `datetime`
+    # already carries; `_derive_datetime_tokens` computes all eleven from one `datetime.timestamp`
+    # read so they can never drift apart from each other or from `datetime`.
+    "time",
+    "tz",
+    "ss",
+    "mm",
+    "hh",
+    "dd",
+    "mth",
+    "yyyy",
+    "mon",
+    "day",
+    "epochtime",
+    # User Information (login/dept already carried as user/department above).
+    "company",
+    "cloudname",
+    # Bandwidth Control -- always off in this corpus (see `_apply_wide_fields`'s own note).
+    "txn_delay_req",
+    "txn_delay_resp",
+    "throttlereqsize",
+    "throttlerespsize",
+    "bwthrottle",
+    "bwclassname",
+    "bwrulename",
+    # Cloud Application (appname/appclass already carried above).
+    "app_risk_score",
+    "app_status",
+    "activity",
+    "prompt_req",
+    "prompt_class",
+    "inst_level1_type",
+    "inst_level1_id",
+    "inst_level1_name",
+    "inst_level2_type",
+    "inst_level2_id",
+    "inst_level2_name",
+    "inst_level3_type",
+    "inst_level3_id",
+    "inst_level3_name",
+    # Data Center
+    "datacenter",
+    "datacentercity",
+    "datacentercountry",
+    # Data Loss Prevention (dlpeng/dlpdict already carried as dlpengine/dlpdictionaries above;
+    # `dlpdict` here is the same dictionary set, pipe-delimited per the PDF's own literal example,
+    # vs. `dlpdictionaries`'s comma delimiter -- two independent naming conventions on the same
+    # underlying match, exactly like the original 25's own renaming story).
+    "dlpdict",
+    "dlpdicthitcount",
+    "dlpidentifier",
+    "exempt_dlpidentifier",
+    "dlpmd5",
+    "dlprulename",
+    "trig_dlprulename",
+    "other_dlprulenames",
+    "all_dlprulenames",
+    "dlp_policy_action",
+    "dlp_confirm_justification_msg",
+    # Extranet Application -- never populated (no extranet resource modeled); see
+    # `_apply_wide_fields`'s note.
+    "extranet_name",
+    # File Type Control (filetype/upload_filetype/upload_filename/unscannabletype already carried
+    # above).
+    "ft_rulename",
+    "fileclass",
+    "filename",
+    "filesubtype",
+    "upload_fileclass",
+    "upload_filesubtype",
+    "upload_doctypename",
+    "upload_doc_sub_type",
+    # Forwarding Control
+    "rdr_rulename",
+    "fwd_type",
+    "fwd_gw_name",
+    "fwd_gw_ip",
+    "zpa_app_seg_name",
+    # HTTP Transaction (reqsize/respsize/reqmethod/respcode/referer/ua/host/url/df_hostname/
+    # df_hosthead already carried above -- see the module-level comment on this block).
+    "reqdatasize",
+    "reqhdrsize",
+    "respdatasize",
+    "resphdrsize",
+    "totalsize",
+    "reqversion",
+    "respversion",
+    "refererhost",
+    "uaclass",
+    "ua_token",
+    "contenttype",
+    # Mobile Application -- never populated; docs/11's own documented limitation is that every
+    # human principal gets a desktop device fingerprint (`Org._build_users` ->
+    # `UserAgentMix.sample_desktop`), so there is no mobile traffic in this corpus to describe.
+    "mobappname",
+    "mobappcat",
+    "mobdevtype",
+    # Network (cip/sip/location/srcip_country/dstip_country/is_src_cntry_risky/
+    # is_dst_cntry_risky already carried above).
+    "cintip",
+    "cpubip",
+    "clt_sport",
+    "srv_dport",
+    "proto",
+    "alpnprotocol",
+    "trafficredirectmethod",
+    "userlocationname",
+    # Policy (action/reason already carried above).
+    "ruletype",
+    "rulelabel",
+    "urlfilterrulelabel",
+    "apprulelabel",
+    # SSL/TLS (ssldecrypted/ja4_str already carried above).
+    "ssl_rulename",
+    "externalspr",
+    "keyprotectiontype",
+    # Client Connection
+    "clientsslcipher",
+    "clienttlsversion",
+    "clientsslsessreuse",
+    "cltsslfailreason",
+    "cltsslfailcount",
+    "client_tls_keyex_pqc_offers",
+    "client_tls_keyex_non_pqc_offers",
+    "client_tls_keyex_hybrid_offers",
+    "client_tls_keyex_unknown_offers",
+    "client_tls_sig_pqc_offers",
+    "client_tls_sig_non_pqc_offers",
+    "client_tls_sig_hybrid_offers",
+    "client_tls_sig_unknown_offers",
+    "client_tls_keyex_alg",
+    "client_tls_sig_alg",
+    # Server Connection (srvocspresult/srvcertvalidityperiod/is_ssluntrustedca/is_sslselfsigned/
+    # is_sslexpiredca already carried above).
+    "srvsslcipher",
+    "srvtlsversion",
+    "serversslsessreuse",
+    "srvcertchainvalpass",
+    "srvwildcardcert",
+    "srvcertvalidationtype",
+    "server_tls_keyex_alg",
+    "server_tls_sig_alg",
+    # Threat Protection (riskscore/threatseverity/threatname already carried above; `malwarecat`
+    # deliberately not added here -- see the module-level comment: this file's `threatcategory` is
+    # already that concept under its SIEM-normalized name, and a second literal `malwarecat`
+    # column would describe the same slot twice).
+    "malwareclass",
+    "ai_ml_detect_src",
+    # URL Categorization (urlsupercat/urlcat already carried above).
+    "urlclass",
+    "urlcatmethod",
+    # Zscaler Client Connector Device Information -- catalogued but not wired, same as
+    # `devicemodel`/`devicetype`/`deviceappversion` already are per docs/v1/
+    # zscaler-nss-web-fields.md's own "What this task wired in vs. catalogued only"; computed in
+    # `_device_profile` (stable per user, like the seven wired device fields already are).
+    "devicemodel",
+    "devicetype",
+    "deviceappversion",
+    # Miscellaneous (bypassed_traffic/flow_type already carried above).
+    "ztunnelversion",
+    "external_devid",
+    "bypassed_etime",
+    "recordid",
+    "pcapid",
+    "productversion",
+    "nsssvcip",
+    "eedone",
 )
 
 FIELD_INDEX: Final[dict[str, int]] = {name: i for i, name in enumerate(FIELDS)}
@@ -215,6 +414,27 @@ _MACOS_OS_VERSIONS: Final[tuple[tuple[str, str], ...]] = (
 _IOS_OS_VERSIONS: Final[tuple[str, ...]] = ("17.4.1", "17.6.1", "18.1")
 _ANDROID_OS_VERSIONS: Final[tuple[str, ...]] = ("13", "14", "15")
 
+# `devicemodel` pools, keyed the same way `_WINDOWS_OS_VERSIONS` etc. are — a handful of pinned,
+# real-looking model identifiers, not a continuous random draw (this task, catalogued-only).
+_WINDOWS_MODELS: Final[tuple[str, ...]] = ("20L8S7WC08", "21HH0028US", "8VR91EA", "5397NR6")
+_MACOS_MODELS: Final[tuple[str, ...]] = ("MacBookPro18,3", "MacBookPro18,1", "MacBookAir10,1")
+_IOS_MODELS: Final[tuple[str, ...]] = ("iPhone15,2", "iPhone14,5", "iPhone16,1")
+_ANDROID_MODELS: Final[tuple[str, ...]] = ("SM-G998U", "Pixel 8", "SM-S928U")
+_MODELS_BY_OS_FAMILY: Final[dict[str, tuple[str, ...]]] = {
+    "Windows": _WINDOWS_MODELS,
+    "macOS": _MACOS_MODELS,
+    "iOS": _IOS_MODELS,
+    "Android": _ANDROID_MODELS,
+}
+# Client Connector app version enrolled on the device — a small pool of pinned rollout versions,
+# same "a real fleet has a handful of pinned builds" reasoning as the OS version pools above.
+_CC_APP_VERSIONS: Final[tuple[str, ...]] = ("4.2.0.150", "4.3.1.88", "4.3.2.44", "4.1.0.220")
+_ZTUNNEL_VERSION: Final[str] = "ZTUNNEL_2_0"
+_DEVICETYPE_CLIENT_CONNECTOR: Final[str] = "Zscaler Client Connector"
+# Share of managed devices actually enrolled in an external MDM (`external_devid`) — most are not,
+# in this simulated org.
+_EXTERNAL_DEVID_RATE_DENOM: Final[int] = 5
+
 # A small, generic "shared account" name pool — real-world sources of owner/login divergence
 # (kiosk terminals, contractor loaners, front-desk machines), not a fabricated *other employee*
 # identity. Deterministic ~1-in-32 draw per user (`app.graph.asset_tags`'s `shared-device` tag
@@ -244,13 +464,25 @@ class DeviceProfile:
     principal — `None` for every field when the principal has no Client Connector device at all
     (service accounts: unmanaged/headless hosts, realistic corpus shape in its own right, and
     exactly the traffic `app.enrichment.user_agent_enrichment`'s useragent-derived OS fallback
-    exists to cover, since it has no explicit device field to fall back *from* otherwise)."""
+    exists to cover, since it has no explicit device field to fall back *from* otherwise).
+
+    `model`/`device_type`/`app_version`/`ztunnel_version`/`external_devid` (this task, docs/v1/
+    zscaler-nss-web-fields.md "Zscaler Client Connector Device Information" + "Miscellaneous",
+    catalogued-only) are device-*level* facts, not per-request draws — a laptop's model number
+    does not change between HTTP transactions — so they are computed once here, alongside the
+    five wired device fields, rather than per-event in `_apply_wide_fields`. Same all-`None`
+    convention for service accounts."""
 
     hostname: str | None
     device_name: str | None
     os_type: str | None
     os_version: str | None
     owner: str | None
+    model: str | None = None
+    device_type: str | None = None
+    app_version: str | None = None
+    ztunnel_version: str | None = None
+    external_devid: str | None = None
 
 
 def _device_profile(user: User) -> DeviceProfile:
@@ -281,7 +513,23 @@ def _device_profile(user: User) -> DeviceProfile:
     if h % _SHARED_DEVICE_OWNER_RATE_DENOM == 0:
         owner = _SHARED_DEVICE_OWNER_POOL[h % len(_SHARED_DEVICE_OWNER_POOL)]
 
-    return DeviceProfile(hostname, device_name, devicetype, version, owner)
+    model_pool = _MODELS_BY_OS_FAMILY.get(device.os_family)
+    model = model_pool[h % len(model_pool)] if model_pool else None
+    app_version = _CC_APP_VERSIONS[h % len(_CC_APP_VERSIONS)]
+    external_devid = str(1000 + h % 8999) if h % _EXTERNAL_DEVID_RATE_DENOM == 0 else None
+
+    return DeviceProfile(
+        hostname,
+        device_name,
+        devicetype,
+        version,
+        owner,
+        model=model,
+        device_type=_DEVICETYPE_CLIENT_CONNECTOR,
+        app_version=app_version,
+        ztunnel_version=_ZTUNNEL_VERSION,
+        external_devid=external_devid,
+    )
 
 
 def _apply_device_fields(fields: dict[str, Any], profile: DeviceProfile) -> None:
@@ -297,6 +545,17 @@ def _apply_device_fields(fields: dict[str, Any], profile: DeviceProfile) -> None
     fields["deviceowner"] = profile.owner
     if profile.os_version is not None:
         fields["deviceosversion"] = profile.os_version
+    # Catalogued-only device fields (this task) — same presence discipline as the five above.
+    if profile.model is not None:
+        fields["devicemodel"] = profile.model
+    if profile.device_type is not None:
+        fields["devicetype"] = profile.device_type
+    if profile.app_version is not None:
+        fields["deviceappversion"] = profile.app_version
+    if profile.ztunnel_version is not None:
+        fields["ztunnelversion"] = profile.ztunnel_version
+    if profile.external_devid is not None:
+        fields["external_devid"] = profile.external_devid
 
 
 # ---------------------------------------------------------------------------- categories
@@ -420,6 +679,13 @@ METHODS: Final[tuple[str, ...]] = ("GET", "POST", "HEAD", "PUT", "CONNECT")
 _KIND_API: Final[int] = KINDS.index("api")
 _KIND_DOWNLOAD: Final[int] = KINDS.index("download")
 
+# 403 deliberately excluded (this task, bug fix): `_human_batch` below already produces every
+# 403 through the `is_blocked` branch, paired with `action="Blocked"` by construction. Before this
+# fix, 403 was *also* reachable through this "ordinary" pool at 0.5% weight with no such pairing,
+# so an unblocked, `action="Allowed"` request could carry `status=403` — exactly the
+# `respcode`/`action` contradiction this task's own brief calls out ("respcode 403 must co-occur
+# with action=Blocked"). The 0.005 that 403 carried is folded into 404, the nearest "ordinary
+# client error" code.
 STATUS_CODES: Final[tuple[int, ...]] = (
     200,
     204,
@@ -429,7 +695,6 @@ STATUS_CODES: Final[tuple[int, ...]] = (
     304,
     400,
     401,
-    403,
     404,
     429,
     500,
@@ -445,8 +710,7 @@ _STATUS_WEIGHTS: Final[tuple[float, ...]] = (
     0.040,
     0.005,
     0.004,
-    0.005,
-    0.014,
+    0.019,
     0.001,
     0.006,
     0.004,
@@ -581,10 +845,11 @@ _COUNTRY_NAME_BY_ISO2: Final[dict[str, str]] = {
     "CA": "Canada",
 }
 
-# Countries the benign path never routes through -- reserved for a scenario that deliberately
-# wants `is_dst_cntry_risky = Yes` (this task does not ship one; noted here so the pool exists the
-# day a detector wants to exercise it).
-_RISKY_COUNTRIES: Final[tuple[str, ...]] = ("Russia", "North Korea", "Iran")
+# Countries the benign path never routes through. Exported (this task) so
+# `s09_multi_domain_c2_failover.py` can give its C2 infrastructure a risky-jurisdiction
+# destination -- `is_dst_cntry_risky = Yes` is otherwise never produced anywhere in this corpus,
+# benign or malicious, which would make it an untestable field.
+RISKY_COUNTRIES: Final[tuple[str, ...]] = ("Russia", "North Korea", "Iran")
 
 # Most enterprise TLS-inspecting proxies inspect the large majority of HTTPS traffic; the
 # uninspected minority is real (M365/UCaaS bypass categories, `docs/v1/zscaler-nss-web-fields.md`
@@ -682,6 +947,488 @@ def _fake_hash(seed: str, length: int) -> str:
     for its own hash-suffixed identifier."""
     digits = f"{stable_hash(seed):x}" * 8
     return digits[:length]
+
+
+# ---------------------------------------------------------------------------- full-width catalogue
+#
+# The rest of docs/v1/zscaler-nss-web-fields.md (this task) — ~130 more fields, catalogued but not
+# parsed (module docstring, `FIELDS`'s own comment block). Every value below is *derived* from a
+# field already set on `fields` (or from `ts`/`client_ip`/`company`/`cloudname`/`device_profile`/
+# `seed`, the only extra inputs `_apply_wide_fields` takes) rather than drawn independently — the
+# whole point of this section is that a reviewer who greps two of these columns finds them
+# agreeing, not contradicting each other. `seed` is *reused* per-event entropy the caller already
+# has (`path_seeds[i]`/`seed_l[i]` in the two benign batch loops, a `stable_hash` of the event's
+# own timestamp+host+url in `inject`), not a fresh draw — `_mix` below decorrelates *across
+# fields* from that one integer via cheap arithmetic (no `hashlib` call per field), which matters
+# at ~2M benign events.
+#
+# Every assignment goes through `fields.setdefault`: a scenario's `extra={...}` (e.g. the C2
+# implant's `is_sslselfsigned`/`srvcertvalidityperiod` block) always wins over this function's
+# generic default, exactly like the wired Phase-2 fields already behave.
+
+
+def _mix(seed: int, salt: int) -> int:
+    """Cheap, deterministic decorrelation of one per-event `seed` across many field draws —
+    splitmix64-style integer mixing, no hashing. `seed` alone would make every field in this
+    section move in lockstep (e.g. `alpnprotocol` and `srvwildcardcert` would flip together on
+    the same events); a distinct integer `salt` per field call site breaks that correlation for
+    the cost of a few multiplications instead of a `hashlib.blake2b` call."""
+    x = (seed ^ (salt * 0x9E3779B97F4A7C15)) & 0xFFFFFFFFFFFFFFFF
+    x = (x ^ (x >> 33)) * 0xFF51AFD7ED558CCD & 0xFFFFFFFFFFFFFFFF
+    x = (x ^ (x >> 29)) * 0xC4CEB9FE1A85EC53 & 0xFFFFFFFFFFFFFFFF
+    return x ^ (x >> 32)
+
+
+def _frac(seed: int, salt: int) -> float:
+    """`[0, 1)` from `_mix`, for weighted-draw thresholds below."""
+    return (_mix(seed, salt) % 1_000_000) / 1_000_000.0
+
+
+def _cdf_tuple(weights: Sequence[float]) -> tuple[float, ...]:
+    """Plain-Python cumulative distribution, no numpy array allocation — `_band` below is called
+    several times per event over pools of 2-4 items, where numpy's fixed per-call overhead costs
+    more than it saves at that size (unlike the vectorised `_STATUS_CDF`-style tables above, which
+    apply to whole-batch arrays)."""
+    total = sum(weights)
+    cum: list[float] = []
+    running = 0.0
+    for w in weights:
+        running += w
+        cum.append(running / total)
+    cum[-1] = 1.0
+    return tuple(cum)
+
+
+def _band(seed: int, salt: int, pool: Sequence[str], cdf: Sequence[float]) -> str:
+    u = _frac(seed, salt)
+    for i, edge in enumerate(cdf):
+        if u < edge:
+            return pool[i]
+    return pool[-1]
+
+
+# Day-of-week / month-name tables — hand-rolled, not `strftime`, same locale-independence
+# discipline `_format_ts` already uses for the ISO `datetime` field.
+_WEEKDAY_NAMES: Final[tuple[str, ...]] = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_MONTH_NAMES: Final[tuple[str, ...]] = (
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+)  # fmt: skip
+
+
+def _derive_datetime_tokens(ts: datetime) -> dict[str, str]:
+    """The eleven Date/Time catalogue fields, all read off one `datetime.timestamp` -- so `time`/
+    `ss`/`mm`/`hh`/`dd`/`mth`/`yyyy`/`mon`/`day`/`epochtime` can never disagree with each other or
+    with the `datetime` field they all derive from the same way. `tz` is the constant "GMT"
+    (docs/v1/zscaler-nss-web-fields.md's own example) -- the NSS feed's configured display zone,
+    not a per-event value; this generator's own clock is UTC throughout (`_format_ts`)."""
+    if ts.tzinfo is not UTC:
+        ts = ts.astimezone(UTC)
+    weekday, month = _WEEKDAY_NAMES[ts.weekday()], _MONTH_NAMES[ts.month - 1]
+    return {
+        "time": f"{weekday} {month} {ts.day:02d} {ts.hour:02d}:{ts.minute:02d}:{ts.second:02d} "
+        f"{ts.year:04d}",
+        "tz": "GMT",
+        "ss": f"{ts.second:02d}",
+        "mm": f"{ts.minute:02d}",
+        "hh": f"{ts.hour:02d}",
+        "dd": f"{ts.day:02d}",
+        "mth": f"{ts.month:02d}",
+        "yyyy": f"{ts.year:04d}",
+        "mon": month,
+        "day": weekday,
+        "epochtime": str(int(ts.timestamp())),
+    }
+
+
+# Data Center: one plausible ZScaler Public Service Edge per office country — a deployment fact
+# (which PoP serves this office), not a per-event draw. Keyed off `srcip_country`'s own full-name
+# vocabulary (`_COUNTRY_NAME_BY_ISO2`) so it is always consistent with the country that field
+# already reports.
+_DATA_CENTER_BY_COUNTRY: Final[dict[str, tuple[str, str, str]]] = {
+    "United States": ("US Client Node DC", "San Jose", "United States"),
+    "Ireland": ("EU Client Node DC", "Dublin", "Ireland"),
+    "United Kingdom": ("UK Client Node DC", "London", "United Kingdom"),
+    "Germany": ("EU Client Node DC", "Frankfurt", "Germany"),
+    "Singapore": ("APAC Client Node DC", "Singapore", "Singapore"),
+    "Japan": ("APAC Client Node DC", "Tokyo", "Japan"),
+}
+_DEFAULT_DATA_CENTER: Final[tuple[str, str, str]] = _DATA_CENTER_BY_COUNTRY["United States"]
+
+_FT_CLASS_BY_TYPE: Final[dict[str, tuple[str, str]]] = {
+    "PDF Documents": ("Productivity Files", "pdf"),
+    "Office Documents": ("Productivity Files", "docx"),
+    "Images": ("Multimedia Files", "jpg"),
+    "Archive": ("Archive Files", "zip"),
+    "Archive Files": ("Archive Files", "7z"),
+    "Windows Executables": ("Executables", "exe"),
+}
+
+_TLS_VERSIONS: Final[tuple[str, ...]] = ("TLS1_1", "TLS1_2", "TLS1_3")
+_TLS_VERSION_CDF: Final[tuple[float, ...]] = _cdf_tuple((0.01, 0.34, 0.65))
+_TLS13_CIPHERS: Final[tuple[str, ...]] = (
+    "TLS_AES_128_GCM_SHA256", "TLS_AES_256_GCM_SHA384", "TLS_CHACHA20_POLY1305_SHA256",
+)  # fmt: skip
+_TLS12_CIPHERS: Final[tuple[str, ...]] = (
+    "ECDHE-RSA-AES128-GCM-SHA256", "ECDHE-RSA-AES256-GCM-SHA384", "ECDHE-ECDSA-AES128-GCM-SHA256",
+)  # fmt: skip
+_SESS_REUSE_VALUES: Final[tuple[str, ...]] = ("Yes", "No", "Unknown")
+_SESS_REUSE_CDF: Final[tuple[float, ...]] = _cdf_tuple((0.60, 0.35, 0.05))
+_KEYEX_ALGS: Final[tuple[str, ...]] = ("X25519", "secp256r1")
+_SIG_ALGS: Final[tuple[str, ...]] = ("rsa_pss_rsae_sha256", "ecdsa_secp256r1_sha256")
+_CERT_VALIDATION_TYPES: Final[tuple[str, ...]] = ("DV", "OV", "EV")
+_CERT_VALIDATION_CDF: Final[tuple[float, ...]] = _cdf_tuple((0.85, 0.12, 0.03))
+_NOT_INSPECTED_REASONS: Final[tuple[str, ...]] = (
+    "Not inspected because of client non-browser traffic",
+    "Not inspected because of trusted cert-pinned application",
+    "Not inspected because of exempted URL category",
+)
+_URLCLASS_BY_SUPERCATEGORY: Final[dict[str, str]] = {
+    "Security": "Privacy Risk",
+    "Social and Entertainment": "Bandwidth Loss",
+    "Shopping and Auctions": "Bandwidth Loss",
+}
+_CONTENT_TYPE_BY_EXT: Final[dict[str, str]] = {
+    "js": "application/javascript",
+    "png": "image/png",
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "webp": "image/webp",
+    "gif": "image/gif",
+    "zip": "application/zip",
+    "pkg": "application/octet-stream",
+    "gz": "application/gzip",
+    "m3u8": "application/vnd.apple.mpegurl",
+    "json": "application/json",
+    "html": "text/html",
+}
+# Consumer-facing cloud/policy category names a security-relevant Sanctioned/Unsanctioned verdict
+# actually applies to — matches the same `policy_blockable` categories `_policy_blocked` already
+# treats as "the kind of destination URL filtering has an opinion about" (module docstring).
+_UNSANCTIONED_SUPERCATEGORIES: Final[frozenset[str]] = frozenset(
+    {"Social and Entertainment", "Shopping and Auctions", "Sports"}
+)
+
+
+def _uaclass_and_token(ua: str) -> tuple[str, str]:
+    """`(uaclass, ua_token)` from the already-generated `useragent` string -- no new parameter,
+    since the family is recoverable from the UA itself the same way a real NSS feed's own
+    classifier would read it. Order matters: a Chrome-derived UA (Edge, and Chrome itself) also
+    contains the literal substring `Safari/`, so `Safari` must be checked last."""
+    if "Edg/" in ua:
+        return "Edge", "Microsoft Edge (0.x)"
+    if "Chrome/" in ua and "Chromium" not in ua:
+        return "Chrome", "Google Chrome (0.x)"
+    if "Firefox/" in ua:
+        return "Firefox", "Firefox (0.x)"
+    if "Safari/" in ua:
+        return "Safari", "Safari (0.x)"
+    token = ua.split("/", 1)[0].strip() or "Other"
+    return "Other", f"{token} (0.x)"
+
+
+def _hostname_from(url_like: str | None) -> str | None:
+    if not url_like:
+        return None
+    return url_like.split("://", 1)[-1].split("/", 1)[0] or None
+
+
+def _content_type_for(url: str) -> str:
+    path = url.split("?", 1)[0]
+    tail = path.rsplit("/", 1)[-1]
+    if "." in tail:
+        ext = tail.rsplit(".", 1)[-1].lower()
+        if ext in _CONTENT_TYPE_BY_EXT:
+            return _CONTENT_TYPE_BY_EXT[ext]
+    if "api" in path or "graphql" in path:
+        return "application/json"
+    return "text/html"
+
+
+def _org_company_name(org_name: str) -> str:
+    """`%s{company}` from `Org.name` — the labeled-corpus splits name their orgs in lowercase
+    (`"northwind"`, `"contoso"`, `"fabrikam"`, docs/11), which reads oddly as a company name on
+    the wire; title-case only kicks in when the name has no uppercase of its own, so the default
+    `Org(name="Northwind Trading")` passes through unchanged."""
+    return org_name if any(c.isupper() for c in org_name) else org_name.title()
+
+
+def _org_cloudname(email_domain: str) -> str:
+    """`%s{cloudname}` — a per-tenant Zscaler cloud name, derived from the org's own email domain
+    (`"northwind.example"` -> `"northwind.zscaler.net"`) rather than a shared literal constant, so
+    it stays internally consistent with `login`/`user`'s own domain instead of contradicting it."""
+    return f"{email_domain.split('.', 1)[0]}.zscaler.net"
+
+
+def _apply_wide_fields(
+    fields: dict[str, Any],
+    *,
+    ts: datetime,
+    client_ip: str | None,
+    company: str,
+    cloudname: str,
+    device_profile: DeviceProfile,
+    seed: int,
+) -> None:
+    """Fill every full-width catalogue field onto `fields`, via `setdefault` throughout so a
+    scenario's own `extra={...}` always wins (see the section docstring above)."""
+    for key, value in _derive_datetime_tokens(ts).items():
+        fields.setdefault(key, value)
+
+    fields.setdefault("company", company)
+    fields.setdefault("cloudname", cloudname)
+
+    # Network: `cip`/`cintip`/`cpubip` are documented as "same address unless an additional
+    # internal-NAT hop is visible" -- this generator models exactly one client-visible address per
+    # event (`client_ip`, already either an office egress or a home broadband IP, both already
+    # "public-looking" per `org.py`/`realism.py`'s own TEST-NET/consumer-ISP addressing), so there
+    # is no second, more-internal hop for `cintip` to reveal and no separate NAT layer for
+    # `cpubip` to differ across -- all three are the same value here, which is the documented
+    # degenerate case, not an omission.
+    fields.setdefault("cintip", client_ip)
+    fields.setdefault("cpubip", client_ip)
+    fields.setdefault("clt_sport", str(1024 + _mix(seed, 1) % 64511))
+    fields.setdefault("srv_dport", "443")
+    fields.setdefault("proto", "HTTP")
+    fields.setdefault("alpnprotocol", "h2" if _frac(seed, 2) < 0.70 else "http/1.1")
+    device_present = device_profile.hostname is not None
+    fields.setdefault(
+        "trafficredirectmethod", "Zscaler Client Connector" if device_present else "PAC"
+    )
+    # `userlocationname`: Zero Trust Browser origination point -- this org never routes through
+    # one, so always `None` (this task's own explicit requirement: "None unless Zero Trust
+    # Browser").
+    fields.setdefault("userlocationname", None)
+
+    # Bandwidth Control: never throttled in this corpus -- a deliberate simplification (like
+    # `srvocspresult`'s "always Good in benign" above), not a per-tenant policy this generator
+    # models. `bwthrottle == "No"` and both throttled-size fields at `0` is the only internally
+    # consistent combination, so this can never contradict itself.
+    fields.setdefault("bwthrottle", "No")
+    fields.setdefault("throttlereqsize", "0")
+    fields.setdefault("throttlerespsize", "0")
+    fields.setdefault("txn_delay_req", str(5 + _mix(seed, 3) % 30))
+    fields.setdefault("txn_delay_resp", str(8 + _mix(seed, 4) % 40))
+
+    # Cloud Application
+    appname = fields.get("appname")
+    is_cloud_app = appname not in (None, "General Browsing")
+    riskscore = int(fields.get("riskscore") or 0)
+    urlsupercategory = fields.get("urlsupercategory")
+    if is_cloud_app:
+        fields.setdefault("app_risk_score", str(max(1, min(5, 1 + riskscore // 25))))
+        method = fields.get("requestmethod")
+        url = str(fields.get("url") or "")
+        download_ext = url.split("?", 1)[0].rsplit(".", 1)[-1].lower()
+        if method == "POST":
+            fields.setdefault("activity", "Upload")
+        elif download_ext in {"zip", "pkg", "gz", "exe"}:
+            fields.setdefault("activity", "Download")
+        else:
+            fields.setdefault("activity", "View")
+        fields.setdefault("app_status", "Sanctioned")
+    else:
+        fields.setdefault(
+            "app_status",
+            "Unsanctioned" if urlsupercategory in _UNSANCTIONED_SUPERCATEGORIES else "N/A",
+        )
+    # `inst_level*` (cloud-console org/project/resource identity): only meaningful for an actual
+    # console session, and only a minority of even those calls carry it — most AWS Console
+    # traffic in this corpus is ordinary page/API traffic, not a resource-scoped console action.
+    if fields.get("host") == "amazonaws.com" and _frac(seed, 5) < 0.20:
+        acct = 100_000_000_000 + _mix(seed, 6) % 900_000_000_000
+        fields.setdefault("inst_level1_type", "ORG")
+        fields.setdefault("inst_level1_id", f"o-{_mix(seed, 7) % 10**10:010d}")
+        fields.setdefault("inst_level1_name", f"{company.lower()}-org")
+        fields.setdefault("inst_level2_type", "ACCOUNT")
+        fields.setdefault("inst_level2_id", str(acct))
+        fields.setdefault("inst_level2_name", f"{company.lower()}-prod")
+        fields.setdefault("inst_level3_type", "RESOURCE_TYPE")
+        fields.setdefault("inst_level3_id", "S3")
+    # `prompt_req`/`prompt_class` never populated: no generative-AI SaaS app is in `org.py`'s
+    # `DEFAULT_SAAS_APPS` catalogue, so there is no traffic this field could honestly describe —
+    # and log content is untrusted, attacker-controllable input (CLAUDE.md rule 3); fabricating a
+    # plausible-looking prompt string here would be inventing exactly the kind of data that
+    # shouldn't be synthesized without a real source behind it.
+
+    # Data Center
+    dc = _DATA_CENTER_BY_COUNTRY.get(str(fields.get("srcip_country")), _DEFAULT_DATA_CENTER)
+    fields.setdefault("datacenter", dc[0])
+    fields.setdefault("datacentercity", dc[1])
+    fields.setdefault("datacentercountry", dc[2])
+
+    # Data Loss Prevention
+    dlpdictionaries = fields.get("dlpdictionaries")
+    if dlpdictionaries:
+        names = [n.strip() for n in str(dlpdictionaries).split(",") if n.strip()]
+        fields.setdefault("dlpdict", "|".join(names))
+        fields.setdefault(
+            "dlpdicthitcount",
+            "|".join(str(1 + _mix(seed, 8 + i) % 9) for i in range(len(names))),
+        )
+        fields.setdefault("dlpmd5", _fake_hash(f"{seed}|dlpmd5", 32))
+        # `dlpidentifier` XOR `exempt_dlpidentifier` — the doc is explicit these never co-occur
+        # (one is "not populated if the other is").
+        dlp_id = str(6_000_000_000_000_000_000 + _mix(seed, 9) % 900_000_000_000_000_000)
+        if _frac(seed, 10) < 0.10:
+            fields.setdefault("exempt_dlpidentifier", dlp_id)
+        else:
+            fields.setdefault("dlpidentifier", dlp_id)
+        fields.setdefault("trig_dlprulename", "DLP_Rule_1")
+        if fields.get("action") == "Allowed":
+            fields.setdefault("dlprulename", "DLP_Rule_1")
+        fields.setdefault("all_dlprulenames", "[DLP_Rule_1]")
+        fields.setdefault("other_dlprulenames", "[]")
+        fields.setdefault("dlp_policy_action", "Incident Reported")
+    # `extranet_name`/`dlp_confirm_justification_msg` never populated: no extranet resource and no
+    # Confirm-action DLP rule is modeled in this corpus.
+
+    # File Type Control
+    filetype = fields.get("filetype")
+    if filetype:
+        fileclass, ext = _FT_CLASS_BY_TYPE.get(filetype, ("Uncategorized", "bin"))
+        fields.setdefault("fileclass", fileclass)
+        fields.setdefault("filename", f"download_{seed}.{ext}")
+        fields.setdefault("filesubtype", ext)
+        fields.setdefault("ft_rulename", "File_Type_1")
+    upload_filetype = fields.get("upload_filetype")
+    if upload_filetype:
+        upload_fileclass, uext = _FT_CLASS_BY_TYPE.get(upload_filetype, ("Uncategorized", "bin"))
+        fields.setdefault("upload_fileclass", upload_fileclass)
+        fields.setdefault("upload_filesubtype", uext)
+        fields.setdefault("ft_rulename", "File_Type_1")
+        if upload_fileclass == "Productivity Files":
+            fields.setdefault("upload_doctypename", "Corporate Finance")
+            fields.setdefault("upload_doc_sub_type", "Reports")
+
+    # Forwarding Control
+    is_zpa = fields.get("flow_type") == _FLOW_ZPA
+    fields.setdefault("fwd_type", "ZPA" if is_zpa else "Direct")
+    if is_zpa:
+        seg = str(appname or "app").replace(" ", "_")
+        fields.setdefault("zpa_app_seg_name", f"ZPA_{seg}_segment")
+    # `rdr_rulename`/`fwd_gw_name`/`fwd_gw_ip` never populated: no forwarding-gateway chaining is
+    # modeled (this corpus's traffic goes `Direct` or `ZPA`, never `Proxy Chaining`/`Drop`).
+
+    # Policy — "Block rules only" fields (doc's own words), so `None` on anything Allowed.
+    is_blocked = fields.get("action") == "Blocked"
+    if is_blocked:
+        is_dlp_block = bool(fields.get("dlpengine"))
+        fields.setdefault("ruletype", "Data Loss Prevention" if is_dlp_block else "URL Filtering")
+        rulelabel = "DLP_Block_1" if is_dlp_block else "URL_Filtering_1"
+        fields.setdefault("rulelabel", rulelabel)
+        if not is_dlp_block:
+            fields.setdefault("urlfilterrulelabel", rulelabel)
+    # `apprulelabel` never populated: no cloud-app-specific block rule is modeled.
+
+    # SSL/TLS + Client/Server Connection — the client<->Zscaler and Zscaler<->server TLS legs both
+    # only exist when the transaction is actually Client-Connector-proxied; `bypassed_traffic == 1`
+    # traffic goes direct and never terminates on Zscaler's TLS stack at all.
+    bypassed = int(fields.get("bypassed_traffic") or 0) == 1
+    ssldecrypted = fields.get("ssldecrypted")
+    if not bypassed:
+        tlsver = _band(seed, 11, _TLS_VERSIONS, _TLS_VERSION_CDF)
+        fields.setdefault("clienttlsversion", tlsver)
+        fields.setdefault("srvtlsversion", tlsver)
+        ciphers = _TLS13_CIPHERS if tlsver == "TLS1_3" else _TLS12_CIPHERS
+        fields.setdefault("clientsslcipher", ciphers[_mix(seed, 12) % len(ciphers)])
+        fields.setdefault("srvsslcipher", ciphers[_mix(seed, 13) % len(ciphers)])
+        fields.setdefault(
+            "clientsslsessreuse", _band(seed, 14, _SESS_REUSE_VALUES, _SESS_REUSE_CDF)
+        )
+        fields.setdefault(
+            "serversslsessreuse", _band(seed, 15, _SESS_REUSE_VALUES, _SESS_REUSE_CDF)
+        )
+        fields.setdefault("cltsslfailcount", "0")
+        hybrid = 1 if _frac(seed, 16) < 0.30 else 0
+        fields.setdefault("client_tls_keyex_pqc_offers", "0")
+        fields.setdefault("client_tls_keyex_non_pqc_offers", "1")
+        fields.setdefault("client_tls_keyex_hybrid_offers", str(hybrid))
+        fields.setdefault("client_tls_keyex_unknown_offers", "0")
+        fields.setdefault("client_tls_sig_pqc_offers", "0")
+        fields.setdefault("client_tls_sig_non_pqc_offers", "1")
+        fields.setdefault("client_tls_sig_hybrid_offers", "0")
+        fields.setdefault("client_tls_sig_unknown_offers", "0")
+        keyex = "X25519MLKEM768" if hybrid else _KEYEX_ALGS[_mix(seed, 17) % len(_KEYEX_ALGS)]
+        fields.setdefault("client_tls_keyex_alg", keyex)
+        fields.setdefault("server_tls_keyex_alg", _KEYEX_ALGS[_mix(seed, 18) % len(_KEYEX_ALGS)])
+        fields.setdefault("client_tls_sig_alg", _SIG_ALGS[_mix(seed, 19) % len(_SIG_ALGS)])
+        fields.setdefault("server_tls_sig_alg", _SIG_ALGS[_mix(seed, 20) % len(_SIG_ALGS)])
+
+        chain_fails = (
+            fields.get("is_sslselfsigned") == "Yes" or fields.get("is_ssluntrustedca") == "Fail"
+        )
+        fields.setdefault("srvcertchainvalpass", "Fail" if chain_fails else "Pass")
+        fields.setdefault("srvwildcardcert", "Yes" if _frac(seed, 21) < 0.15 else "No")
+        fields.setdefault(
+            "srvcertvalidationtype",
+            _band(seed, 22, _CERT_VALIDATION_TYPES, _CERT_VALIDATION_CDF),
+        )
+
+        if ssldecrypted == "Yes":
+            fields.setdefault("ssl_rulename", "SSL_Inspection_1")
+            blocked_security = is_blocked and urlsupercategory == "Security"
+            fields.setdefault("externalspr", "Blocked" if blocked_security else "Inspected")
+            fields.setdefault("keyprotectiontype", "Software Protection")
+        elif ssldecrypted == "No":
+            fields.setdefault("ssl_rulename", "SSL_Bypass_1")
+            fields.setdefault(
+                "externalspr", _NOT_INSPECTED_REASONS[_mix(seed, 23) % len(_NOT_INSPECTED_REASONS)]
+            )
+    # `cltsslfailreason` never populated: no client handshake failures are modeled (benign path
+    # always completes its TLS handshake).
+
+    # Threat Protection
+    threatcategory = fields.get("threatcategory")
+    if threatcategory == "Botnet":
+        fields.setdefault("malwareclass", "Botnet")
+    elif fields.get("threatname"):
+        fields.setdefault("malwareclass", "Malware")
+    if fields.get("urlcategory") == "Phishing":
+        fields.setdefault("ai_ml_detect_src", "AI/ML - ATP - Phishing")
+
+    # URL Categorization
+    fields.setdefault(
+        "urlclass", _URLCLASS_BY_SUPERCATEGORY.get(urlsupercategory, "General Surfing")
+    )
+    urlcategory = fields.get("urlcategory")
+    if urlcategory in ("Newly Registered and Revived Domains", "Miscellaneous or Unknown"):
+        fields.setdefault("urlcatmethod", "AI/ML-based content categorization")
+    else:
+        fields.setdefault("urlcatmethod", "Database A" if _mix(seed, 24) % 2 == 0 else "Database B")
+
+    # HTTP Transaction
+    reqsize = int(fields.get("requestsize") or 0)
+    respsize = int(fields.get("responsesize") or 0)
+    reqhdrsize = min(reqsize, 150 + _mix(seed, 25) % 450)
+    resphdrsize = min(respsize, 150 + _mix(seed, 26) % 750)
+    fields.setdefault("reqhdrsize", str(reqhdrsize))
+    fields.setdefault("reqdatasize", str(reqsize - reqhdrsize))
+    fields.setdefault("resphdrsize", str(resphdrsize))
+    fields.setdefault("respdatasize", str(respsize - resphdrsize))
+    # `%d{totalsize}` = reqsize + respsize (this task's own explicit invariant); exact integer
+    # arithmetic on the same two fields the emitter already agreed on `status`/`action` from, so
+    # this can never drift out of consistency with them.
+    fields.setdefault("totalsize", str(reqsize + respsize))
+    fields.setdefault("reqversion", "1.1")
+    fields.setdefault("respversion", "1.1")
+    fields.setdefault("refererhost", _hostname_from(fields.get("referer")))
+    ua = str(fields.get("useragent") or "")
+    uaclass, ua_token = _uaclass_and_token(ua)
+    fields.setdefault("uaclass", uaclass)
+    fields.setdefault("ua_token", ua_token)
+    fields.setdefault("contenttype", _content_type_for(str(fields.get("url") or "/")))
+
+    # Miscellaneous
+    fields.setdefault("recordid", str(_mix(seed, 27) % 10**12))
+    fields.setdefault("productversion", "6.1.245.10021_01")
+    fields.setdefault("nsssvcip", "10.10.102.30")
+    fields.setdefault("eedone", "No")
+    if int(fields.get("bypassed_traffic") or 0) == 1:
+        fields.setdefault(
+            "bypassed_etime", fields.get("time") or _derive_datetime_tokens(ts)["time"]
+        )
+    if fields.get("threatname"):
+        fields.setdefault("pcapid", f"{_mix(seed, 28) % 90_000_000:08d}/web/{seed:016x}.pcap")
 
 
 # ---------------------------------------------------------------------------- serialization
@@ -879,6 +1626,14 @@ class ZScalerEmitter:
             "location": location,
             "department": department,
         }
+        # Bug fix (this task): every other event-construction path in this module sets
+        # `threatseverity` from the same `riskscore` it just assigned (`_threat_severity`,
+        # docs/v1/zscaler-nss-web-fields.md's documented riskscore bands) — this one, the only
+        # path every scenario-crafted event goes through (`inject` -> `build_event`), never did,
+        # so a non-blended scenario setting `riskscore=98` (e.g. `s01_c2_beaconing`'s `_C2_THREAT`)
+        # silently shipped `threatseverity=None` next to it. A reviewer grepping those two columns
+        # on exactly that traffic would have found them contradicting each other.
+        fields["threatseverity"] = _threat_severity(int(fields["riskscore"]))
         for key, value in (
             ("threatname", threatname),
             ("threatcategory", threatcategory),
@@ -946,6 +1701,20 @@ class ZScalerEmitter:
             src_ip=src_ip or user.office_ip,
             user_agent=user_agent or user.device.user_agent,
             **kwargs,
+        )
+        # Full-width catalogue fields (this task) — every scenario-injected event goes through
+        # this one call site, so wiring it in here (rather than in each of the ten scenario
+        # modules) is what keeps a malicious event "indistinguishable... on every field the
+        # scenario is not deliberately manipulating" (this method's own docstring, above) true for
+        # the ~130 catalogued-only fields too, not just the 52 the parser reads.
+        _apply_wide_fields(
+            record.fields,
+            ts=ts,
+            client_ip=record.src_ip,
+            company=_org_company_name(ctx.org.name),
+            cloudname=_org_cloudname(ctx.org.email_domain),
+            device_profile=profile,
+            seed=stable_hash(f"{ts.isoformat()}|{host}|{record.fields.get('url', '')}"),
         )
         return ctx.add(record, malicious=malicious)
 
@@ -1094,6 +1863,10 @@ class ZScalerEmitter:
         ssl_inspected = (np_rng.random(total) >= _SSL_NOT_INSPECTED_RATE).tolist()
         browser_ja4_cohort = f"{user.device.browser_family}|{user.device.os_family}"
         src_country = _country_for_office(user.office.country)
+        # Full-width catalogue fields (this task): org-level constants, computed once per batch
+        # rather than per event.
+        company = _org_company_name(ctx.org.name)
+        cloudname = _org_cloudname(ctx.org.email_domain)
 
         for i in range(min(total, n)):
             host = hosts[i]
@@ -1140,7 +1913,12 @@ class ZScalerEmitter:
             # fields" section above for the helper functions and the reasoning behind each rate.
             ja4_cohort = automation_ua if (automated[i] and automation_ua) else browser_ja4_cohort
             fields["ja4_str"] = _ja4_fingerprint(ja4_cohort)
-            inspected = ssl_inspected[i]
+            # Bug fix (this task): `bypassed[i]` and `ssl_inspected[i]` were drawn independently,
+            # so a request could land `bypassed_traffic=1` (skips the Client Connector, and with
+            # it Zscaler's TLS termination, entirely) *and* `ssldecrypted="Yes"` at the same
+            # time — a transaction Zscaler never saw cannot also be one it SSL-inspected. Bypassed
+            # traffic is never inspected, full stop.
+            inspected = ssl_inspected[i] and not bypassed[i]
             fields["ssldecrypted"] = "Yes" if inspected else "No"
             fields["srcip_country"] = src_country
             fields["is_src_cntry_risky"] = "No"
@@ -1161,8 +1939,18 @@ class ZScalerEmitter:
                     fields["sha256"] = _fake_hash(f"{host}|{seed}|sha256", 64)
                     fields["bamd5"] = _fake_hash(f"{host}|{seed}|md5", 32)
 
+            event_ts = datetime.fromtimestamp(ts_l[i], tz=UTC)
+            _apply_wide_fields(
+                fields,
+                ts=event_ts,
+                client_ip=ips[i],
+                company=company,
+                cloudname=cloudname,
+                device_profile=device_profile,
+                seed=seed,
+            )
             yield EventRecord(
-                ts=datetime.fromtimestamp(ts_l[i], tz=UTC),
+                ts=event_ts,
                 source=SourceType.ZSCALER,
                 principal=principal,
                 fields=fields,
@@ -1328,6 +2116,9 @@ class ZScalerEmitter:
         ssl_inspected = (np_rng.random(total) >= _SSL_NOT_INSPECTED_RATE).tolist()
         ja4_cohort = user.device.browser_family
         src_country = _country_for_office(user.office.country)
+        # Full-width catalogue fields (this task): org-level constants, computed once per batch.
+        company = _org_company_name(ctx.org.name)
+        cloudname = _org_cloudname(ctx.org.email_domain)
         for i in range(total):
             host = domains[host_l[i]]
             cat = catalog.category(host)
@@ -1380,8 +2171,18 @@ class ZScalerEmitter:
                     fields["sha256"] = _fake_hash(f"{host}|{seed}|sha256", 64)
                     fields["bamd5"] = _fake_hash(f"{host}|{seed}|md5", 32)
 
+            event_ts = datetime.fromtimestamp(ts_l[i], tz=UTC)
+            _apply_wide_fields(
+                fields,
+                ts=event_ts,
+                client_ip=client_ip,
+                company=company,
+                cloudname=cloudname,
+                device_profile=device_profile,
+                seed=seed,
+            )
             yield EventRecord(
-                ts=datetime.fromtimestamp(ts_l[i], tz=UTC),
+                ts=event_ts,
                 source=SourceType.ZSCALER,
                 principal=principal,
                 fields=fields,

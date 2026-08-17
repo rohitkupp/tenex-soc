@@ -106,7 +106,13 @@ def render_sigma_suppression_yaml(
             "condition": block_name,
         },
         "level": _SIGMA_LEVEL,
-        "tags": [f"attack.t{t.lower()}" for t in mitre_techniques] if mitre_techniques else [],
+        # `attack.` and not `attack.t`: `_extract_technique_ids` yields canonical ids that already
+        # carry their own `T` (`T1105`), so prefixing `attack.t` produced `attack.tt1105`. That is
+        # the exact inverse of the over-strip this same milestone fixed in
+        # `app.detection.sigma.rule.SigmaRule.mitre_techniques`, and it round-tripped only because
+        # both ends were wrong in opposite directions -- a generated rule tagged `attack.tt1105`
+        # fails `_is_technique`, so the technique silently vanished on reload.
+        "tags": [f"attack.{t.lower()}" for t in mitre_techniques] if mitre_techniques else [],
         "entity": {"type": target.entity_type, "by": field},
     }
     return yaml.safe_dump(payload, sort_keys=False, default_flow_style=False)

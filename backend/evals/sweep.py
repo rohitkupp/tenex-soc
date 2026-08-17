@@ -4,7 +4,7 @@ knob, swept via `python -m datagen sweep` (the generator docs/11 specifies; that
 docstring is explicit its job stops at generating material for a curve — "actually measuring
 detector recall against them is the eval harness's job").
 
-Runs entirely offline, no DB: `detect_beaconing` (`app.detection.signal.beaconing`) is a pure
+Runs entirely offline, no DB: `detect_beaconing` (`app.detection.evidence.beaconing`) is a pure
 function of `Sequence[EventRow]`, and `EventRow.id` is deliberately set to each line's
 `raw_line_no` rather than a real `events.id` — the same substitution
 `app.detection.ml.events.MLEvent.line_no` already makes for the L3 harness, safe here for the
@@ -27,8 +27,8 @@ from pathlib import Path
 from typing import Any
 
 from app.core.logging import get_logger
-from app.detection.signal.beaconing import detect_beaconing
-from app.detection.signal.events_dao import EventRow
+from app.detection.evidence.beaconing import detect_beaconing
+from app.detection.evidence.events_dao import EventRow
 from app.parsers.base import ParseFailure
 from app.parsers.registry import iter_events, make_parser
 from evals.config import SWEEP_EVENTS, SWEEP_PARAM, SWEEP_RANGE, SWEEP_SCENARIO

@@ -24,7 +24,7 @@ different questions it is being asked to answer.
 
 The detector **registry** (which keys exist to report a zero-row for, even when a detector never
 fired) is read live from each layer's own source of truth — `app.detection.sigma.runner.
-load_rules()`, `app.detection.signal.constants`, `app.detection.ml.detect`'s exported model keys,
+load_rules()`, `app.detection.evidence.constants`, `app.detection.ml.detect`'s exported model keys,
 `app.graph.features.GRAPH_FEATURE_NAMES` — so this table is "automatic" per docs/12, not
 hand-maintained, and a detector added or removed in any of those (concurrently-developed) packages
 is picked up here without an edit.
@@ -64,7 +64,7 @@ def known_detector_registry() -> dict[str, str]:
         log.warning("detection.registry.sigma_unavailable", exc_info=True)
 
     try:
-        from app.detection.signal import constants as sig_constants
+        from app.detection.evidence import constants as sig_constants
 
         for name in (
             "SIGNAL_BEACONING",

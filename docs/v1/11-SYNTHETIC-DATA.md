@@ -42,6 +42,58 @@ All ZScaler NSS Web format — there is no Okta or CloudTrail emitter to maintai
 Benign corpus and eval scenarios use **different seeds and different simulated orgs**. Training
 on data that shares a generator seed with the test set is the classic way to fake good numbers.
 
+## Full width, and the 25/52-of-181 extraction contract
+
+Every ZScaler line this generator writes carries **all 181 fields**
+`docs/v1/zscaler-nss-web-fields.md` documents from the NSS Web Logs feed reference, not just the
+ones the application reads. `app/parsers/zscaler.py` extracts exactly 52 of them by name
+(`bind_header` rebinds column order from the file's own header row, so position within the row
+never matters, only presence) — docs/03's original 25, plus 27 more promoted across two later
+changes (7 device/asset fields, 20 detection-relevant TLS/threat/network fields). The other ~129
+are catalogued in the field-reference doc and generated with realistic, internally consistent
+values, but deliberately **not** parsed: CLAUDE.md's "do not add a tag just because a field
+exists" applies equally to a raw field with no tag, detector, or citation behind it yet.
+
+The point of carrying the full width in the *generator* while the *parser* stays narrow is to make
+the extraction step itself testable. A real customer's NSS feed is configured with however many
+fields their admin turned on — commonly upward of a hundred — and a parser that positions its 52
+fields correctly on a 32-column test file can still mis-position on a 181-column one if extraction
+were ever accidentally positional rather than header-driven. `backend/tests/
+test_zscaler_full_width_catalogue.py` is the regression test: it generates through this full-width
+path, parses with the real `ZScalerParser`, and specifically checks fields from the *last five*
+columns (`recordid`, `pcapid`, `productversion`, `nsssvcip`, `eedone`) against the values the
+generator wrote there — the position in the row a field-order bug would show up first and, before
+that test existed, nowhere else.
+
+**Internal consistency, not just breadth.** A wide row that contradicts itself between two columns
+(`totalsize` not equal to `reqsize + respsize`, a `403` status next to `action=Allowed`,
+`threatseverity` disagreeing with the `riskscore` band that is supposed to set it) reads as fake
+data the moment a reviewer greps two columns side by side. Every full-width field is *derived*
+from a field the emitter already set (`_apply_wide_fields` in `datagen/emitters/zscaler.py`) —
+`reqhdrsize + reqdatasize == requestsize` by construction, `dlpdicthitcount` always carries one
+`|`-delimited count per entry in `dlpdict`, `dlpidentifier`/`exempt_dlpidentifier` are enforced
+mutually exclusive, `cintip`/`cpubip` mirror `clientip` (this generator models no additional
+internal-NAT hop, stated rather than silently assumed) — never drawn independently. Two real bugs
+surfaced and were fixed while wiring this up, both pre-existing rather than introduced by the
+widening itself: `status=403` was reachable through the *ordinary* status-code pool as well as the
+URL-filter-block path, so an unblocked request could carry `action=Allowed` next to it (`403` is
+now block-only); and `bypassed_traffic`/`ssldecrypted` were drawn independently, so a request could
+claim to have both skipped the Client Connector *and* been SSL-inspected by it in the same line.
+
+Every documented enum stays inside its documented value set (`flow_type`, `deviceostype`,
+TLS versions, certificate validity bands, ...); a field the doc says is conditional stays
+conditional (`df_hostname`/`df_hosthead` only on a domain-fronting mismatch — never populated by
+this generator's benign path, by design; `userlocationname` only for Zero Trust Browser traffic,
+which this org never routes through, so always absent). `is_dst_cntry_risky = Yes` is otherwise
+unreachable anywhere in this corpus — `s09_multi_domain_c2_failover.py`'s C2 implant traffic is
+the one place it's wired in (a fixed draw from `RISKY_COUNTRIES`, held constant across every
+sibling domain the same way its JA4 fingerprint is). The DLP-dictionary and encrypted-archive
+fields (`s02_data_exfiltration.py`'s `_DLP_FIELDS`) only populate when that scenario is
+constructed with `blend_with_normal_traffic=False` — every call site in the labeled corpus and the
+CLI uses the default `True`, so that code path is real and tested
+(`test_zscaler_full_width_catalogue.py` exercises it directly) but does not appear in the
+committed corpus/samples files; a reviewer grepping those files for `dlpdict` will not find it.
+
 ## Realism grounding
 
 The synthetic-data circularity problem is real: a model trained on our generator learns our

@@ -68,7 +68,9 @@ class Settings(BaseSettings):
 
     # --- LLM ---
     anthropic_api_key: SecretStr = SecretStr("")
-    anthropic_model: str = "claude-opus-5"
+    # Must be a key in `app.agent.client._MODEL_RATES` — pricing and the prompt-cache floor are
+    # both model-specific there, and an id absent from that table raises rather than guessing.
+    anthropic_model: str = "claude-sonnet-5"
     max_triage_incidents: int = 15
     agent_max_tool_calls: int = 8
     agent_timeout_seconds: int = 120

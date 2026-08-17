@@ -75,6 +75,19 @@ _DLP_FIELDS: Final[dict[str, Any]] = {
     "dlpengine": "Corporate Confidential",
     "dlpdictionaries": "Source Code,PII,Financial Records",
     "riskscore": 85,
+    # Encrypted-archive staging (docs/v1/zscaler-nss-web-fields.md "File Type Control", this
+    # task's full-width-catalogue brief): a real exfil payload is almost always a password-
+    # protected/encrypted archive precisely so DLP content inspection can't look inside it --
+    # `unscannabletype` is the one field whose documented example ("Encrypted File") describes
+    # exactly that. `upload_filetype` stays a plain, already-supported category ("Archive Files")
+    # so `_apply_wide_fields`' `_FT_CLASS_BY_TYPE` table doesn't need an invented entry for it.
+    # None of the three is a named `build_event` parameter (same as `s01_c2_beaconing`'s
+    # `_C2_FILE_HASH`), so they go through the `extra={...}` catch-all, not a top-level kwarg.
+    "extra": {
+        "upload_filetype": "Archive Files",
+        "upload_filename": "financial_records_backup.7z",
+        "unscannabletype": "Encrypted File",
+    },
 }
 
 

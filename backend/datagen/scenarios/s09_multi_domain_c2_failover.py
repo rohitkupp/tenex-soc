@@ -30,7 +30,7 @@ import math
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any, Final
 
-from datagen.emitters.zscaler import ZScalerEmitter
+from datagen.emitters.zscaler import RISKY_COUNTRIES, ZScalerEmitter
 from datagen.scenarios import register_scenario
 from datagen.types import (
     GRAPH_SHARED_INFRA,
@@ -137,6 +137,13 @@ class MultiDomainFailoverScenario(Scenario):
         # emits `is_sslselfsigned=Yes`/`srvcertvalidityperiod=Short` at all, so this is a genuine,
         # not merely rare, contrast).
         implant_ja4 = f"t13d191000_{rng.hex_token(6)}_{rng.hex_token(6)}"
+        # Risky-country egress (docs/v1/zscaler-nss-web-fields.md "Network", this task): the
+        # benign path never routes anywhere in `RISKY_COUNTRIES` (`_dst_country_for`'s own pool is
+        # US/Ireland/Germany/Singapore/Japan/UK), so a fixed draw from it here, held constant
+        # across every sibling domain the same way `implant_ja4` is, is what makes
+        # `is_dst_cntry_risky = Yes` a real, testable field in this corpus instead of a dead enum
+        # value nothing ever emits.
+        implant_country = rng.choice(RISKY_COUNTRIES)
         implant_tls_extra: dict[str, Any] = {
             "ja4_str": implant_ja4,
             "ssldecrypted": "Yes",
@@ -145,6 +152,8 @@ class MultiDomainFailoverScenario(Scenario):
             "is_ssluntrustedca": "Fail",
             "srvcertvalidityperiod": "Short (0-3 months)",
             "srvocspresult": "Unknown",
+            "dstip_country": implant_country,
+            "is_dst_cntry_risky": "Yes",
         }
 
         est_span_s = self.n_domains * (
