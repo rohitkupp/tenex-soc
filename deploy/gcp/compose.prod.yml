@@ -24,6 +24,18 @@ x-worker-env: &worker-env
   S3_BUCKET: tenex-uploads
   ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
   ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-opus-5}
+  # The two spend controls. Both are in docker-compose.yml and were missing here, so production
+  # ran on code defaults and the cap was *unsettable*: putting MAX_TRIAGE_INCIDENTS in the VM's
+  # .env did nothing, because nothing passed it into the container. That is how a verification
+  # run with an intended cap of 2 triaged until the account's credit balance hit zero -- $5.45
+  # over 410k input tokens, ending in a 400 the retry policy then attempted three more times.
+  #
+  # Keep these defaults identical to docker-compose.yml. Drift between the two files is the bug
+  # itself, not the values. Note what the ceiling costs before raising it: measured on
+  # claude-opus-5, one triaged incident runs roughly $0.70-$2.70 depending on how many turns the
+  # Analyst spends investigating, so 15 is a ~$10-40 upload.
+  MAX_TRIAGE_INCIDENTS: ${MAX_TRIAGE_INCIDENTS:-15}
+  AGENT_MAX_TOOL_CALLS: ${AGENT_MAX_TOOL_CALLS:-8}
   JWT_SECRET: ${JWT_SECRET:?}
   PSEUDONYM_SALT: ${PSEUDONYM_SALT:?}
   # M14. Both are in `_SENTINELS` (app/core/config.py), so the app refuses to boot outside `local`
