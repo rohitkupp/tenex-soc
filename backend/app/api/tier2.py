@@ -37,7 +37,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.core.db import get_db
+from app.core.db import get_db, get_tier2_db
 from app.core.security import CurrentUser, require_user
 from app.schemas.tier2 import (
     DetectorReliabilityEntryOut,
@@ -68,7 +68,7 @@ router = APIRouter()
 
 @router.get("/tier2/overview", response_model=Tier2OverviewResponse)
 def get_tier2_overview(
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_tier2_db)],
     current: Annotated[CurrentUser, Depends(require_user)],
 ) -> Tier2OverviewResponse:
     overview = get_overview(db)
@@ -90,7 +90,7 @@ def get_tier2_overview(
 
 @router.get("/tier2/indicator-overlap", response_model=IndicatorOverlapResponse)
 def get_indicator_overlap(
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_tier2_db)],
     current: Annotated[CurrentUser, Depends(require_user)],
     min_tenants: Annotated[int, Query(ge=2, le=1000)] = 2,
     limit: Annotated[int, Query(ge=1, le=200)] = 50,
@@ -116,7 +116,7 @@ def get_indicator_overlap(
 
 @router.get("/tier2/overlap-distribution", response_model=OverlapDistributionResponse)
 def get_overlap_distribution(
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_tier2_db)],
     current: Annotated[CurrentUser, Depends(require_user)],
 ) -> OverlapDistributionResponse:
     """Chart 1: for every indicator signature, how many distinct tenants have seen it,
@@ -133,7 +133,7 @@ def get_overlap_distribution(
 
 @router.get("/tier2/technique-prevalence", response_model=TechniquePrevalenceResponse)
 def get_technique_prevalence(
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_tier2_db)],
     current: Annotated[CurrentUser, Depends(require_user)],
 ) -> TechniquePrevalenceResponse:
     """Chart 2: which of the 13 proxy-observable ATT&CK techniques (docs/13 M14,
@@ -179,7 +179,7 @@ def get_detector_reliability(
 
 @router.get("/tier2/first-seen", response_model=FirstSeenResponse)
 def get_first_seen_propagation(
-    db: Annotated[Session, Depends(get_db)],
+    db: Annotated[Session, Depends(get_tier2_db)],
     current: Annotated[CurrentUser, Depends(require_user)],
     min_tenants: Annotated[int, Query(ge=2, le=1000)] = 2,
 ) -> FirstSeenResponse:

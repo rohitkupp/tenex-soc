@@ -15,7 +15,11 @@ from __future__ import annotations
 from sqlalchemy import select
 
 from app.core.config import get_settings
-from app.core.db import get_session_factory
+from app.core.db import (
+    get_session_factory,
+    get_tier2_session_factory,
+    init_tier2_schema,
+)
 from app.models.tenant import Tenant, get_or_create_live_tenant
 from app.scripts.seed_tier2 import (
     _PEER_ORG_NAMES,
@@ -33,7 +37,8 @@ def test_seed_tier2_produces_non_zero_cross_tenant_overlap() -> None:
     result = seed_tier2()  # must not raise -- this IS the loud-failure check, exercised live
     assert result.overlapping_indicators > 0
 
-    session = get_session_factory()()
+    init_tier2_schema()
+    session = get_tier2_session_factory()()
     try:
         rows = list_indicator_overlap(session, min_tenants=2, limit=200)
     finally:
@@ -54,7 +59,8 @@ def test_seed_tier2_shared_campaign_domain_overlaps_all_three_seeded_orgs() -> N
     shared_salt = settings.tier2_indicator_salt.get_secret_value().encode()
     expected_hash = indicator_hash(_SHARED_CAMPAIGN_DOMAIN, "domain", shared_salt)
 
-    session = get_session_factory()()
+    init_tier2_schema()
+    session = get_tier2_session_factory()()
     try:
         rows = list_indicator_overlap(session, min_tenants=2, limit=500)
     finally:
@@ -73,6 +79,8 @@ def test_seed_tier2_peer_orgs_get_no_tenant_row_and_no_login_path() -> None:
     and there is therefore no user/credential that could ever log in as either."""
     seed_tier2()
 
+    # `tenants` is primary — the point of this test is that no *real* tenant row exists for a
+    # peer org, so it has to look in the database where tenant rows actually live.
     session = get_session_factory()()
     try:
         for org in _PEER_ORG_NAMES:
@@ -100,6 +108,8 @@ def test_seed_tier2_live_tenant_hash_matches_the_real_tenant_row() -> None:
     the two peer orgs."""
     seed_tier2()
 
+    # `tenants` is a primary-database table — only the signatures moved to Tier 2, so this
+    # lookup deliberately uses the primary session.
     session = get_session_factory()()
     try:
         live_tenant = get_or_create_live_tenant(session)

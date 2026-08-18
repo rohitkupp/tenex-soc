@@ -26,7 +26,13 @@ import pytest
 from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 
-from app.core.db import get_engine, get_session_factory
+from app.core.db import (
+    get_engine,
+    get_session_factory,
+    get_tier2_engine,
+    get_tier2_session_factory,
+    init_tier2_schema,
+)
 from app.detection.fusion import anomaly_confidence_from_fused_score
 from app.models.analyst_feedback import AnalystFeedback
 from app.models.base import MissingTenantScopeError, tenant_scope
@@ -120,8 +126,13 @@ def test_detector_stats_tenant_id_has_no_fk() -> None:
 def test_tier2_signatures_has_tenant_hash_not_tenant_id() -> None:
     """docs/02 is explicit: `tier2_signatures` carries `tenant_hash` (an HMAC), never
     `tenant_id` — the whole point being cross-tenant indicator overlap detection without
-    any tenant seeing another's data. This must never be "fixed" into a tenant_id."""
-    with get_engine().connect() as conn:
+    any tenant seeing another's data. This must never be "fixed" into a tenant_id.
+
+    Asserted against the Tier 2 engine: the table lives in its own database now, which is the
+    structural version of the same guarantee — a cross-tenant table that cannot be joined to a
+    tenant-scoped one because they are not in the same database."""
+    init_tier2_schema()
+    with get_tier2_engine().connect() as conn:
         columns = (
             conn.execute(
                 text(
@@ -137,7 +148,8 @@ def test_tier2_signatures_has_tenant_hash_not_tenant_id() -> None:
 
 
 def test_vector_columns_are_pgvector_1024() -> None:
-    with get_engine().connect() as conn:
+    init_tier2_schema()
+    with get_tier2_engine().connect() as conn:
         rows = conn.execute(
             text(
                 "SELECT c.relname, a.atttypmod FROM pg_attribute a "
@@ -147,9 +159,9 @@ def test_vector_columns_are_pgvector_1024() -> None:
             )
         ).all()
     by_table = dict(rows)
-    # `incidents.embedding` is gone with recurrence detection (migration c9d5e83f2a17).
-    # `tier2_signatures.embedding` is the only pgvector column left, and Tier 2 now computes it
-    # itself (`app.tier2.embedding`) instead of borrowing the incident's.
+    # `incidents.embedding` is gone with recurrence detection (migration c9d5e83f2a17), and
+    # `tier2_signatures` moved to the Tier 2 database (e2f71b3c8a45), so this is the only
+    # pgvector column left anywhere and it is on the other side of the boundary.
     assert by_table == {"tier2_signatures": 1024}
 
 
@@ -445,7 +457,8 @@ def test_model_versions_unique_constraint(tenant_cleanup: list[uuid.UUID]) -> No
 
 
 def test_tier2_signatures_arrays_and_vector_round_trip() -> None:
-    session = get_session_factory()()
+    init_tier2_schema()
+    session = get_tier2_session_factory()()
     sig_id: uuid.UUID | None = None
     try:
         sig = Tier2Signature(
@@ -471,7 +484,12 @@ def test_tier2_signatures_arrays_and_vector_round_trip() -> None:
     finally:
         session.close()
         if sig_id is not None:
-            _exec("DELETE FROM tier2_signatures WHERE id = :id", id=str(sig_id))
+            # Cleanup goes to the Tier 2 engine — `_exec` targets the primary database, where
+            # this table no longer exists.
+            with get_tier2_engine().begin() as conn:
+                conn.execute(
+                    text("DELETE FROM tier2_signatures WHERE id = :id"), {"id": str(sig_id)}
+                )
 
 
 def test_eval_runs_round_trip() -> None:

@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy import text
 
 from app.core.config import get_settings
-from app.core.db import get_engine
+from app.core.db import get_tier2_engine
 from app.tier2.readonly_db import READONLY_ROLE_NAME, get_readonly_engine, readonly_database_url
 from app.tier2.views import ALLOWED_VIEWS
 
@@ -40,7 +40,7 @@ def _cursor(conn):
 
 
 def test_role_exists_and_has_no_superuser_or_create_privileges() -> None:
-    with get_engine().connect() as conn:
+    with get_tier2_engine().connect() as conn:
         row = conn.execute(
             text(
                 "SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication "
@@ -57,7 +57,7 @@ def test_role_exists_and_has_no_superuser_or_create_privileges() -> None:
 
 
 def test_role_has_five_second_statement_timeout() -> None:
-    with get_engine().connect() as conn:
+    with get_tier2_engine().connect() as conn:
         setconfig = conn.execute(
             text("SELECT rolconfig FROM pg_roles WHERE rolname = :role"),
             {"role": READONLY_ROLE_NAME},
@@ -115,15 +115,26 @@ def test_a_slow_query_is_killed_by_statement_timeout(readonly_conn) -> None:
     ],
 )
 def test_permission_denied_for_every_out_of_scope_table(readonly_conn, sql: str) -> None:
+    """Every one of these must be unreachable, and there are now two independent reasons why.
+
+    `tier2_signatures` is in this database but carries no grant, so it fails with
+    InsufficientPrivilege. The tenant-scoped tables (`events`, `users`, `analyses`, ...) are not
+    in this database *at all* since Tier 2 moved to its own Postgres, so they fail with
+    UndefinedTable. The second is the stronger guarantee — a table that is not present cannot be
+    reached by a grant mistake — so the assertion accepts either rather than insisting on the
+    weaker one and failing when the stronger one holds."""
     cur = _cursor(readonly_conn)
-    with pytest.raises(psycopg.errors.InsufficientPrivilege, match="permission denied"):
+    with pytest.raises((psycopg.errors.InsufficientPrivilege, psycopg.errors.UndefinedTable)):
         cur.execute(sql)
 
 
 def test_cannot_perform_ddl(readonly_conn) -> None:
+    # `tier2_signatures` rather than `events`: DDL has to be attempted against a table that is
+    # actually in this database, or the test passes for the wrong reason (UndefinedTable rather
+    # than a refused DROP).
     cur = _cursor(readonly_conn)
     with pytest.raises(psycopg.Error):
-        cur.execute("DROP TABLE events")
+        cur.execute("DROP TABLE tier2_signatures")
 
 
 def test_cannot_write_to_the_views_it_can_read() -> None:

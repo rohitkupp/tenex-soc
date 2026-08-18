@@ -63,7 +63,8 @@ def test_triage_respects_max_triage_incidents_and_accumulates_cost(
     forwarded = asyncio.run(handler(_message(analysis.id, tenant.id)))
 
     assert len(forwarded) == 1
-    assert forwarded[0][0] == "tier2"
+    # `triage` forwards to `anonymize` now, which pseudonymises before `tier2` receives it.
+    assert forwarded[0][0] == "anonymize"
 
     with get_engine().begin() as conn:
         n_verdicts = conn.execute(

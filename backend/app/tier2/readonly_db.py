@@ -36,11 +36,17 @@ _STATEMENT_TIMEOUT_MS = 5_000
 
 
 def readonly_database_url(settings: Settings) -> str:
-    """`settings.database_url` with the user/password swapped for the `tier2_readonly`
-    role — same host, port, and database as the app's own connection, deliberately (this
-    role's isolation comes entirely from Postgres grants, not from being on a different
-    server)."""
-    url = make_url(settings.database_url)
+    """`settings.tier2_database_url` with the user/password swapped for the `tier2_readonly`
+    role.
+
+    Built from the *Tier 2* URL, not the app's primary one. `tier2_signatures` and its two views
+    moved to their own database, so a connection derived from `database_url` would authenticate
+    against a database where the role has no grants and the views do not exist.
+
+    The role's isolation still comes from Postgres grants — SELECT on exactly two views, never
+    the base table — but it now sits on top of a second, physical separation rather than being
+    the only thing standing between a read-only consumer and every tenant-scoped table."""
+    url = make_url(settings.tier2_database_url)
     return url.set(
         username=READONLY_ROLE_NAME,
         password=settings.tier2_readonly_db_password.get_secret_value(),

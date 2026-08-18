@@ -63,8 +63,10 @@ def test_anonymize_reports_real_pseudonymization_and_redaction_counts(
 
     assert len(forwarded) == 1
     queue_name, next_message = forwarded[0]
-    assert queue_name == "detect"
-    assert next_message.stage == "detect"
+    # `anonymize` moved to the tenant boundary — it runs after `triage` and forwards to
+    # `tier2`, the stage that consumes what it just pseudonymised.
+    assert queue_name == "tier2"
+    assert next_message.stage == "tier2"
 
     with get_engine().begin() as conn:
         counters = conn.execute(

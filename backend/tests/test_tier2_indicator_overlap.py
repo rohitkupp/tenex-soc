@@ -12,7 +12,11 @@ import uuid
 import pytest
 
 from app.core.config import Settings
-from app.core.db import get_session_factory
+from app.core.db import (
+    get_session_factory,
+    get_tier2_session_factory,
+    init_tier2_schema,
+)
 from app.models.tier2_signature import Tier2Signature
 from app.tier2.hashing import indicator_hash, tenant_hash
 from app.tier2.indicator_overlap import (
@@ -58,20 +62,26 @@ def _sync_signature_for_tenant(tenant_ctx: dict, domain: str) -> Tier2Signature:
     )
     verdict = make_triage_verdict(incident_id=incident.id, recommended_actions=[])
 
+    # Reads come from the primary database, the signature write goes to the Tier 2 one.
+    init_tier2_schema()
     session = get_session_factory()()
+    tier2 = get_tier2_session_factory()()
     try:
         signature = sync_incident_to_tier2(
             session,
+            tier2_session=tier2,
             incident=incident,
             verdict=verdict,
             tenant=tenant,
             settings=_SHARED_SALT_SETTINGS,
         )
         assert signature is not None
+        tier2.commit()
+        tier2.refresh(signature)
         session.commit()
-        session.refresh(signature)
         return signature
     finally:
+        tier2.close()
         session.close()
 
 
@@ -99,7 +109,7 @@ def test_overlap_surfaces_across_the_two_tenants(
     tier2_signature_cleanup.extend([sig_a.id, sig_b.id])
     shared_hash = sig_a.indicator_hashes[0]
 
-    session = get_session_factory()()
+    session = get_tier2_session_factory()()
     try:
         rows = list_indicator_overlap(session, min_tenants=2, limit=50)
     finally:
@@ -123,7 +133,7 @@ def test_a_tenant_seen_indicator_alone_does_not_appear_as_overlap(
     tier2_signature_cleanup.append(sig_a.id)
     lonely_hash = sig_a.indicator_hashes[0]
 
-    session = get_session_factory()()
+    session = get_tier2_session_factory()()
     try:
         rows = list_indicator_overlap(session, min_tenants=2, limit=200)
     finally:
@@ -143,7 +153,7 @@ def test_neither_tenants_raw_indicator_value_is_recoverable_from_the_other_view(
     sig_b = _sync_signature_for_tenant(two_tenants["b"], _SHARED_C2_DOMAIN)
     tier2_signature_cleanup.extend([sig_a.id, sig_b.id])
 
-    session = get_session_factory()()
+    session = get_tier2_session_factory()()
     try:
         rows = list_indicator_overlap(session, min_tenants=2, limit=50)
         overview = get_overview(session)
@@ -184,7 +194,7 @@ def test_overview_totals_reflect_both_tenants(
     sig_b = _sync_signature_for_tenant(two_tenants["b"], "second-domain-only-b.example")
     tier2_signature_cleanup.extend([sig_a.id, sig_b.id])
 
-    session = get_session_factory()()
+    session = get_tier2_session_factory()()
     try:
         overview = get_overview(session)
     finally:
@@ -207,7 +217,7 @@ def test_overlap_distribution_buckets_a_two_tenant_indicator_under_the_two_bucke
     sig_b = _sync_signature_for_tenant(two_tenants["b"], _SHARED_C2_DOMAIN)
     tier2_signature_cleanup.extend([sig_a.id, sig_b.id])
 
-    session = get_session_factory()()
+    session = get_tier2_session_factory()()
     try:
         dist = list_overlap_distribution(session)
     finally:

@@ -9,7 +9,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import text
 
-from app.core.db import get_engine
+from app.core.db import get_engine, get_tier2_engine
 from app.pipeline.messages import StageMessage
 from app.pipeline.stages import tier2
 from tests.conftest import make_analysis, make_tenant, make_user
@@ -61,14 +61,17 @@ def test_tier2_syncs_syncable_verdicts_skips_others_and_completes_analysis(
     # An incident that never got triaged at all — must be skipped, not crash the stage.
     make_incident(tenant_id=tenant.id, analysis_id=analysis.id, title="untriaged incident")
 
-    with get_engine().begin() as conn:
+    with get_tier2_engine().begin() as conn:
         n_before = conn.execute(text("SELECT count(*) FROM tier2_signatures")).scalar_one()
 
     forwarded = asyncio.run(tier2.handle(_message(analysis.id, tenant.id)))
     assert forwarded == []  # terminal — tier2 never forwards
 
-    with get_engine().begin() as conn:
+    # Two engines: the signature count is in the Tier 2 database, the analysis row is in the
+    # primary one. The stage writes to both, so verifying it has to read from both.
+    with get_tier2_engine().begin() as conn:
         n_after = conn.execute(text("SELECT count(*) FROM tier2_signatures")).scalar_one()
+    with get_engine().begin() as conn:
         final = conn.execute(
             text("SELECT status, stage, progress FROM analyses WHERE id = :aid"),
             {"aid": analysis.id},

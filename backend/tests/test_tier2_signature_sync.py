@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.config import Settings
-from app.core.db import get_session_factory
+from app.core.db import get_session_factory, get_tier2_session_factory, init_tier2_schema
 from app.models.base import tenant_scope
 from app.models.tier2_signature import Tier2Signature
 from app.tier2.hashing import indicator_hash, tenant_hash
@@ -289,25 +289,37 @@ def test_sync_incident_to_tier2_persists_a_real_row(
     )
     verdict = make_triage_verdict(incident_id=incident.id, recommended_actions=[])
 
+    # Two sessions: the reads come from the primary database, the signature write goes to the
+    # Tier 2 one. They are different engines over different databases.
+    init_tier2_schema()
     session = get_session_factory()()
+    tier2 = get_tier2_session_factory()()
     try:
         signature = sync_incident_to_tier2(
-            session, incident=incident, verdict=verdict, tenant=tenant, settings=_REAL_SALT_SETTINGS
+            session,
+            tier2_session=tier2,
+            incident=incident,
+            verdict=verdict,
+            tenant=tenant,
+            settings=_REAL_SALT_SETTINGS,
         )
         assert signature is not None
         tier2_signature_cleanup.append(signature.id)
+        tier2.commit()
         session.commit()
     finally:
+        tier2.close()
         session.close()
 
     # Re-fetch independently -- proves it was actually committed, not just an in-memory object.
-    session = get_session_factory()()
+    # From the Tier 2 engine: that is where the row now lives.
+    verify = get_tier2_session_factory()()
     try:
-        row = session.execute(
+        row = verify.execute(
             select(Tier2Signature).where(Tier2Signature.id == signature.id)
         ).scalar_one()
     finally:
-        session.close()
+        verify.close()
 
     assert row.tenant_hash == tenant_hash(tenant.id, tenant.pseudonym_salt)
     assert row.incident_type == "c2_beaconing"
@@ -329,15 +341,24 @@ def test_sync_incident_to_tier2_skips_benign_and_writes_nothing(
         incident_id=incident.id, recommended_actions=[], disposition="benign"
     )
 
+    init_tier2_schema()
     session = get_session_factory()()
+    tier2 = get_tier2_session_factory()()
     try:
-        before = session.execute(select(Tier2Signature.id)).all()
+        before = tier2.execute(select(Tier2Signature.id)).all()
         result = sync_incident_to_tier2(
-            session, incident=incident, verdict=verdict, tenant=tenant, settings=_REAL_SALT_SETTINGS
+            session,
+            tier2_session=tier2,
+            incident=incident,
+            verdict=verdict,
+            tenant=tenant,
+            settings=_REAL_SALT_SETTINGS,
         )
+        tier2.commit()
         session.commit()
-        after = session.execute(select(Tier2Signature.id)).all()
+        after = tier2.execute(select(Tier2Signature.id)).all()
     finally:
+        tier2.close()
         session.close()
 
     assert result is None

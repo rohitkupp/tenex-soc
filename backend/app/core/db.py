@@ -114,6 +114,25 @@ def get_db() -> Iterator[Session]:
         db.close()
 
 
+def get_tier2_db() -> Iterator[Session]:
+    """FastAPI dependency for the Tier 2 database, mirroring `get_db`.
+
+    Routes that read `tier2_signatures` (or its views) must depend on this, not `get_db` — that
+    table moved out of the primary database, so a route still holding a `get_db` session queries
+    a schema where it no longer exists and 500s. `detector_reliability` is the exception: it
+    aggregates `analyst_feedback`, which is tenant-scoped and stays in the primary database.
+    """
+    db = get_tier2_session_factory()()
+    try:
+        yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 def ping() -> dict[str, Any]:
     """Health probe: connectivity plus confirmation that pgvector is installed."""
     with get_engine().connect() as conn:

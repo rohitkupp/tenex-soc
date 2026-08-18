@@ -15,7 +15,13 @@ from collections.abc import Iterator
 import pytest
 from sqlalchemy import text
 
-from app.core.db import get_engine, get_session_factory
+from app.core.db import (
+    get_engine,
+    get_session_factory,
+    get_tier2_engine,
+    get_tier2_session_factory,
+    init_tier2_schema,
+)
 from app.models.entity import Entity
 
 
@@ -55,11 +61,15 @@ def tier2_signature_cleanup() -> Iterator[list[uuid.UUID]]:
     """`tier2_signatures` rows created directly (not via `sync_incident_to_tier2`'s own
     incident chain, or in addition to it) — tracked and deleted by id, since the table has
     no foreign key for a cascade to ride."""
+    # `tier2_signatures` lives in the Tier 2 database now, not the primary one — a separate
+    # engine, not just a separate table. Cleaning up through `get_engine()` would silently
+    # delete nothing and leave rows behind for the next test to trip over.
+    init_tier2_schema()
     created: list[uuid.UUID] = []
     yield created
     if not created:
         return
-    with get_engine().begin() as conn:
+    with get_tier2_engine().begin() as conn:
         conn.execute(text("DELETE FROM tier2_signatures WHERE id = ANY(:ids)"), {"ids": created})
 
 
@@ -88,4 +98,18 @@ def make_entity(
         session.refresh(entity)
         return entity
     finally:
+        session.close()
+
+
+@pytest.fixture
+def tier2_session():
+    """A session bound to the Tier 2 database, for the tests that write or assert against
+    `tier2_signatures`/`tier2_events` directly. Schema is created on demand so a fresh CI
+    database needs no separate migration step."""
+    init_tier2_schema()
+    session = get_tier2_session_factory()()
+    try:
+        yield session
+    finally:
+        session.rollback()
         session.close()

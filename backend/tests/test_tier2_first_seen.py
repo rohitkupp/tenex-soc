@@ -12,7 +12,11 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.config import Settings
-from app.core.db import get_session_factory
+from app.core.db import (
+    get_session_factory,
+    get_tier2_session_factory,
+    init_tier2_schema,
+)
 from app.models.tier2_signature import Tier2Signature
 from app.tier2.first_seen import list_first_seen_propagation
 from app.tier2.signature_sync import sync_incident_to_tier2
@@ -47,10 +51,13 @@ def _sync_at(tenant_ctx: dict, *, observed_at: datetime) -> Tier2Signature:
         tenant_id=tenant.id, analysis_id=analysis.id, entity_ids=[entity.id], fused_score=0.9
     )
     verdict = make_triage_verdict(incident_id=incident.id, recommended_actions=[])
+    init_tier2_schema()
     session = get_session_factory()()
+    tier2 = get_tier2_session_factory()()
     try:
         signature = sync_incident_to_tier2(
             session,
+            tier2_session=tier2,
             incident=incident,
             verdict=verdict,
             tenant=tenant,
@@ -58,11 +65,13 @@ def _sync_at(tenant_ctx: dict, *, observed_at: datetime) -> Tier2Signature:
         )
         assert signature is not None
         signature.observed_at = observed_at
-        session.add(signature)
+        tier2.add(signature)
+        tier2.commit()
+        tier2.refresh(signature)
         session.commit()
-        session.refresh(signature)
         return signature
     finally:
+        tier2.close()
         session.close()
 
 
@@ -77,7 +86,7 @@ def test_reports_each_tenants_own_first_seen_timestamp_sorted_ascending(
     tier2_signature_cleanup.extend([sig_a.id, sig_b.id, sig_c.id])
     shared_hash = sig_a.indicator_hashes[0]
 
-    session = get_session_factory()()
+    session = get_tier2_session_factory()()
     try:
         items = list_first_seen_propagation(session, min_tenants=2)
     finally:
@@ -103,7 +112,7 @@ def test_no_raw_domain_value_is_recoverable_from_the_response(
     sig_b = _sync_at(three_tenants["b"], observed_at=now)
     tier2_signature_cleanup.extend([sig_a.id, sig_b.id])
 
-    session = get_session_factory()()
+    session = get_tier2_session_factory()()
     try:
         items = list_first_seen_propagation(session, min_tenants=2)
     finally:
@@ -125,24 +134,29 @@ def test_an_indicator_seen_by_only_one_tenant_is_excluded(
         tenant_id=tenant.id, analysis_id=analysis.id, entity_ids=[entity.id], fused_score=0.9
     )
     verdict = make_triage_verdict(incident_id=incident.id, recommended_actions=[])
+    init_tier2_schema()
     session = get_session_factory()()
+    tier2 = get_tier2_session_factory()()
     try:
         signature = sync_incident_to_tier2(
             session,
+            tier2_session=tier2,
             incident=incident,
             verdict=verdict,
             tenant=tenant,
             settings=_SHARED_SALT_SETTINGS,
         )
         assert signature is not None
+        tier2.commit()
+        tier2.refresh(signature)
         session.commit()
-        session.refresh(signature)
     finally:
+        tier2.close()
         session.close()
     tier2_signature_cleanup.append(signature.id)
     lonely_hash = signature.indicator_hashes[0]
 
-    session = get_session_factory()()
+    session = get_tier2_session_factory()()
     try:
         items = list_first_seen_propagation(session, min_tenants=2)
     finally:

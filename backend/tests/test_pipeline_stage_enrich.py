@@ -64,8 +64,10 @@ def test_enrich_populates_enrichment_and_seeds_entities(
 
     assert len(forwarded) == 1
     queue_name, next_message = forwarded[0]
-    assert queue_name == "anonymize"
-    assert next_message.stage == "anonymize"
+    # `anonymize` moved to the tenant boundary (after triage, before tier2), so enrich now
+    # forwards straight to detect — see app.pipeline.contracts.NEXT_QUEUE.
+    assert queue_name == "detect"
+    assert next_message.stage == "detect"
     assert next_message.attempt == 0
 
     with get_engine().begin() as conn:

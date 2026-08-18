@@ -49,7 +49,11 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from app.core.config import get_settings
-from app.core.db import get_session_factory
+from app.core.db import (
+    get_session_factory,
+    get_tier2_session_factory,
+    init_tier2_schema,
+)
 from app.core.logging import configure_logging, get_logger
 from app.models.tenant import LIVE_TENANT_NAME, get_or_create_live_tenant
 from app.models.tier2_signature import Tier2Signature
@@ -134,10 +138,18 @@ class SeedTier2Result:
 
 
 def seed_tier2() -> SeedTier2Result:
-    session = get_session_factory()()
+    # `tier2_signatures` lives in the Tier 2 database, so the seed writes there. Schema is
+    # created on demand — `make seed` must work against a database that has never run a pipeline.
+    init_tier2_schema()
+    # Two databases, two sessions. `tenants` is a primary-database table and the live tenant's
+    # real id/salt are what the seeded hashes must be built from; `tier2_signatures` is on the
+    # other side of the boundary. Reading one through the other silently fails with
+    # "relation does not exist" rather than anything that points at the cause.
+    primary = get_session_factory()()
+    session = get_tier2_session_factory()()
     try:
-        live_tenant = get_or_create_live_tenant(session)
-        session.commit()
+        live_tenant = get_or_create_live_tenant(primary)
+        primary.commit()
 
         settings = get_settings()
         shared_salt = settings.tier2_indicator_salt.get_secret_value().encode()
@@ -193,6 +205,7 @@ def seed_tier2() -> SeedTier2Result:
         raise
     finally:
         session.close()
+        primary.close()
 
 
 def main() -> None:

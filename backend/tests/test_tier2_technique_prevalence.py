@@ -12,7 +12,11 @@ import uuid
 import pytest
 
 from app.core.config import Settings
-from app.core.db import get_session_factory
+from app.core.db import (
+    get_session_factory,
+    get_tier2_session_factory,
+    init_tier2_schema,
+)
 from app.models.tier2_signature import Tier2Signature
 from app.tier2.signature_sync import sync_incident_to_tier2
 from app.tier2.technique_prevalence import list_technique_prevalence
@@ -58,20 +62,26 @@ def _sync_signature(
     finally:
         session.close()
 
+    # Reads come from the primary database, the signature write goes to the Tier 2 one.
+    init_tier2_schema()
     session = get_session_factory()()
+    tier2 = get_tier2_session_factory()()
     try:
         signature = sync_incident_to_tier2(
             session,
+            tier2_session=tier2,
             incident=incident,
             verdict=verdict,
             tenant=tenant,
             settings=_SHARED_SALT_SETTINGS,
         )
         assert signature is not None
+        tier2.commit()
+        tier2.refresh(signature)
         session.commit()
-        session.refresh(signature)
         return signature
     finally:
+        tier2.close()
         session.close()
 
 
@@ -81,7 +91,7 @@ def three_tenants(tier2_tenant_cleanup: list[uuid.UUID]):  # noqa: F811
 
 
 def test_returns_all_thirteen_allowlisted_techniques_even_with_zero_signatures() -> None:
-    session = get_session_factory()()
+    session = get_tier2_session_factory()()
     try:
         result = list_technique_prevalence(session)
     finally:
@@ -114,7 +124,7 @@ def test_a_technique_seen_by_three_tenants_reports_tenant_count_three(
     ]
     tier2_signature_cleanup.extend(s.id for s in sigs)
 
-    session = get_session_factory()()
+    session = get_tier2_session_factory()()
     try:
         result = list_technique_prevalence(session)
     finally:
@@ -135,7 +145,7 @@ def test_a_signature_with_no_indicators_does_not_count_toward_prevalence(
     not move the count. Compares before/after (rather than asserting an absolute value) since
     unrelated pre-existing rows for this same technique may already exist in this environment's
     shared database."""
-    session = get_session_factory()()
+    session = get_tier2_session_factory()()
     try:
         before = next(
             item
@@ -150,7 +160,9 @@ def test_a_signature_with_no_indicators_does_not_count_toward_prevalence(
     # incident, but with an empty indicator_hashes array (no domain/IP entity to hash).
     incident = make_incident(tenant_id=tenant.id, analysis_id=analysis.id, fused_score=0.9)
     verdict = make_triage_verdict(incident_id=incident.id, recommended_actions=[])
+    init_tier2_schema()
     session = get_session_factory()()
+    tier2 = get_tier2_session_factory()()
     try:
         verdict.mitre_techniques = [{"id": "T1204", "name": "User Execution", "rationale": "test"}]
         session.add(verdict)
@@ -158,6 +170,7 @@ def test_a_signature_with_no_indicators_does_not_count_toward_prevalence(
         session.refresh(verdict)
         signature = sync_incident_to_tier2(
             session,
+            tier2_session=tier2,
             incident=incident,
             verdict=verdict,
             tenant=tenant,
@@ -165,13 +178,15 @@ def test_a_signature_with_no_indicators_does_not_count_toward_prevalence(
         )
         assert signature is not None
         assert signature.indicator_hashes == []
+        tier2.commit()
+        tier2.refresh(signature)
         session.commit()
-        session.refresh(signature)
     finally:
+        tier2.close()
         session.close()
     tier2_signature_cleanup.append(signature.id)
 
-    session = get_session_factory()()
+    session = get_tier2_session_factory()()
     try:
         after = next(
             item

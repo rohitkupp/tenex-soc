@@ -5,7 +5,11 @@
 # README claim the queue topology is real rather than a diagram.
 #
 # Differences from dev, all of them intentional:
-#   - No postgres service. Postgres is Supabase (managed, free, pgvector 0.8.2).
+#   - No primary postgres service. The primary database is Supabase (managed, free,
+#     pgvector 0.8.2). Tier 2 *does* run a local Postgres here: it is a separate database by
+#     design (nothing identifiable crosses into it), it holds only derived, rebuildable data,
+#     and putting it on Supabase would spend the free tier's 500MB on rows that can be
+#     regenerated from the primary at any time.
 #   - No source bind-mount and no --reload. The image is the artifact.
 #   - Caddy terminates TLS. SameSite=None cookies are Secure-only, so plain HTTP
 #     would silently break authentication (docs/06 decision record).
@@ -16,6 +20,9 @@ name: tenex-soc
 
 x-worker-env: &worker-env
   DATABASE_URL: ${DATABASE_URL:?set in .env on the VM}
+  # Tier 2's own database — the cross-tenant side of the boundary, written by the `anonymize`
+  # stage which now runs after `triage`. A container on this VM, not Supabase: see the header.
+  TIER2_DATABASE_URL: postgresql+psycopg://tenex:${TIER2_POSTGRES_PASSWORD:-tenex}@tier2-postgres:5432/tenex_tier2
   RABBITMQ_URL: amqp://tenex:${RABBITMQ_PASSWORD:?}@rabbitmq:5672/
   REDIS_URL: redis://redis:6379/0
   S3_ENDPOINT: http://minio:9000
@@ -84,6 +91,9 @@ x-worker-defaults: &worker-defaults
   volumes:
     - model_artifacts:/app/data/models
   depends_on:
+    # The `anonymize` and `tier2` stages both write to the Tier 2 database, and every worker
+    # shares this block, so all of them wait for it.
+    tier2-postgres: {condition: service_healthy}
     rabbitmq: {condition: service_healthy}
     minio: {condition: service_healthy}
     redis: {condition: service_healthy}
@@ -111,10 +121,28 @@ services:
     volumes:
       - model_artifacts:/app/data/models
     depends_on:
+      tier2-postgres: {condition: service_healthy}
       rabbitmq: {condition: service_healthy}
       minio: {condition: service_healthy}
       redis: {condition: service_healthy}
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'
+
+  # Tier 2's database. pgvector because `tier2_signatures.embedding` is a vector(1024).
+  # Not exposed through Caddy and no published port — nothing outside this compose network
+  # has any reason to reach it.
+  tier2-postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tenex
+      POSTGRES_PASSWORD: ${TIER2_POSTGRES_PASSWORD:-tenex}
+      POSTGRES_DB: tenex_tier2
+    volumes: [tier2_pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tenex -d tenex_tier2"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
 
   rabbitmq:
     image: rabbitmq:3.13-management-alpine
@@ -197,6 +225,7 @@ volumes:
   caddy_data:
   caddy_config:
   rabbitmq_data:
+  tier2_pgdata:
   minio_data:
   redis_data:
   # Trained L3 artifacts. Shared by api + every worker, and survives `up --build` —
