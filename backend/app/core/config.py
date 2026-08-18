@@ -80,7 +80,12 @@ class Settings(BaseSettings):
     anthropic_model: str = "claude-sonnet-5"
     max_triage_incidents: int = 20
     agent_max_tool_calls: int = 8
-    agent_timeout_seconds: int = 120
+    # Per-incident budget across the whole Analyst -> Judge -> Presenter chain, not per call.
+    # At 120s a single slow generation late in the chain aborted an incident that had already
+    # paid for two of its three calls ("agent timeout during presenter"), and streaming made long
+    # generations more common rather than less. 300s is still a real bound — a wedged run fails
+    # rather than hanging the stage — with room for three sequential calls plus a schema repair.
+    agent_timeout_seconds: int = 300
 
     # --- Auth: self-serve signup email verification (M15, app.core.verification) ---
     # Supabase Auth's built-in email sender is the transport; our own Postgres row is
