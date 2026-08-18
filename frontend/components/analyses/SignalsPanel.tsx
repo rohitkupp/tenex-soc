@@ -9,7 +9,7 @@
  * heading had to admit "more phases exist and are not shown".
  *
  * It is now purely a ranking: highest confidence first, `PAGE_SIZE` at a time, with a button to
- * reveal more. Chronology moved to where it belongs — the Timeline tab, which windows the raw
+ * reveal more. Chronology moved to where it belongs — the Events tab, which windows the raw
  * events in order.
  *
  * A signal whose detector has no fitted isotonic calibrator carries `calibrated: false`, and its
@@ -60,7 +60,7 @@ export function SignalsPanel({ data }: { data: AnalysisTimelineResponse | null }
       <p className="mb-3 text-xs text-[var(--color-text-lo)]">
         {ranked.length} detector firing{ranked.length === 1 ? "" : "s"}, highest confidence first
         {data?.truncated && " (the server capped this set)"}. Chronological order lives on the
-        Timeline tab.
+        Events tab.
       </p>
       <ol className="flex flex-col divide-y divide-[var(--color-border)]">
         {page.map((phase, i) => (

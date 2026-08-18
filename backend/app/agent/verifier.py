@@ -148,6 +148,15 @@ _NOISE_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
     re.compile(r"\bZSCALER-KB-[\w-]+\b"),
     re.compile(r"\b\d{4}-\d{2}-\d{2}(?:T[\d:.]+Z?)?\b"),  # ISO-8601 timestamps and bare dates
     re.compile(r"\b\d{1,2}:\d{2}(?::\d{2})?\b"),  # bare clock times / durations (16:19, 02:03:04)
+    # Pseudonyms (`app.privacy.pseudonymize.PREFIX`) — `u_ed805926e82b`, `ip_db3dd7f77183`,
+    # `h_...`, `dev_...`, `sess_...` — and the indicator forms (`d_`, `fh_`, `j_`). Their hex
+    # digests are not measurements, but the number scanner happily pulled `805926`, `82b` and
+    # `77183` out of them and then demanded each match a numeric leaf. Nothing in the evidence
+    # pool can ever match a slice of a hash, so every finding that named an entity — which is
+    # every finding — failed verification and its whole analysis was discarded.
+    re.compile(r"\b(?:u|ip|h|sess|dev|d|fh|j)_[0-9a-f]{6,}\b", re.IGNORECASE),
+    # Dotted-quad IPv4 literals. "203.0.113.13" was being read as the numbers 203.0 and 113.13.
+    re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}\b"),
 )
 
 _UNIT_TO_BYTES: Final[dict[str, float]] = {
