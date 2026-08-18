@@ -1,7 +1,8 @@
 import type { ReactNode } from "react";
 import { AppNav } from "@/components/nav/AppNav";
 
-// Shell for the authenticated routes (`/`, `/analyses/[id]`, `/learning`, `/tier2`).
+// Shell for the authenticated routes (`/`, `/analyses/[id]`, `/tier2`). `/learning` went
+// with the learning loop.
 // `/login` and `/signup` sit outside this route group and get no nav — "nothing else
 // on the page".
 export default function DashboardLayout({ children }: { children: ReactNode }) {

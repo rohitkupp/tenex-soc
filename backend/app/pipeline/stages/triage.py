@@ -157,6 +157,40 @@ def _needs_attention(
     return n
 
 
+def _publish_triage_progress(message: StageMessage, *, progress: float, text: str) -> None:
+    """Push one SSE progress frame from inside the (synchronous) triage run.
+
+    `publish_progress` is async and this is called from a worker thread, so it needs its own
+    loop. Failures are swallowed: a dropped progress frame must never cost a triage run that has
+    already spent real money on LLM calls.
+    """
+    try:
+        with get_engine().begin() as conn:
+            counters = state.get_counters(
+                conn, analysis_id=message.analysis_id, tenant_id=message.tenant_id
+            )
+            state.mark_stage(
+                conn,
+                analysis_id=message.analysis_id,
+                tenant_id=message.tenant_id,
+                stage="triage",
+                progress=progress,
+            )
+        asyncio.run(
+            publish_progress(
+                get_redis(),
+                analysis_id=message.analysis_id,
+                stage="triage",
+                progress=progress,
+                status="running",
+                message=text,
+                counters=public_counters(counters),
+            )
+        )
+    except Exception:
+        log.warning("triage.progress_publish_failed", exc_info=True)
+
+
 def _run_triage(message: StageMessage, *, caller: LLMCaller | None = None) -> dict[str, Any]:
     settings = get_settings()
     if caller is None and not settings.llm_enabled:
@@ -168,8 +202,28 @@ def _run_triage(message: StageMessage, *, caller: LLMCaller | None = None) -> di
 
     session = get_session_factory()()
     try:
+        # Fractional progress *within* the triage stage. STAGE_PROGRESS is a completion ladder
+        # — correlate lands at 0.75 and triage at 0.875 — so an incident-by-incident position is
+        # interpolated between the two. The number is measured, not animated: it is the fraction
+        # of incidents actually triaged, so a stalled run visibly stops advancing rather than
+        # showing a bar that keeps moving while nothing happens.
+        span_start = STAGE_PROGRESS["correlate"]
+        span_end = STAGE_PROGRESS["triage"]
+
+        def _report(done: int, total: int) -> None:
+            fraction = (done / total) if total else 1.0
+            _publish_triage_progress(
+                message,
+                progress=span_start + (span_end - span_start) * fraction,
+                text=f"Triaging incidents — {done} of {total} complete",
+            )
+
         verdicts = triage_top_incidents_for_analysis(
-            session, message.tenant_id, message.analysis_id, caller=caller
+            session,
+            message.tenant_id,
+            message.analysis_id,
+            caller=caller,
+            on_progress=_report,
         )
 
         with tenant_scope(session, message.tenant_id):

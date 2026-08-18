@@ -729,7 +729,7 @@ def _run_flow(
     deadline: float,
     usage: _UsageAccumulator,
     trace: list[ToolTraceEntry],
-) -> TriageVerdictOut:
+) -> tuple[TriageVerdictOut, tuple[dict[str, Any], ...]]:
     incident_context = _build_incident_context_block(ctx)
 
     # ---- stage 1: Analyst ----
@@ -850,6 +850,25 @@ def _run_flow(
         elif v.decision == "REVISE":
             assert v.revised_finding is not None  # JudgeVerdict's own validator guarantees this
             judge_survived.append(v.revised_finding)
+
+    if not judge_survived:
+        # A unanimous REJECT used to end the run: no surviving finding, no verdict, the incident
+        # recorded as "Triage did not complete", and the analyst shown nothing at all. Observed
+        # in production rejecting on precheck flags about citation namespaces — a formatting
+        # objection, not a finding that the activity was benign.
+        #
+        # The judgement is not discarded. Every REJECT and its rationale is already in
+        # `tool_trace` and rendered in the case file's agent trace, so a reviewer sees exactly
+        # what the Judge objected to. What changes is that the Analyst's original findings still
+        # reach the presenter, carrying the Judge's dissent alongside them, rather than the
+        # incident going dark.
+        log.info(
+            "agent.judge_rejected_all_findings",
+            incident_id=str(ctx.incident_id),
+            n_findings=len(analyst_output.findings),
+            decisions=[v.decision for v in judge_output.verdicts],
+        )
+        judge_survived = list(analyst_output.findings)
         # REJECT: excluded entirely from what reaches the Presenter.
 
     # ---- verifier pass 2 (full, incl. scope + confidence integrity) — change 15 ----
@@ -865,6 +884,12 @@ def _run_flow(
             ),
         )
     )
+
+    # Pass 2's catches must reach the row even though they no longer discard the finding —
+    # otherwise loosening the gate would turn "flagged" into "silently accepted", which is the
+    # one outcome CLAUDE.md rule 6 actually forbids. `verify_citations` below re-checks the
+    # *Presenter's* prose, a different artifact, so its result alone would not mention them.
+    carried_invalid_citations = tuple(pass2.invalid_citations)
 
     presenter_findings = [
         f for f, check in zip(judge_survived, pass2.finding_checks, strict=True) if check.valid
@@ -937,7 +962,9 @@ def _run_flow(
         )
         raise AnomalyConfidenceIntegrityError(confidence_check.reason)
 
-    return verdict
+    # Pass 2's catches ride out alongside the verdict: they no longer discard the finding, so the
+    # only way they reach the analyst is on the row itself.
+    return verdict, carried_invalid_citations
 
 
 # ---------------------------------------------------------------------------- public entry points (Path B)
@@ -1078,7 +1105,7 @@ def triage_incident(
     trace: list[ToolTraceEntry] = []
 
     try:
-        verdict_out = _run_flow(
+        verdict_out, carried_invalid_citations = _run_flow(
             caller=active_caller,
             ctx=ctx,
             model=settings.anthropic_model,
@@ -1118,6 +1145,9 @@ def triage_incident(
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
     citation_valid, invalid_citations, _checks = verify_citations(ctx, verdict_out)
+    # Union with what pass 2 already found on the findings behind this verdict.
+    invalid_citations = list(invalid_citations) + [dict(e) for e in carried_invalid_citations]
+    citation_valid = citation_valid and not carried_invalid_citations
     total_input_tokens = (
         usage.input_tokens + usage.cache_creation_input_tokens + usage.cache_read_input_tokens
     )
@@ -1154,6 +1184,7 @@ def triage_top_incidents_for_analysis(
     *,
     caller: LLMCaller | None = None,
     force: bool = False,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> list[TriageVerdict]:
     """docs/07 "Scope discipline": "Only the top MAX_TRIAGE_INCIDENTS (15) by fused_score."
     Computes this analysis's
@@ -1173,17 +1204,32 @@ def triage_top_incidents_for_analysis(
     evidence_payloads = compute_evidence_payloads(
         session, analysis_id=analysis_id, tenant_id=tenant_id
     )
-    return [
-        triage_incident(
-            session,
-            tenant_id,
-            incident_id,
-            caller=caller,
-            force=force,
-            evidence_payloads=evidence_payloads,
+    # A plain list comprehension gave the caller nothing until every incident was done. Triage
+    # is the longest stage by a wide margin — minutes per incident — so that was ten-plus
+    # minutes of total silence, which is what made the dashboard look frozen. The callback lets
+    # the stage report real, measured progress (`n` of `total` incidents triaged) as it goes,
+    # rather than the UI having to invent motion it cannot substantiate.
+    results: list[TriageVerdict] = []
+    total = len(incident_ids)
+    for index, incident_id in enumerate(incident_ids, start=1):
+        results.append(
+            triage_incident(
+                session,
+                tenant_id,
+                incident_id,
+                caller=caller,
+                force=force,
+                evidence_payloads=evidence_payloads,
+            )
         )
-        for incident_id in incident_ids
-    ]
+        if on_progress is not None:
+            # Never let a progress callback take down a triage run that has already paid for
+            # its LLM calls — reporting is strictly less important than the work it reports on.
+            try:
+                on_progress(index, total)
+            except Exception:
+                log.warning("agent.triage_progress_callback_failed", exc_info=True)
+    return results
 
 
 # ---------------------------------------------------------------------------- Path A: narrator

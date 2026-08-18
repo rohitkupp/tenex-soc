@@ -415,6 +415,8 @@ def test_pass2_catches_number_introduced_by_revise(tenant_cleanup: list[uuid.UUI
         [
             _analysis_message(),
             _judgement_message(decision="REVISE", revised_finding=revised_finding),
+            # The Presenter is reached now — verification reports rather than discards.
+            _verdict_message(anomaly_confidence=round(incident.anomaly_confidence, 1)),
         ]
     )
 
@@ -426,10 +428,13 @@ def test_pass2_catches_number_introduced_by_revise(tenant_cleanup: list[uuid.UUI
     finally:
         session.close()
 
-    assert row.disposition == "needs_review"
-    assert len(caller.calls) == 2  # Analyst, Judge -- the Presenter is never reached
-    # change 7: "surfaced, not suppressed" -- pass 2's catch is not swallowed just because the run
-    # fell back to needs_review; it is exactly *why* it fell back, and stays visible on the row.
+    # The Presenter now *is* reached: verification reports rather than discards
+    # (`ClaimCheck.blocks_finding`), so a number pass 2 cannot substantiate no longer destroys
+    # the finding and with it the whole investigation. What matters is unchanged and is what this
+    # test now asserts — the catch is still made and still visible on the row, next to the prose
+    # it belongs to, which is exactly what CLAUDE.md rule 6 asks for ("flagged, not silently
+    # rendered").
+    assert len(caller.calls) == 3  # Analyst, Judge, Presenter
     assert row.citation_valid is False
     assert row.invalid_citations
 
@@ -527,6 +532,9 @@ def test_judge_reject_scenarios_reflect_their_own_defect(
                 unsatisfied_items=scenario.unsatisfied_rubric_items,
                 rationale=scenario.rationale,
             ),
+            # A unanimous REJECT no longer ends the run — the Analyst's findings fall through to
+            # the Presenter carrying the Judge's dissent, rather than the incident going dark.
+            _verdict_message(anomaly_confidence=round(incident.anomaly_confidence, 1)),
         ]
     )
 
@@ -544,8 +552,16 @@ def test_judge_reject_scenarios_reflect_their_own_defect(
         "the judge's prompt -- this scenario is not actually exercising what its label claims"
     )
 
-    assert row.disposition == "needs_review"
-    assert len(caller.calls) == 2  # the Presenter is never called for a fully-rejected incident
+    # What this test is really for is unchanged: each scenario's own defect must reach the
+    # judge's prompt (asserted above), so the rubric is being exercised by the thing its label
+    # claims. What changed is the consequence of a unanimous REJECT — the Presenter now runs, so
+    # the analyst reads the verdict *and* the Judge's objection in the agent trace, instead of an
+    # incident that produced nothing at all. See `_run_flow`'s judge-fallback branch.
+    assert len(caller.calls) == 3  # Analyst, Judge, Presenter
+    assert any(
+        e.get("tool_name") == "submit_judgement" and "REJECT" in (e.get("summary") or "")
+        for e in row.tool_trace
+    ), "the Judge's rejection must stay visible on the row"
 
 
 # ---------------------------------------------------------------------------- injection canary

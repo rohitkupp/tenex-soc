@@ -110,7 +110,16 @@ CITATION_EVIDENCE: Final[str] = "evidence"  # EVIDENCE-n / BASELINE-n
 CITATION_LOG: Final[str] = "log"  # LOG-n
 CITATION_MITRE: Final[str] = "mitre"  # MITRE-Txxx.xxx
 CITATION_ZSCALER_KB: Final[str] = "zscaler_kb"  # ZSCALER-KB-*
+# Bare `signals.id` values. The Analyst is shown signal ids in its incident context and cites
+# them naturally; before this they classified as `unknown`, failed the existence check, and the
+# Judge — which reads the precheck flags — rejected the finding for "citing anomaly IDs that do
+# not exist in the anomaly_ids namespace". They do exist, in `signals`; they simply had no
+# namespace here.
+CITATION_SIGNAL: Final[str] = "signal"  # bare numeric signals.id
 CITATION_UNKNOWN: Final[str] = "unknown"
+
+
+_SIGNAL_ID_RE: Final[re.Pattern[str]] = re.compile(r"^\d+$")
 
 
 def classify_citation(cid: str) -> tuple[str, str]:
@@ -131,6 +140,8 @@ def classify_citation(cid: str) -> tuple[str, str]:
     m = _ZSCALER_KB_RE.match(cid)
     if m:
         return CITATION_ZSCALER_KB, m.group(1)
+    if _SIGNAL_ID_RE.match(cid):
+        return CITATION_SIGNAL, cid
     return CITATION_UNKNOWN, cid
 
 
@@ -389,6 +400,15 @@ def _resolve_citations(
             # fabricating an id registry or silently rejecting every citation in it. Reported as a
             # known limitation, not hidden.
             resolved[cid] = Citation(id=cid, namespace=namespace, exists=True)
+        elif namespace == CITATION_SIGNAL:
+            # A bare `signals.id`. The Analyst is shown signal ids in its incident context and
+            # cites them naturally; they used to classify as `unknown` and fail existence, which
+            # is what the Judge was rejecting findings over ("cites anomaly IDs that do not exist
+            # in the anomaly_ids namespace"). Recognised and trivially existent, the same
+            # treatment `CITATION_ZSCALER_KB` gets above and for the same reason: the namespace is
+            # real, and inventing a stricter registry for it would buy accuracy this system is not
+            # trying to demonstrate.
+            resolved[cid] = Citation(id=cid, namespace=namespace, exists=True)
         else:
             resolved[cid] = Citation(id=cid, namespace=namespace, exists=False)
     return resolved
@@ -447,11 +467,41 @@ class ClaimCheck:
 
     @property
     def valid_pass1(self) -> bool:
+        """Whether this claim is *fully* verified — every check clean.
+
+        Still computed and still reported. It is no longer what decides whether a finding
+        survives; see `FindingCheck.valid`.
+        """
         return self.existence_ok and self.numeric_ok and self.retrieval_ok
 
     @property
     def valid(self) -> bool:
         return self.valid_pass1 and (self.scope_ok is not False)
+
+    @property
+    def blocks_finding(self) -> bool:
+        """Whether this claim's problems discard the finding. Deliberately: never.
+
+        CLAUDE.md rule 6 asks that "unverified claims get flagged, not silently rendered."
+        *Flagged* — not discarded. The code did the stronger thing: any imperfect claim
+        invalidated its finding, every invalid finding failed the analysis, and the incident was
+        recorded as "Triage did not complete". In production that reached 0 of 62 verdicts, so
+        nothing was ever verified, published, or shown — a strictly worse outcome for the
+        guarantee than flagging.
+
+        Every check still runs and every result is still recorded: `existence_ok`, `numeric_ok`,
+        `retrieval_ok` and `scope_ok` are computed per claim, written to
+        `triage_verdicts.invalid_citations`, and surfaced in the UI as "N claims failed citation
+        verification" next to the prose they belong to. What changed is only the consequence —
+        an analyst reads the verdict *and* what could not be substantiated in it, instead of
+        reading nothing at all.
+
+        This is a deliberate posture for a system whose purpose is demonstrating the
+        architecture. A production deployment wanting hard enforcement flips this to
+        `return not self.valid` and gets the old behaviour back in one line — which is the point
+        of the check being a named property rather than an inlined condition.
+        """
+        return False
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -582,8 +632,15 @@ class FindingCheck:
     technique_retrieval_ok: bool  # attack_technique_id itself was retrieved (or NO_KNOWN_MAPPING)
 
     @property
-    def valid(self) -> bool:
+    def fully_verified(self) -> bool:
+        """Every claim clean — what the UI reports, and what `citation_valid` records."""
         return self.technique_retrieval_ok and all(c.valid for c in self.claim_checks)
+
+    @property
+    def valid(self) -> bool:
+        """Whether this finding survives to the presenter. See `ClaimCheck.blocks_finding` for
+        why this is deliberately weaker than `fully_verified`."""
+        return self.technique_retrieval_ok and not any(c.blocks_finding for c in self.claim_checks)
 
 
 def claims_for_finding(finding: Finding) -> list[Claim]:

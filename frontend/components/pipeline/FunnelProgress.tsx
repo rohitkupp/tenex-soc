@@ -20,14 +20,22 @@ import { useAnalysisStream } from "@/lib/api/stream";
 import { numericCounters, type AnalysisDetail } from "@/lib/api/types";
 import { AnimatedCounter } from "./AnimatedCounter";
 
+// Must match `app.pipeline.contracts.STAGE_SEQUENCE` exactly, in order. This is a
+// hand-maintained copy of a backend list — the failure mode this repo has hit repeatedly — so
+// `backend/tests/test_contract_funnel_stages.py` reads this file and fails when the two drift.
+//
+// `anonymize` sits after `triage`, not between `enrich` and `detect`: it is the tenant boundary
+// and runs immediately before the data crosses into Tier 2. `tier2` was missing entirely, which
+// meant `currentIndex` was -1 for the whole final stage and the funnel never lit it up.
 const STAGES = [
   { key: "ingest", label: "Ingest" },
   { key: "parse", label: "Parse" },
   { key: "enrich", label: "Enrich" },
-  { key: "anonymize", label: "Anonymize" },
   { key: "detect", label: "Detect" },
   { key: "correlate", label: "Correlate" },
   { key: "triage", label: "Triage" },
+  { key: "anonymize", label: "Anonymize" },
+  { key: "tier2", label: "Tier 2" },
 ] as const;
 
 const COUNTER_ORDER = ["events", "signals", "incidents", "needs_attention"];

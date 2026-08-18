@@ -47,10 +47,16 @@ from datetime import UTC, datetime
 from typing import Any
 
 from aio_pika.abc import AbstractChannel, AbstractIncomingMessage
+from sqlalchemy import text
 
 from app.core.db import get_engine
 from app.core.logging import get_logger
-from app.pipeline.contracts import DEFAULT_COUNTERS, STAGE_PROGRESS, public_counters
+from app.pipeline.contracts import (
+    DEFAULT_COUNTERS,
+    QUEUE_STAGE_LABEL,
+    STAGE_PROGRESS,
+    public_counters,
+)
 from app.pipeline.dead_letters import insert_dead_letter
 from app.pipeline.errors import PermanentStageError
 from app.pipeline.messages import StageMessage, decode_stage_message
@@ -69,6 +75,37 @@ from app.queue.topology import (
 log = get_logger(__name__)
 
 StageHandler = Callable[[StageMessage], Awaitable[list[tuple[str, StageMessage]]]]
+
+
+def _mark_stage_started(message: StageMessage, queue_name: str) -> None:
+    """Claim `analyses.stage` for the stage now running.
+
+    Progress is deliberately left alone: `STAGE_PROGRESS` is a completion ladder, and a stage
+    that has only just started has not completed anything. The stage *label* is what was wrong —
+    it named the last finished stage — and that is what this corrects. Within-stage progress is
+    published separately by stages that can measure it (see `app.pipeline.stages.triage`).
+
+    Best-effort. A worker must not refuse to do its job because a cosmetic label write failed;
+    the stage's own completion write will correct the field a few minutes later regardless.
+    """
+    stage = QUEUE_STAGE_LABEL.get(queue_name)
+    if stage is None:
+        return
+    try:
+        with get_engine().begin() as conn:
+            conn.execute(
+                text(
+                    "UPDATE analyses SET stage = :stage "
+                    "WHERE id = :analysis_id AND tenant_id = :tenant_id AND status = 'running'"
+                ),
+                {
+                    "stage": stage,
+                    "analysis_id": message.analysis_id,
+                    "tenant_id": message.tenant_id,
+                },
+            )
+    except Exception:
+        log.warning("worker.stage_claim_failed", queue=queue_name, exc_info=True)
 
 
 class StageWorker:
@@ -110,6 +147,14 @@ class StageWorker:
             "analysis_id": str(message.analysis_id),
             "attempt": message.attempt,
         }
+
+        # Claim the stage before doing any work. `state.mark_stage` was only ever called by a
+        # stage on *completion*, so `analyses.stage` named the last stage that finished rather
+        # than the one currently running: throughout a ten-minute triage the dashboard said
+        # "correlate", and the funnel never advanced past it while the agent was plainly working.
+        # Marking on pickup makes the field mean "what is happening now", which is what both the
+        # UI and anyone reading the row assume it means.
+        await asyncio.to_thread(_mark_stage_started, message, self.queue_name)
 
         try:
             next_messages = await self.handler(message)
