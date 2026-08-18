@@ -28,23 +28,43 @@ log "Uploading"
 gcloud compute scp /tmp/tenex-src.tar.gz "${VM}":~/tenex-src.tar.gz \
   --zone "${ZONE}" --tunnel-through-iap --quiet
 
+# Unpack by building the new tree beside the old one and swapping, so the deployed tree is
+# exactly `git archive HEAD` by construction rather than by bookkeeping.
+#
+# Extracting over the top is not enough: tar only *adds and overwrites*, so a file deleted from
+# git survives on the VM forever. Ten modules deleted in the evidence-first rename stayed behind
+# on a previous deploy and raised `AttributeError: SourceType.OKTA` inside a worker.
+#
+# The first fix for that recorded a manifest of what each archive delivered and removed exactly
+# those paths next time. It could only ever clean files it had itself shipped, so everything
+# already on the VM when the manifest was introduced stayed invisible to it -- 106 files,
+# including all of `app/response/`, `app/detection/signal/`, `app/api/plans.py`,
+# `app/tier2/nl_to_sql.py`, and twenty test modules covering features the v2 migration deleted.
+# Those tests kept running against routes that no longer exist and their failures were written
+# off as pre-existing and unrelated.
+#
+# Only `deploy/gcp/.env*` is carried across -- it is placed out of band and never committed.
+# Anything not named there is destroyed on the next deploy. Safe for state: Postgres, MinIO,
+# RabbitMQ and the trained L3 artifacts all live in named Docker volumes (`model_artifacts` et
+# al, see compose.prod.yml), never in this directory.
+#
+# Keep the remote command short. It is passed as a single argv entry to gcloud, and an earlier
+# version of this block with the rationale inlined exceeded the system argument limit.
 log "Unpacking and restarting"
 "${SSH[@]}" --command "
   set -euo pipefail
-  mkdir -p ${REMOTE_DIR}
-  # Extracting over the top is not enough: tar only *adds and overwrites*, so a file deleted from
-  # git survives on the VM forever. That is not hypothetical -- ten modules deleted in the
-  # evidence-first rename stayed behind on a previous deploy, and the stale copy raised
-  # \`AttributeError: SourceType.OKTA\` inside a worker until it was cleaned by hand.
-  #
-  # So: remove exactly the paths the previous archive delivered, then extract the new one and
-  # record the new list. Precise rather than \`rm -rf\` because the production .env files are placed
-  # out of band and are not in the archive -- never in the manifest, so never removed.
-  if [ -f ~/.tenex-shipped-manifest ]; then
-    (cd ${REMOTE_DIR} && tr '\n' '\0' < ~/.tenex-shipped-manifest | xargs -0 -r rm -f)
+  rm -rf ${REMOTE_DIR}.new ${REMOTE_DIR}.old
+  mkdir -p ${REMOTE_DIR}.new
+  tar -xzf ~/tenex-src.tar.gz -C ${REMOTE_DIR}.new
+  if [ -d ${REMOTE_DIR} ]; then
+    mkdir -p ${REMOTE_DIR}.new/deploy/gcp
+    cp -p ${REMOTE_DIR}/deploy/gcp/.env ${REMOTE_DIR}.new/deploy/gcp/ 2>/dev/null || true
+    cp -p ${REMOTE_DIR}/deploy/gcp/.env.* ${REMOTE_DIR}.new/deploy/gcp/ 2>/dev/null || true
+    mv ${REMOTE_DIR} ${REMOTE_DIR}.old
   fi
-  tar -xzf ~/tenex-src.tar.gz -C ${REMOTE_DIR}
-  tar -tzf ~/tenex-src.tar.gz | grep -v '/$' > ~/.tenex-shipped-manifest
+  mv ${REMOTE_DIR}.new ${REMOTE_DIR}
+  rm -rf ${REMOTE_DIR}.old
+  rm -f ~/.tenex-shipped-manifest
   cd ${REMOTE_DIR}
   sudo docker compose -f deploy/gcp/compose.prod.yml up -d --build
   sudo docker compose -f deploy/gcp/compose.prod.yml exec -T api alembic upgrade head
