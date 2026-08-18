@@ -39,7 +39,7 @@ from app.pipeline import state
 from app.pipeline.contracts import STAGE_PROGRESS, public_counters
 from app.pipeline.errors import PermanentStageError
 from app.pipeline.messages import StageMessage
-from app.pipeline.progress import publish_progress
+from app.pipeline.progress import publish_progress, publish_tier2_update
 from app.pipeline.redis_client import get_redis
 from app.tier2.signature_sync import sync_incident_to_tier2
 
@@ -149,5 +149,20 @@ async def handle(message: StageMessage) -> list[tuple[str, StageMessage]]:
         ),
         counters=public_counters(result["counters"]),
     )
+
+    # Announce the fleet-wide change on its own channel. The funnel's `analysis:{id}` stream is
+    # watched by whoever opened *that* analysis; the Tier 2 page is watched by anyone, and what
+    # changed for them is the cross-tenant aggregate, not this run. Best-effort: a missed
+    # notification costs a stale chart until the next refresh, which must never be worth failing
+    # a completed pipeline over.
+    try:
+        await publish_tier2_update(
+            get_redis(),
+            analysis_id=message.analysis_id,
+            signatures_written=result["n_synced"],
+            events_copied=result.get("n_tier2_events", 0),
+        )
+    except Exception:
+        log.warning("tier2.update_publish_failed", exc_info=True)
 
     return []  # terminal — no next queue

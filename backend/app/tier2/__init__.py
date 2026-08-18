@@ -10,9 +10,9 @@ What lives in this package:
    for why that table structurally cannot carry tenant identity.
 2. **Cross-tenant indicator overlap** (`indicator_overlap.py`) — "this C2 domain appeared
    in 3 other tenants" without any tenant ever seeing another's raw indicator value.
-3. **Cross-tenant learning charts** (`technique_prevalence.py`, `detector_reliability.py`,
+3. **Cross-tenant learning charts** (`technique_prevalence.py`,
    `first_seen.py`) — the dashboard behind `/tier2`, all deterministic queries over
-   `tier2_signatures` or, for `detector_reliability.py` specifically, real operational
+   `tier2_signatures` or, for  specifically, real operational
    tables pooled across every tenant on purpose — see that module's own docstring.
 4. **`readonly_db.py` / `views.py`** — the dedicated, SELECT-only `tier2_readonly` Postgres
    role and the two views it may read. These used to back a natural-language-to-SQL chatbot

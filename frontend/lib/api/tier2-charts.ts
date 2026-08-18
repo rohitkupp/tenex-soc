@@ -15,8 +15,6 @@ export type OverlapDistributionResponse = components["schemas"]["OverlapDistribu
 export type TechniquePrevalenceEntryOut = components["schemas"]["TechniquePrevalenceEntryOut"];
 export type TechniquePrevalenceResponse = components["schemas"]["TechniquePrevalenceResponse"];
 
-export type DetectorReliabilityEntryOut = components["schemas"]["DetectorReliabilityEntryOut"];
-export type DetectorReliabilityResponse = components["schemas"]["DetectorReliabilityResponse"];
 
 export type FirstSeenTenantObservationOut = components["schemas"]["FirstSeenTenantObservationOut"];
 export type FirstSeenIndicatorOut = components["schemas"]["FirstSeenIndicatorOut"];

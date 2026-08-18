@@ -119,8 +119,8 @@ def get_tier2_db() -> Iterator[Session]:
 
     Routes that read `tier2_signatures` (or its views) must depend on this, not `get_db` — that
     table moved out of the primary database, so a route still holding a `get_db` session queries
-    a schema where it no longer exists and 500s. `detector_reliability` is the exception: it
-    aggregates `analyst_feedback`, which is tenant-scoped and stays in the primary database.
+    a schema where it no longer exists and 500s. Every Tier 2 route reads the Tier 2 database
+    now — the one former exception, `detector_reliability`, was removed with its chart.
     """
     db = get_tier2_session_factory()()
     try:

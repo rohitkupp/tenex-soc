@@ -1,5 +1,6 @@
 """`GET /api/tier2/overview`, `GET /api/tier2/indicator-overlap`, and the four cross-tenant
-learning charts below — docs/09's Tier 2 section.
+learning charts below — docs/09's Tier 2 section. (The detector-reliability chart and
+its route were removed; it was the only Tier 2 route reading the primary database.)
 
 **The NL-to-SQL chatbot (`POST /api/tier2/query`) has been removed.** It was the one route
 in this file with a real attack surface (`app.tier2.nl_to_sql.answer_question`, generating
@@ -22,26 +23,23 @@ non-reversible token that is the entire point of this feature (see
 oversight; it is what makes "this indicator appeared in 3 other tenants" answerable in the
 first place. Any authenticated analyst from any tenant sees the same cross-tenant
 aggregates — never another tenant's raw data, because none of it is stored here.
-
-`get_detector_reliability` is the one exception worth calling out by name: it reads real,
-tenant-scoped operational tables (`analyst_feedback`/`triage_verdicts`/`incidents`/`signals`),
-not the anonymized `tier2_signatures` table, and deliberately pools every tenant's feedback
-with no `tenant_id` filter at all. See `app.tier2.detector_reliability`'s module docstring
-for why that is a reviewed exception to `app.models.base`'s tenant-isolation guard, not a bug.
 """
 
 from __future__ import annotations
 
-from typing import Annotated
+import time
+from collections.abc import AsyncIterator
+from typing import Annotated, Final
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.core.db import get_db, get_tier2_db
+from app.core.db import get_tier2_db
 from app.core.security import CurrentUser, require_user
+from app.pipeline.progress import TIER2_CHANNEL
+from app.pipeline.redis_client import get_redis
 from app.schemas.tier2 import (
-    DetectorReliabilityEntryOut,
-    DetectorReliabilityResponse,
     FirstSeenIndicatorOut,
     FirstSeenResponse,
     FirstSeenTenantObservationOut,
@@ -54,7 +52,6 @@ from app.schemas.tier2 import (
     TechniquePrevalenceResponse,
     Tier2OverviewResponse,
 )
-from app.tier2.detector_reliability import list_detector_reliability
 from app.tier2.first_seen import list_first_seen_propagation
 from app.tier2.indicator_overlap import (
     get_overview,
@@ -154,29 +151,6 @@ def get_technique_prevalence(
     )
 
 
-@router.get("/tier2/detector-reliability", response_model=DetectorReliabilityResponse)
-def get_detector_reliability(
-    db: Annotated[Session, Depends(get_db)],
-    current: Annotated[CurrentUser, Depends(require_user)],
-) -> DetectorReliabilityResponse:
-    """Chart 3: per-detector confirm/dismiss counts pooled across every tenant's analyst
-    feedback — see `app.tier2.detector_reliability`'s module docstring for why this route is
-    a deliberate, reviewed exception to tenant scoping rather than an accidental leak."""
-    result = list_detector_reliability(db)
-    return DetectorReliabilityResponse(
-        total_tenants=result.total_tenants,
-        items=[
-            DetectorReliabilityEntryOut(
-                detector_key=row.detector_key,
-                detector_layer=row.detector_layer,
-                confirmed=row.confirmed,
-                dismissed=row.dismissed,
-            )
-            for row in result.items
-        ],
-    )
-
-
 @router.get("/tier2/first-seen", response_model=FirstSeenResponse)
 def get_first_seen_propagation(
     db: Annotated[Session, Depends(get_tier2_db)],
@@ -200,4 +174,64 @@ def get_first_seen_propagation(
             )
             for row in items
         ]
+    )
+
+
+# ------------------------------------------------------------------------------ live updates
+
+# Long enough that a page left open through a full pipeline run keeps its connection, short
+# enough that an abandoned tab does not hold one forever. Mirrors `app.api.stream`'s own bound.
+_MAX_TIER2_STREAM_SECONDS: Final[float] = 30 * 60.0
+_TIER2_POLL_INTERVAL_SECONDS: Final[float] = 5.0
+
+
+@router.get("/tier2/stream")
+async def stream_tier2_updates(
+    request: Request,
+    current: Annotated[CurrentUser, Depends(require_user)],
+) -> StreamingResponse:
+    """SSE: one frame each time a pipeline run contributes to Tier 2.
+
+    Subscribes to the single fleet-wide `TIER2_CHANNEL` rather than a per-analysis channel,
+    because what changes for a Tier 2 viewer is the cross-tenant aggregate, not one run. The
+    frame carries only counts — the client re-fetches, since every panel is a `GROUP BY` over the
+    whole store and a delta could not be applied to it correctly.
+
+    Authenticated like every other Tier 2 route, and like them not tenant-filtered: there is no
+    tenant to filter by, since the store holds only `tenant_hash`. A subscriber learns that the
+    fleet-wide picture moved, never whose data moved it.
+    """
+    _ = current  # auth is the point of the dependency; the stream itself is fleet-wide
+
+    async def events() -> AsyncIterator[str]:
+        redis_client = get_redis()
+        pubsub = redis_client.pubsub()
+        await pubsub.subscribe(TIER2_CHANNEL)
+        started = time.monotonic()
+        try:
+            # An immediate hello so the client can distinguish "connected, nothing yet" from
+            # "never connected" — without it an idle fleet looks identical to a broken stream.
+            yield 'data: {"type":"connected"}\n\n'
+            while True:
+                if await request.is_disconnected():
+                    return
+                if time.monotonic() - started > _MAX_TIER2_STREAM_SECONDS:
+                    return
+                message = await pubsub.get_message(
+                    ignore_subscribe_messages=True, timeout=_TIER2_POLL_INTERVAL_SECONDS
+                )
+                if message is not None and message.get("type") == "message":
+                    yield f"data: {message['data']}\n\n"
+                else:
+                    # Keep-alive comment. Proxies drop idle connections, and a Tier 2 page can
+                    # legitimately sit quiet for a long time between pipeline runs.
+                    yield ": keepalive\n\n"
+        finally:
+            await pubsub.unsubscribe(TIER2_CHANNEL)
+            await pubsub.aclose()  # type: ignore[no-untyped-call]
+
+    return StreamingResponse(
+        events(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

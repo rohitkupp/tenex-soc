@@ -625,28 +625,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/tier2/detector-reliability": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Detector Reliability
-         * @description Chart 3: per-detector confirm/dismiss counts pooled across every tenant's analyst
-         *     feedback — see `app.tier2.detector_reliability`'s module docstring for why this route is
-         *     a deliberate, reviewed exception to tenant scoping rather than an accidental leak.
-         */
-        get: operations["get_detector_reliability_api_tier2_detector_reliability_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/tier2/first-seen": {
         parameters: {
             query?: never;
@@ -715,6 +693,35 @@ export interface paths {
         };
         /** Get Tier2 Overview */
         get: operations["get_tier2_overview_api_tier2_overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/tier2/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Stream Tier2 Updates
+         * @description SSE: one frame each time a pipeline run contributes to Tier 2.
+         *
+         *     Subscribes to the single fleet-wide `TIER2_CHANNEL` rather than a per-analysis channel,
+         *     because what changes for a Tier 2 viewer is the cross-tenant aggregate, not one run. The
+         *     frame carries only counts — the client re-fetches, since every panel is a `GROUP BY` over the
+         *     whole store and a delta could not be applied to it correctly.
+         *
+         *     Authenticated like every other Tier 2 route, and like them not tenant-filtered: there is no
+         *     tenant to filter by, since the store holds only `tenant_hash`. A subscriber learns that the
+         *     fleet-wide picture moved, never whose data moved it.
+         */
+        get: operations["stream_tier2_updates_api_tier2_stream_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -944,28 +951,6 @@ export interface components {
             percentile: number | null;
             /** Value */
             value: number;
-        };
-        /** DetectorReliabilityEntryOut */
-        DetectorReliabilityEntryOut: {
-            /** Confirmed */
-            confirmed: number;
-            /** Detector Key */
-            detector_key: string;
-            /** Detector Layer */
-            detector_layer: string;
-            /** Dismissed */
-            dismissed: number;
-        };
-        /**
-         * DetectorReliabilityResponse
-         * @description `total_tenants` is the count of distinct tenants that have contributed *any* analyst
-         *     feedback, pooled across the whole fleet — see `app.tier2.detector_reliability`.
-         */
-        DetectorReliabilityResponse: {
-            /** Items */
-            items: components["schemas"]["DetectorReliabilityEntryOut"][];
-            /** Total Tenants */
-            total_tenants: number;
         };
         /**
          * DomainSemanticFinding
@@ -2970,37 +2955,6 @@ export interface operations {
             };
         };
     };
-    get_detector_reliability_api_tier2_detector_reliability_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: {
-                tenex_session?: string | null;
-            };
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["DetectorReliabilityResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
     get_first_seen_propagation_api_tier2_first_seen_get: {
         parameters: {
             query?: {
@@ -3117,6 +3071,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Tier2OverviewResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    stream_tier2_updates_api_tier2_stream_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: {
+                tenex_session?: string | null;
+            };
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

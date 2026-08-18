@@ -34,7 +34,6 @@ def user(tenant_cleanup: list[uuid.UUID]):
         ("GET", "/api/tier2/indicator-overlap"),
         ("GET", "/api/tier2/overlap-distribution"),
         ("GET", "/api/tier2/technique-prevalence"),
-        ("GET", "/api/tier2/detector-reliability"),
         ("GET", "/api/tier2/first-seen"),
     ],
 )
@@ -151,46 +150,6 @@ def test_technique_prevalence_always_returns_all_thirteen_allowlisted_techniques
         }
         assert item["tenant_count"] >= 0
         assert item["signature_count"] >= 0
-
-
-# ---------------------------------------------------------------------------- chart 3: detector reliability
-
-
-def test_detector_reliability_returns_the_documented_shape(client: TestClient, user) -> None:
-    authenticate(client, user)
-    resp = client.get("/api/tier2/detector-reliability")
-    assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert set(body.keys()) == {"total_tenants", "items"}
-    assert body["total_tenants"] >= 0
-    for item in body["items"]:
-        assert set(item.keys()) == {"detector_key", "detector_layer", "confirmed", "dismissed"}
-        assert item["confirmed"] >= 0
-        assert item["dismissed"] >= 0
-
-
-def test_detector_reliability_is_not_tenant_filtered_any_authenticated_user_sees_the_same_totals(
-    client: TestClient, tenant_cleanup: list[uuid.UUID]
-) -> None:
-    """Mirrors the overview fairness test above: pooling across every tenant's feedback is
-    this chart's entire point (`app.tier2.detector_reliability`'s module docstring), so two
-    different tenants' users must see the identical totals."""
-    tenant_a = make_tenant(name="Detector Reliability Fairness A")
-    tenant_b = make_tenant(name="Detector Reliability Fairness B")
-    tenant_cleanup.extend([tenant_a.id, tenant_b.id])
-    user_a = make_user(tenant_id=tenant_a.id, email=f"drel-a-{uuid.uuid4()}@test.local")
-    user_b = make_user(tenant_id=tenant_b.id, email=f"drel-b-{uuid.uuid4()}@test.local")
-
-    authenticate(client, user_a)
-    resp_a = client.get("/api/tier2/detector-reliability")
-    authenticate(client, user_b)
-    resp_b = client.get("/api/tier2/detector-reliability")
-
-    assert resp_a.status_code == resp_b.status_code == 200
-    assert resp_a.json() == resp_b.json()
-
-
-# ---------------------------------------------------------------------------- chart 4: first-seen propagation
 
 
 def test_first_seen_returns_the_documented_shape(client: TestClient, user) -> None:

@@ -70,26 +70,6 @@ class TechniquePrevalenceResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------- chart 3: detector reliability
-
-
-class DetectorReliabilityEntryOut(BaseModel):
-    detector_key: str
-    detector_layer: str
-    confirmed: int
-    dismissed: int
-
-
-class DetectorReliabilityResponse(BaseModel):
-    """`total_tenants` is the count of distinct tenants that have contributed *any* analyst
-    feedback, pooled across the whole fleet — see `app.tier2.detector_reliability`."""
-
-    total_tenants: int
-    items: list[DetectorReliabilityEntryOut]
-
-
-# ---------------------------------------------------------------------------- chart 4: first-seen propagation
-
-
 class FirstSeenTenantObservationOut(BaseModel):
     tenant_hash: str
     first_observed_at: datetime

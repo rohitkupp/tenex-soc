@@ -433,56 +433,6 @@
         "title": "BaselineComparisonOut",
         "type": "object"
       },
-      "DetectorReliabilityEntryOut": {
-        "properties": {
-          "confirmed": {
-            "title": "Confirmed",
-            "type": "integer"
-          },
-          "detector_key": {
-            "title": "Detector Key",
-            "type": "string"
-          },
-          "detector_layer": {
-            "title": "Detector Layer",
-            "type": "string"
-          },
-          "dismissed": {
-            "title": "Dismissed",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "detector_key",
-          "detector_layer",
-          "confirmed",
-          "dismissed"
-        ],
-        "title": "DetectorReliabilityEntryOut",
-        "type": "object"
-      },
-      "DetectorReliabilityResponse": {
-        "description": "`total_tenants` is the count of distinct tenants that have contributed *any* analyst\nfeedback, pooled across the whole fleet \u2014 see `app.tier2.detector_reliability`.",
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/DetectorReliabilityEntryOut"
-            },
-            "title": "Items",
-            "type": "array"
-          },
-          "total_tenants": {
-            "title": "Total Tenants",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "total_tenants",
-          "items"
-        ],
-        "title": "DetectorReliabilityResponse",
-        "type": "object"
-      },
       "DomainSemanticFinding": {
         "description": "change 8's LLM semantic domain-analysis pass: brand impersonation, typosquatting intent,\nand contextual relevance for destinations flagged rare or first-seen \u2014 the half the DGA\nclassifier's lexical-randomness model cannot catch (`microsoft-security-login-support.com`\nis linguistically ordinary).\n\n**Not produced by this endpoint.** The judgement itself is an LLM call, and every LLM call\nin this codebase lives in `app/agent` (prompts, verifier, citation infrastructure) \u2014 building\na second, parallel LLM call site inside `app/api` would duplicate that infrastructure outside\nthe module that owns it, which is exactly what the milestone's package boundaries (`app/api`,\n`app/schemas` only) are meant to prevent. This schema is change 8's plumbing on this side of\nthat boundary: `AnalysisOverviewResponse.domain_semantic_findings` always returns `[]` today.\nOnce an `app/agent` owner adds the semantic pass, wiring it in is exactly \"populate this\nfield from that call's output\" \u2014 the `Literal` on `label` already makes mislabelling it as\n`ML_ANOMALY_LABEL` a type error, not a future code-review nit, and the frontend badge\ncomponent already renders whichever label this schema sends.",
         "properties": {
@@ -4856,56 +4806,6 @@
         ]
       }
     },
-    "/api/tier2/detector-reliability": {
-      "get": {
-        "description": "Chart 3: per-detector confirm/dismiss counts pooled across every tenant's analyst\nfeedback \u2014 see `app.tier2.detector_reliability`'s module docstring for why this route is\na deliberate, reviewed exception to tenant scoping rather than an accidental leak.",
-        "operationId": "get_detector_reliability_api_tier2_detector_reliability_get",
-        "parameters": [
-          {
-            "in": "cookie",
-            "name": "tenex_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Tenex Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/DetectorReliabilityResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Get Detector Reliability",
-        "tags": [
-          "tier2"
-        ]
-      }
-    },
     "/api/tier2/first-seen": {
       "get": {
         "description": "Chart 4: for indicators seen by `min_tenants` or more tenants, when each tenant first\nobserved it \u2014 the early-warning story (\"tenant A on day 1, tenant B on day 4\").",
@@ -5135,6 +5035,54 @@
           }
         },
         "summary": "Get Tier2 Overview",
+        "tags": [
+          "tier2"
+        ]
+      }
+    },
+    "/api/tier2/stream": {
+      "get": {
+        "description": "SSE: one frame each time a pipeline run contributes to Tier 2.\n\nSubscribes to the single fleet-wide `TIER2_CHANNEL` rather than a per-analysis channel,\nbecause what changes for a Tier 2 viewer is the cross-tenant aggregate, not one run. The\nframe carries only counts \u2014 the client re-fetches, since every panel is a `GROUP BY` over the\nwhole store and a delta could not be applied to it correctly.\n\nAuthenticated like every other Tier 2 route, and like them not tenant-filtered: there is no\ntenant to filter by, since the store holds only `tenant_hash`. A subscriber learns that the\nfleet-wide picture moved, never whose data moved it.",
+        "operationId": "stream_tier2_updates_api_tier2_stream_get",
+        "parameters": [
+          {
+            "in": "cookie",
+            "name": "tenex_session",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tenex Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Stream Tier2 Updates",
         "tags": [
           "tier2"
         ]

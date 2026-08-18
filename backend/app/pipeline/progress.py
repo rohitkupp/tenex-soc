@@ -28,7 +28,8 @@ from __future__ import annotations
 
 import json
 import uuid
-from typing import Any, Literal
+from datetime import UTC, datetime
+from typing import Any, Final, Literal
 
 from redis.asyncio import Redis
 
@@ -69,3 +70,33 @@ async def publish_progress(
         status=status,
         counters=counters,
     )
+
+
+# Tier 2 is fleet-wide, not per-analysis: a run finishing changes what *every* tenant's Tier 2
+# page shows, because the whole point of that page is cross-tenant aggregates. So it gets one
+# shared channel rather than the `analysis:{id}` channels the funnel uses — a subscriber wants to
+# know "the cross-tenant picture changed", not which analysis changed it.
+TIER2_CHANNEL: Final[str] = "tier2:updates"
+
+
+async def publish_tier2_update(
+    redis_client: Redis,
+    *,
+    analysis_id: uuid.UUID,
+    signatures_written: int,
+    events_copied: int,
+) -> None:
+    """Announce that a pipeline run just contributed to Tier 2.
+
+    The payload is deliberately thin. Subscribers re-fetch the aggregates rather than trying to
+    apply a delta: the charts are `GROUP BY` results over the whole store, so a partial update
+    could not be applied correctly anyway, and a re-fetch is one cheap query set. The counts are
+    included only so the UI can say *what* changed without a second round trip.
+    """
+    payload = {
+        "analysis_id": str(analysis_id),
+        "signatures_written": signatures_written,
+        "events_copied": events_copied,
+        "emitted_at": datetime.now(UTC).isoformat(),
+    }
+    await redis_client.publish(TIER2_CHANNEL, json.dumps(payload))
