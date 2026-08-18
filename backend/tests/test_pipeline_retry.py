@@ -49,6 +49,14 @@ from app.queue.topology import dead_letter_queue, declare_topology, get_connecti
 from tests.conftest import make_analysis, make_tenant, make_user
 
 
+# Autouse for this module: every test here publishes to a real stage queue and consumes it back
+# with its own worker, so a running `docker compose` stack silently steals half the messages.
+# See the fixture's docstring in conftest.
+@pytest.fixture(autouse=True)
+def _require_exclusive_queues(no_competing_queue_consumers: None) -> None:
+    """Bind the session-scoped check to every test in this module."""
+
+
 @pytest.fixture(autouse=True)
 def _fresh_redis_client() -> Iterator[None]:
     """`app.pipeline.redis_client.get_redis` is a process-wide `@lru_cache`d client —

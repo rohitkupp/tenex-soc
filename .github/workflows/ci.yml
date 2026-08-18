@@ -27,6 +27,17 @@ jobs:
       run:
         working-directory: backend
 
+    # The suite needs every backing service, not just Postgres. With Postgres alone the queue,
+    # upload, Redis-progress and Tier 2 tests all fail on connection-refused — around a hundred
+    # of them — so this job could never have gone green even once the YAML parsed.
+    #
+    # No worker containers, deliberately. `tests/test_pipeline_retry.py` runs its own StageWorker
+    # against a real stage queue; a live worker subscribed to the same queue would take half the
+    # test's messages via RabbitMQ's round-robin. `conftest.no_competing_queue_consumers` warns
+    # when that is happening.
+    #
+    # Ports and credentials match `Settings`' own defaults (app/core/config.py), so only
+    # DATABASE_URL needs setting — the rest resolve to localhost with no env at all.
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -39,8 +50,37 @@ jobs:
           --health-cmd "pg_isready -U tenex -d tenex"
           --health-interval 5s --health-timeout 5s --health-retries 20
 
+      tier2-postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: tenex
+          POSTGRES_PASSWORD: tenex
+          POSTGRES_DB: tenex_tier2
+        ports: ["5433:5432"]
+        options: >-
+          --health-cmd "pg_isready -U tenex -d tenex_tier2"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
+      rabbitmq:
+        image: rabbitmq:3.13-management-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: tenex
+          RABBITMQ_DEFAULT_PASS: tenex
+        ports: ["5672:5672", "15672:15672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping"
+          --health-interval 10s --health-timeout 5s --health-retries 20
+
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+
     env:
       DATABASE_URL: postgresql+psycopg://tenex:tenex@localhost:5432/tenex
+      TIER2_DATABASE_URL: postgresql+psycopg://tenex:tenex@localhost:5433/tenex_tier2
 
     steps:
       - uses: actions/checkout@v4
@@ -61,8 +101,25 @@ jobs:
       - name: Type-check the layers that carry the argument
         run: mypy app/detection app/agent app/graph
 
+      # MinIO cannot be a `services:` entry: that block has no way to pass a command, and the
+      # image needs `server /data`. Running it as a step is the standard workaround.
+      - name: Start MinIO
+        run: |
+          docker run -d --name minio -p 9000:9000 \
+            -e MINIO_ROOT_USER=tenexminio -e MINIO_ROOT_PASSWORD=tenexminio123 \
+            minio/minio:latest server /data
+          for _ in $(seq 1 30); do
+            curl -sf http://localhost:9000/minio/health/live && break
+            sleep 2
+          done
+
       - name: Migrate
         run: alembic upgrade head
+
+      # Tier 2 is `create_all`, not Alembic — a deliberate exception documented on
+      # `app.core.db.init_tier2_schema`. Nothing else in CI would create these tables.
+      - name: Create the Tier 2 schema
+        run: python -c "from app.core.db import init_tier2_schema; init_tier2_schema()"
 
       - name: Test
         run: pytest -q --cov=app --cov-report=term-missing

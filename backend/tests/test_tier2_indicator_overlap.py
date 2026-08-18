@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import uuid
 
+from sqlalchemy import text
+
 import pytest
 
 from app.core.config import Settings
@@ -19,6 +21,7 @@ from app.core.db import (
 )
 from app.models.tier2_signature import Tier2Signature
 from app.tier2.hashing import indicator_hash, tenant_hash
+from app.tier2.views import TIER2_INDICATOR_OVERLAP_VIEW
 from app.tier2.indicator_overlap import (
     get_overview,
     list_indicator_overlap,
@@ -111,7 +114,21 @@ def test_overlap_surfaces_across_the_two_tenants(
 
     session = get_tier2_session_factory()()
     try:
-        rows = list_indicator_overlap(session, min_tenants=2, limit=50)
+        # The limit has to cover the whole overlap view, not a fixed top-N slice.
+        #
+        # `list_indicator_overlap` orders by tenant_count DESC, so a two-tenant indicator sinks as
+        # the store grows. The Tier 2 database is shared and accumulates across every pipeline
+        # test and every real run against this stack — it held 154 overlapping indicators here —
+        # so this row sat well outside the old `limit=50` window and the test failed asserting
+        # that a row it had just written did not exist. Nothing about the code under test had
+        # changed; the fixture simply stopped being one of the fifty most-overlapping indicators.
+        #
+        # Counting first keeps `list_indicator_overlap` genuinely under test (same call, same
+        # ordering, same filter) while removing the dependency on where this row happens to rank.
+        overlap_total = session.execute(
+            text(f"SELECT count(*) FROM {TIER2_INDICATOR_OVERLAP_VIEW} WHERE tenant_count >= 2")
+        ).scalar_one()
+        rows = list_indicator_overlap(session, min_tenants=2, limit=overlap_total + 10)
     finally:
         session.close()
 
@@ -135,7 +152,13 @@ def test_a_tenant_seen_indicator_alone_does_not_appear_as_overlap(
 
     session = get_tier2_session_factory()()
     try:
-        rows = list_indicator_overlap(session, min_tenants=2, limit=200)
+        # Same reasoning as the test above: a fixed limit is a cliff the shared, accumulating
+        # Tier 2 store will eventually walk off. This assertion is a *negative* one, so a limit
+        # that is too small would make it pass for the wrong reason, which is worse.
+        overlap_total = session.execute(
+            text(f"SELECT count(*) FROM {TIER2_INDICATOR_OVERLAP_VIEW} WHERE tenant_count >= 2")
+        ).scalar_one()
+        rows = list_indicator_overlap(session, min_tenants=2, limit=overlap_total + 10)
     finally:
         session.close()
 

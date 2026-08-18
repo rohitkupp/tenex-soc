@@ -29,6 +29,14 @@ from app.queue.topology import declare_topology, get_connection, work_queue
 from tests.conftest import authenticate, make_analysis, make_tenant, make_user
 
 
+# Autouse for this module: every test here publishes to a real stage queue and consumes it back
+# with its own worker, so a running `docker compose` stack silently steals half the messages.
+# See the fixture's docstring in conftest.
+@pytest.fixture(autouse=True)
+def _require_exclusive_queues(no_competing_queue_consumers: None) -> None:
+    """Bind the session-scoped check to every test in this module."""
+
+
 @pytest.fixture
 def dead_letter_row(tenant_cleanup: list[uuid.UUID]) -> Iterator[tuple[DeadLetter, uuid.UUID]]:
     tenant = make_tenant(name="Analyses Retry Test Tenant")

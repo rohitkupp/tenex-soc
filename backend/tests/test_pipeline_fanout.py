@@ -37,7 +37,7 @@ import pytest
 from sqlalchemy import text
 
 from app.core.config import get_settings
-from app.core.db import get_engine
+from app.core.db import get_engine, get_tier2_engine
 from app.parsers.registry import detect_source_types
 from app.pipeline import dead_letter_sink, state
 from app.pipeline.base_worker import StageWorker
@@ -66,6 +66,14 @@ from datagen.rng import SeededRandom
 from datagen.types import TimeWindow
 from tests.conftest import make_analysis, make_tenant, make_user
 from tests.fixtures.agent import SafeFallbackCaller
+
+
+# Autouse for this module: every test here publishes to a real stage queue and consumes it back
+# with its own worker, so a running `docker compose` stack silently steals half the messages.
+# See the fixture's docstring in conftest.
+@pytest.fixture(autouse=True)
+def _require_exclusive_queues(no_competing_queue_consumers: None) -> None:
+    """Bind the session-scoped check to every test in this module."""
 
 _ORG_SPEC = corpus.OrgSpec(n_users=15, n_departments=2, offices=("US-CA",), n_service_accounts=2)
 
@@ -132,7 +140,12 @@ async def test_upload_flows_through_every_stage_with_parser_fanout(
     tenant_signature_hash = _tenant_hash(tenant.id, bytes(tenant.pseudonym_salt))
 
     def _cleanup_tier2_signatures() -> None:
-        with get_engine().begin() as conn:
+        # `get_tier2_engine`, not `get_engine`: `tier2_signatures` moved to its own physically
+        # separate database in migration e2f71b3c8a45, and this cleanup was left pointing at the
+        # primary one. It raised `UndefinedTable` in teardown — after the test body had already
+        # passed — so it surfaced as a pytest ERROR rather than a failure and read like flaky
+        # infrastructure.
+        with get_tier2_engine().begin() as conn:
             conn.execute(
                 text("DELETE FROM tier2_signatures WHERE tenant_hash = :h"),
                 {"h": tenant_signature_hash},

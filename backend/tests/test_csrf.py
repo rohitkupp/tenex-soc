@@ -311,7 +311,15 @@ def test_full_flow_login_capture_cookies_upload_with_and_without_header(
     tenant_cleanup.append(tenant.id)
     make_user(tenant_id=tenant.id, email="fullflow@example.com", password="correct-horse")
 
-    flow_client = TestClient(app, headers={"origin": TEST_ORIGIN})
+    # `https://` base_url, unlike every other client in this suite, because this is the one test
+    # that performs a *real* login and then relies on the returned Set-Cookie being sent back.
+    # `app.core.security` marks the session and CSRF cookies `Secure` whenever the deployment
+    # says to, and httpx correctly refuses to return a `Secure` cookie over `http://testserver` —
+    # so the login succeeded, the cookies were stored, and the very next request arrived
+    # unauthenticated with a 401 that looked like a session bug. Every other test sets its cookies
+    # directly via `authenticate()`, which never parses a `Secure` attribute and so never noticed.
+    # A non-Secure cookie is sent over https too, so this is correct under either setting.
+    flow_client = TestClient(app, base_url="https://testserver", headers={"origin": TEST_ORIGIN})
 
     login_response = flow_client.post(
         "/api/auth/login",

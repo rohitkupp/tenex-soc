@@ -10,7 +10,12 @@ created under it (users, uploads, analyses) regardless of exactly what was track
 
 from __future__ import annotations
 
+import base64
+import json
 import os
+import re
+import urllib.request
+import warnings
 
 # Must precede every `app.*` import below: `app.core.db` reads these at module scope, and its
 # production default of one connection plus one spare is sized for the deployed Supabase pooler
@@ -179,7 +184,11 @@ def tenant_cleanup() -> Iterator[list[uuid.UUID]]:
         # pipeline output and fails in a way that reads like flakiness.
         for table, column in (
             ("learning_events", "tenant_id"),
-            ("tier2_signatures", "tenant_id"),
+            # `tier2_signatures` is deliberately absent. It lives in the separate Tier 2 database
+            # (migration e2f71b3c8a45) and carries `tenant_hash`, never `tenant_id` — so this
+            # statement matched no table and no column, and the `except` below swallowed it every
+            # run. Tests that produce signatures clean them up against `get_tier2_engine`
+            # themselves; see `test_pipeline_fanout.py`.
             ("signals", "tenant_id"),
             ("incidents", "tenant_id"),
             ("baseline_windows", "tenant_id"),
@@ -285,6 +294,56 @@ def make_analysis(
         return analysis
     finally:
         session.close()
+
+
+@pytest.fixture(scope="session")
+def no_competing_queue_consumers() -> None:
+    """Warn loudly if a worker stack is consuming the queues a test is about to use.
+
+    `tests/test_pipeline_retry.py` and friends run their own `StageWorker` against a *real* stage
+    queue (`TEST_QUEUE = "enrich"`). If `docker compose up` is running, the live `enricher`
+    container is subscribed to that same queue, RabbitMQ round-robins between the two consumers,
+    and roughly half the test's messages are delivered to production code that quietly does the
+    wrong thing with them. The tests then fail on assertions about messages that never arrived —
+    nine at once, all looking like broker flakiness or a retry bug rather than like a second
+    subscriber.
+
+    **Diagnostic only: it never skips and never fails.** An earlier version called `pytest.skip`
+    when it could not reach the management API, which turned 33 passing tests into silent skips
+    on any host without it — trading a confusing failure for a much worse false pass. Its whole
+    job is to make the *next* failure legible, so when it cannot tell, it says nothing and gets
+    out of the way.
+    """
+    url = os.environ.get("RABBITMQ_URL", "")
+    match = re.match(r"amqp://([^:]+):([^@]+)@([^:/]+)", url)
+    if not match:
+        return
+    user, password, host = match.groups()
+
+    request = urllib.request.Request(f"http://{host}:15672/api/queues")
+    auth = base64.b64encode(f"{user}:{password}".encode()).decode()
+    request.add_header("Authorization", f"Basic {auth}")
+    try:
+        with urllib.request.urlopen(request, timeout=5) as response:
+            queues = json.load(response)
+    except Exception:  # noqa: BLE001 - any failure here means "cannot tell", never "problem"
+        return
+
+    busy = {
+        q["name"]: q.get("consumers", 0)
+        for q in queues
+        if q.get("consumers", 0) > 0 and q.get("name", "").startswith("q.")
+    }
+    if busy:
+        warnings.warn(
+            "A worker stack is consuming the pipeline queues these tests publish to: "
+            f"{busy}. RabbitMQ round-robins between those consumers and each test's own worker, "
+            "so messages are delivered to production code and assertions fail on messages that "
+            "never arrive. If the queue tests below fail, stop the workers and re-run:\n"
+            "    docker compose stop orchestrator parser-zscaler enricher detector correlator "
+            "agent anonymizer tier2-sync dead-letter-sink",
+            stacklevel=1,
+        )
 
 
 @pytest.fixture

@@ -51,7 +51,7 @@ import pytest
 from sqlalchemy import text
 
 from app.core.config import get_settings
-from app.core.db import get_engine
+from app.core.db import get_engine, get_tier2_engine
 from app.pipeline import dead_letter_sink, state
 from app.pipeline.base_worker import StageWorker
 from app.pipeline.messages import StageMessage
@@ -172,7 +172,12 @@ def test_full_upload_to_tier2_produces_nonzero_events_signals_incidents(
     tenant_signature_hash = _tenant_hash(tenant.id, bytes(tenant.pseudonym_salt))
 
     def _cleanup_tier2_signatures() -> None:
-        with get_engine().begin() as conn:
+        # `get_tier2_engine`, not `get_engine`: `tier2_signatures` moved to its own physically
+        # separate database in migration e2f71b3c8a45, and this cleanup was left pointing at the
+        # primary one. It raised `UndefinedTable` in teardown — after the test body had already
+        # passed — so it surfaced as a pytest ERROR rather than a failure and read like flaky
+        # infrastructure.
+        with get_tier2_engine().begin() as conn:
             conn.execute(
                 text("DELETE FROM tier2_signatures WHERE tenant_hash = :h"),
                 {"h": tenant_signature_hash},
