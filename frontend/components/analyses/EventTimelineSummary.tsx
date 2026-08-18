@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * The Timeline tab's plain-language account of the traffic, above the event table.
+ * The Events tab's plain-language account of the traffic, above the event table.
  *
  * The windows are cut deterministically in SQL (`app.api.events._window_aggregates`) — equal
  * buckets across the file's span, each carrying its own event/user/domain counts, allowed-blocked
@@ -14,7 +14,7 @@
  * the result is stored on `analyses.event_timeline_summary`, so it renders on later visits for
  * free; this component shows the stored copy when one exists.
  */
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
 import { formatUsd } from "@/lib/format";
 
@@ -42,6 +42,15 @@ export function EventTimelineSummary({
   stored: SummaryResponse | null;
 }) {
   const [result, setResult] = useState<SummaryResponse | null>(stored);
+
+  // `useState(stored)` captures the prop once, at mount. The pipeline now writes the summary
+  // during triage, so the value arrives on a *later* server render — after `router.refresh()`
+  // or a tab switch — and the initial `null` stuck, leaving the "Summarise" button up until a
+  // hard reload remounted the component. Sync the prop in whenever it becomes available, and
+  // never clobber a result this component generated itself.
+  useEffect(() => {
+    if (stored) setResult((current) => current ?? stored);
+  }, [stored]);
   const [state, setState] = useState<"idle" | "loading" | "error">("idle");
   const [message, setMessage] = useState<string | null>(null);
 

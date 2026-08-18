@@ -73,6 +73,7 @@ from app.agent.context import (
 )
 from app.agent.retrieval import RetrievalCandidate, retrieve_candidates
 from app.agent.schemas import (
+    NO_KNOWN_MAPPING,
     AnalystOutput,
     DomainSemanticOutput,
     EventTimelineOutput,
@@ -747,7 +748,7 @@ def _run_flow(
         effort=ANALYST_EFFORT,
     )
     try:
-        analyst_output = AnalystOutput.model_validate(analysis_raw)
+        analyst_output = AnalystOutput.model_validate(_merged_hypothesis_evaluations(analysis_raw))
     except ValidationError as exc:
         raise SchemaValidationError(f"analyst submit_analysis invalid: {exc}") from exc
 
@@ -1479,3 +1480,34 @@ def summarize_event_windows(
         cost_usd=estimate_cost_usd(usage),
         latency_ms=elapsed_ms,
     )
+
+
+def _merged_hypothesis_evaluations(raw: Any) -> Any:
+    """Fold the tool's mandatory `no_known_mapping_evaluation` field back into
+    `hypothesis_evaluations`, so `AnalystOutput` keeps its single-list shape.
+
+    The null hypothesis is a separate required property on the tool schema because as a list
+    member the model omitted it on essentially every call, and `AnalystOutput`'s validator then
+    rejected the whole analysis — a 15-incident run produced 15 verdicts all reading "Triage did
+    not complete". Splitting it out makes it structurally unskippable under `strict: true`;
+    merging it here means nothing downstream has to know that happened.
+
+    Tolerant of a model that *also* left it in the list (no duplicate entry is added) and of the
+    field being absent entirely (older recorded fixtures predate it).
+    """
+    if not isinstance(raw, dict):
+        return raw
+    null_hypothesis = raw.get("no_known_mapping_evaluation")
+    if null_hypothesis is None:
+        return raw
+
+    merged = dict(raw)
+    merged.pop("no_known_mapping_evaluation", None)
+    evaluations = list(merged.get("hypothesis_evaluations") or [])
+    already_present = any(
+        isinstance(h, dict) and h.get("technique_id") == NO_KNOWN_MAPPING for h in evaluations
+    )
+    if not already_present:
+        evaluations.append(null_hypothesis)
+    merged["hypothesis_evaluations"] = evaluations
+    return merged

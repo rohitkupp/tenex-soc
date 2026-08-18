@@ -680,11 +680,17 @@ def _technique_or_no_mapping_enum() -> list[str]:
     return [*all_technique_ids(), NO_KNOWN_MAPPING]
 
 
-def _hypothesis_evaluation_schema() -> dict[str, Any]:
+def _hypothesis_evaluation_schema(*, technique_id_const: str | None = None) -> dict[str, Any]:
+    """`technique_id_const` pins `technique_id` to a single value, used for the mandatory
+    null-hypothesis field so the model cannot label it as some other technique."""
     return {
         "type": "object",
         "properties": {
-            "technique_id": {"type": "string", "enum": _technique_or_no_mapping_enum()},
+            "technique_id": (
+                {"type": "string", "enum": [technique_id_const]}
+                if technique_id_const is not None
+                else {"type": "string", "enum": _technique_or_no_mapping_enum()}
+            ),
             "evidence_for": {"type": "array", "items": _claim_schema()},
             "evidence_against": {"type": "array", "items": _claim_schema()},
             "missing_evidence": {"type": "array", "items": {"type": "string"}},
@@ -762,9 +768,25 @@ def build_submit_analysis_tool() -> dict[str, Any]:
                     "type": "array",
                     "items": _hypothesis_evaluation_schema(),
                 },
+                # The null hypothesis is its own required field, not an entry the model has to
+                # remember to append to the list above. As a list member it was omitted on
+                # essentially every real call — every incident in a 15-incident run came back
+                # "Triage did not complete: hypothesis_evaluations must include an entry
+                # evaluating 'NO_KNOWN_MAPPING'", so no incident got a usable verdict at all.
+                # `strict: true` makes a named required property structurally impossible to skip,
+                # which a "one of these array items must have a particular id" rule can never be.
+                # `_merged_hypothesis_evaluations` folds it back into one list, so `AnalystOutput`
+                # and every consumer downstream are unchanged.
+                "no_known_mapping_evaluation": _hypothesis_evaluation_schema(
+                    technique_id_const=NO_KNOWN_MAPPING
+                ),
                 "findings": {"type": "array", "items": _finding_schema()},
             },
-            "required": ["hypothesis_evaluations", "findings"],
+            "required": [
+                "hypothesis_evaluations",
+                "no_known_mapping_evaluation",
+                "findings",
+            ],
             "additionalProperties": False,
         },
     }

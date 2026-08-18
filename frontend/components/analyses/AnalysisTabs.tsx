@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Overview · Incidents · Events · Evidence as tabs on the analysis page.
+ * Overview · Events · Signals · Incidents · Evidence as tabs on the analysis page.
  *
  * These were four routes (`/analyses/[id]`, `.../incidents`, `.../events`, `.../evidence`).
  * Every switch between them was a full server navigation, which on this app meant a fresh
@@ -26,16 +26,16 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { LazyEvidenceTab } from "@/components/evidence/LazyEvidenceTab";
 
-export type AnalysisTabKey = "overview" | "timeline" | "signals" | "incidents" | "evidence";
+export type AnalysisTabKey = "overview" | "events" | "signals" | "incidents" | "evidence";
 
 // Order is deliberate and reads outward from the summary: what happened (Overview), then the
-// readable account of the traffic (Timeline), then the raw detector firings behind it (Signals),
+// readable account of the traffic (Events), then the raw detector firings behind it (Signals),
 // then what those correlated into (Incidents), then the underlying payloads (Evidence).
 const TABS: { key: AnalysisTabKey; label: string }[] = [
   { key: "overview", label: "Overview" },
-  { key: "timeline", label: "Timeline" },
+  { key: "events", label: "Events" },
   { key: "signals", label: "Signals" },
-  { key: "incidents", label: "Incidents" },
+  { key: "incidents", label: "Anomalies" },
   { key: "evidence", label: "Evidence" },
 ];
 
@@ -46,14 +46,14 @@ function isTabKey(value: string | null): value is AnalysisTabKey {
 export function AnalysisTabs({
   overview,
   incidents,
-  timeline,
+  events,
   signals,
   analysisId,
   counts,
 }: {
   overview: ReactNode;
   incidents: ReactNode;
-  timeline: ReactNode;
+  events: ReactNode;
   signals: ReactNode;
   analysisId: string;
   counts?: Partial<Record<AnalysisTabKey, number>>;
@@ -78,7 +78,7 @@ export function AnalysisTabs({
 
   const panels: Record<AnalysisTabKey, ReactNode> = {
     overview,
-    timeline,
+    events,
     signals,
     incidents,
     // Rendered here rather than handed in as a prop: the Evidence panel needs to know whether

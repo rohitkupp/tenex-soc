@@ -9,6 +9,7 @@ import type {
   IncidentsListResponse,
 } from "@/lib/api/types";
 import { formatDate, formatNumber, formatPercent, formatUsd } from "@/lib/format";
+import { numericCounters } from "@/lib/api/types";
 import { FunnelProgress } from "@/components/pipeline/FunnelProgress";
 import { RetryButton } from "@/components/analyses/RetryButton";
 import { ExecutiveSummary } from "@/components/analyses/ExecutiveSummary";
@@ -187,7 +188,11 @@ export default async function AnalysisDetailPage({
       <AnalysisTabs
         counts={{
           incidents: incidents?.items.length,
-          timeline: events?.items.length,
+          // The pipeline's own total, not the page size. `events.items.length` is capped at the
+          // 100 this page fetches, so the tab read "Events 100" on a 510-event file — the count
+          // described the preview rather than the data. `analyses.counters.events` is the real
+          // figure the parse stage recorded, and it is what Signals already reports.
+          events: numericCounters(analysis.counters).events,
           signals: timeline?.phases.length,
         }}
         overview={
@@ -207,7 +212,7 @@ export default async function AnalysisDetailPage({
             <IncidentQueue analysisId={analysis.id} incidents={incidents.items} />
           )
         }
-        timeline={
+        events={
           events === null ? (
             <Unreachable what="events" />
           ) : (
