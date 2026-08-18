@@ -77,6 +77,7 @@ from app.agent.context import log_citation_id
 from app.agent.orchestrator import (
     narrate_analysis,
     narrative_columns,
+    summarize_event_windows,
     triage_top_incidents_for_analysis,
 )
 from app.api.analyses import (
@@ -85,6 +86,7 @@ from app.api.analyses import (
     _compute_notable_destinations,
     _narrator_overview_payload,
 )
+from app.api.events import _window_aggregates
 from app.api.incident_detail import analysis_timeline_phases
 from app.core.config import get_settings
 from app.core.db import get_engine, get_session_factory
@@ -265,6 +267,35 @@ def _run_triage(message: StageMessage, *, caller: LLMCaller | None = None) -> di
                 citation_valid=narration_citation_valid,
                 cost_usd=str(narration_cost),
             )
+            # ---- Timeline tab: windowed event summary, once per analysis ----
+            # Produced here for the same reason as the narrative: the tab should render what the
+            # run already paid for, not ask the analyst to buy it again on first visit. Windows
+            # are cut deterministically in SQL; this call only writes prose over them.
+            timeline_summary: dict[str, Any] | None = None
+            try:
+                windows = _window_aggregates(session, message.tenant_id, message.analysis_id)
+                if windows:
+                    tl = summarize_event_windows(
+                        windows=windows, caller=active_caller, model=settings.anthropic_model
+                    )
+                    timeline_summary = {
+                        "overview": tl.overview,
+                        "windows": list(tl.windows),
+                        "citation_valid": tl.citation_valid,
+                        "invalid_citation_count": len(tl.invalid_citations),
+                        "model": tl.model,
+                        "generated_at": datetime.now(UTC).isoformat(),
+                    }
+                    narration_cost += tl.cost_usd
+            except Exception:
+                # A failed summary must not take down a run that has already triaged every
+                # incident — the tab degrades to its "Summarise timeline" button.
+                log.warning(
+                    "triage.event_timeline_failed",
+                    analysis_id=str(message.analysis_id),
+                    exc_info=True,
+                )
+
             # ---- change 8: semantic domain findings, once per analysis ----
             # This moved here from inside `GET /api/analyses/{id}/overview`, where it ran a live
             # LLM call on every request — seconds of latency and real tokens per page view.
@@ -289,6 +320,7 @@ def _run_triage(message: StageMessage, *, caller: LLMCaller | None = None) -> di
                             f.model_dump(mode="json") for f in semantic_findings
                         ],
                         domain_semantics_generated_at=datetime.now(UTC),
+                        event_timeline_summary=timeline_summary,
                         **narrative_columns(narration),
                     )
                 )

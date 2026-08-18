@@ -602,6 +602,14 @@ export interface TimelinePhaseOut {
  * the UI can say a cap was applied but must not fabricate "of N" — see
  * `components/analyses/AnalysisTimeline.tsx`.
  */
+/** `GET /api/incidents/{id}/timeline` — the per-incident phase list. Same envelope as the
+ * analysis-wide route: an object with `phases`, never a bare array. The case file typed this as
+ * `TimelinePhaseOut[]`, which type-checked and then threw `phases.map is not a function` at
+ * render time. */
+export interface TimelineResponse {
+  phases: TimelinePhaseOut[];
+}
+
 export interface AnalysisTimelineResponse {
   phases: TimelinePhaseOut[];
   truncated: boolean;

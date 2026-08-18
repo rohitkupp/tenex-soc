@@ -4,7 +4,7 @@ import { fetchServer } from "@/lib/api/server";
 import type {
   IncidentDetail,
   IncidentGraph,
-  TimelinePhaseOut,
+  TimelineResponse,
 } from "@/lib/api/types";
 import { CaseHeader } from "@/components/incidents/case/CaseHeader";
 import { NarrativeBlock } from "@/components/incidents/case/NarrativeBlock";
@@ -43,7 +43,10 @@ export default async function CaseFilePage({
   // server-render budget and throw. `LazyEvidenceSection` fetches it after paint.
   const [incident, timeline, graph] = await Promise.all([
     fetchServer<IncidentDetail>(`/api/incidents/${iid}`),
-    fetchServer<TimelinePhaseOut[]>(`/api/incidents/${iid}/timeline`),
+    // `TimelineResponse`, not a bare array: the route returns `{phases: [...]}`. Typed as an
+    // array it type-checked fine and then threw `phases.map is not a function` during the
+    // server render — the whole case file 500'd on every incident click.
+    fetchServer<TimelineResponse>(`/api/incidents/${iid}/timeline`),
     fetchServer<IncidentGraph>(`/api/incidents/${iid}/graph`),
   ]);
 
@@ -115,7 +118,7 @@ export default async function CaseFilePage({
       {/* 5. Timeline */}
       <section>
         <SectionHeading>Timeline</SectionHeading>
-        <TimelinePhases phases={timeline ?? []} />
+        <TimelinePhases phases={timeline?.phases ?? []} />
       </section>
 
       {/* 6. Evidence — docs/v2_migration change 16, between Timeline and Signals */}

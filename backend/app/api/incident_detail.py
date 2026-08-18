@@ -101,7 +101,10 @@ MAX_ANALYSIS_EVIDENCE_ITEMS = 500
 # prompt, stop") is a UI-facing instance of the same principle here: an unbounded phase list is
 # not "summarized". Kept by confidence, not truncated arbitrarily — see
 # `get_analysis_timeline`'s docstring for how the cut interacts with chronological ordering.
-MAX_ANALYSIS_TIMELINE_PHASES = 100
+# The Signals tab pages through this client-side (100 at a time, load-more), so the server cap
+# is the *total* it can ever reveal, not a page size. At 100 the two were identical and the
+# load-more button never appeared, because the client had already been given everything.
+MAX_ANALYSIS_TIMELINE_PHASES = 1000
 
 # The graph endpoint returns the incident's seed entities plus their 1-hop neighbourhood
 # (docs/05). On a busy analysis a single hub entity — a shared proxy egress IP, a CDN domain —

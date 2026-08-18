@@ -14,6 +14,8 @@
  * unchanged from the inert M1 placeholder this originally replaced — see
  * `lib/api/stream.ts` for the terminal-status contract this reads.
  */
+import { useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { useAnalysisStream } from "@/lib/api/stream";
 import { numericCounters, type AnalysisDetail } from "@/lib/api/types";
 import { AnimatedCounter } from "./AnimatedCounter";
@@ -93,6 +95,27 @@ export function FunnelProgress({ analysisId, initial = null }: FunnelProgressPro
   const failed = status === "failed";
   const complete = (isFinished && !failed) || (done && status === "complete");
   const errorMessage = event?.message ?? initial?.error ?? null;
+
+  // Pull the server-rendered halves of this page (overview, incidents, signals, narrative) once
+  // the pipeline reaches a terminal state. The funnel's own counters came from SSE and updated
+  // live, but every panel around it was fetched during the original server render and stayed
+  // frozen at "0 incidents" until the analyst manually reloaded — the run finished and the page
+  // said nothing had happened.
+  //
+  // `router.refresh()` re-runs the server components in place, preserving the active tab and
+  // scroll position, which a full reload would discard. Guarded by a ref so a stream that emits
+  // several terminal events does not refetch repeatedly.
+  const router = useRouter();
+  const refreshed = useRef(false);
+  const reachedTerminal = status === "complete" || status === "failed";
+  useEffect(() => {
+    if (!reachedTerminal || refreshed.current) return;
+    // Only meaningful when the page was rendered mid-run; an already-finished analysis was
+    // server-rendered complete and has nothing to catch up on.
+    if (isFinished) return;
+    refreshed.current = true;
+    router.refresh();
+  }, [reachedTerminal, isFinished, router]);
 
   const statusLabel = failed
     ? "Failed"

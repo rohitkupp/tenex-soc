@@ -24,6 +24,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import select, text
 
+from app.api.incident_detail import MAX_ANALYSIS_TIMELINE_PHASES
 from app.core.config import get_settings
 from app.core.db import get_engine, get_session_factory
 from app.models.base import tenant_scope
@@ -271,8 +272,8 @@ def test_analysis_timeline_orders_chronologically_and_truncates_by_confidence(
     tenant, user = authed
     analysis = make_analysis(tenant_id=tenant.id, user_id=user.id)
     start = datetime(2026, 6, 1, tzinfo=UTC)
-    total = 101
-    weak_index = 50
+    total = MAX_ANALYSIS_TIMELINE_PHASES + 1
+    weak_index = total // 2
 
     with get_engine().begin() as conn:
         conn.execute(
@@ -311,7 +312,7 @@ def test_analysis_timeline_orders_chronologically_and_truncates_by_confidence(
     assert body["truncated"] is True
     assert body["total_phases"] == total
     phases = body["phases"]
-    assert len(phases) == 100
+    assert len(phases) == MAX_ANALYSIS_TIMELINE_PHASES
     assert body["total_phases"] > len(phases)  # the pairing the field exists to guarantee
 
     kept = [p["event_ids"][0] for p in phases]
