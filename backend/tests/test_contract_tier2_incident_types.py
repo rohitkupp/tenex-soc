@@ -97,3 +97,57 @@ def test_the_seeder_history_floor_is_absolute_not_rolling() -> None:
 
     # Propagation lag cannot push a signature past the present either.
     assert _observed_at(now, 0.0, extra_hours=10_000) <= now
+
+
+def test_every_allowlisted_technique_maps_to_an_incident_type() -> None:
+    """The map must cover `data/kb/mitre/allowlist.yml` exactly.
+
+    It covered seven of thirteen, so six techniques the Analyst can legitimately cite — T1105,
+    T1505.003, T1102, T1090, T1041, T1595, T1204, T1568.002, T1567.004 — fell to
+    `uncategorized`. That was the real source of the fallback bucket: an incomplete map, not
+    genuinely unmappable incidents. Worse, once `should_sync_to_tier2` began declining unmapped
+    verdicts, the same gap would have silently dropped real threat intelligence — including web
+    shells and ingress tool transfer, two of the demo's own scenarios — out of Tier 2 entirely.
+    Adding a technique to the allowlist without adding it here fails this test.
+    """
+    import pathlib as _pathlib
+    import re
+
+    allowlist_path = _pathlib.Path(__file__).resolve().parents[1] / "data/kb/mitre/allowlist.yml"
+    allowlisted = set(re.findall(r"- id: (\S+)", allowlist_path.read_text()))
+    assert allowlisted, "allowlist.yml parsed to nothing — the format changed"
+
+    unmapped = sorted(allowlisted - set(_TECHNIQUE_INCIDENT_TYPE))
+    assert not unmapped, (
+        f"allowlisted technique(s) {unmapped} have no incident_type mapping, so a real verdict "
+        "citing one would be refused by should_sync_to_tier2 and never reach Tier 2"
+    )
+
+
+def test_unreachable_mappings_are_known_and_declared() -> None:
+    """The reverse direction, held deliberately loose.
+
+    `_TECHNIQUE_INCIDENT_TYPE` maps two techniques the Analyst can never cite: T1078 (Valid
+    Accounts) and T1530 (Data from Cloud Storage Object). Neither is in
+    `data/kb/mitre/allowlist.yml`, because neither is observable from web proxy telemetry — a
+    proxy cannot witness an account being used or a cloud object being read, only traffic.
+
+    They are kept rather than deleted because they are the only bridge to two of docs/11's five
+    scenario names (`insider_mass_download`, `peer_group_deviation`), which the fleet seeder
+    draws from. Deleting them would shrink the taxonomy to three reachable categories; keeping
+    them undeclared would let a genuinely fabricated id slip in unnoticed. So they are named
+    here: anything *else* outside the allowlist is a real defect and fails.
+    """
+    import pathlib as _pathlib
+    import re
+
+    allowlist_path = _pathlib.Path(__file__).resolve().parents[1] / "data/kb/mitre/allowlist.yml"
+    allowlisted = set(re.findall(r"- id: (\S+)", allowlist_path.read_text()))
+    parents = {t.split(".")[0] for t in allowlisted}
+
+    known_unreachable = {"T1078", "T1530"}
+    unexpected = sorted(set(_TECHNIQUE_INCIDENT_TYPE) - allowlisted - parents - known_unreachable)
+    assert not unexpected, (
+        f"mapping references technique(s) {unexpected} that are neither allowlisted nor declared "
+        "unreachable above — a fabricated id, or an allowlist entry someone forgot to add"
+    )

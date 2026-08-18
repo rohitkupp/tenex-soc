@@ -61,14 +61,37 @@ _SYNCABLE_DISPOSITIONS = frozenset({"true_positive", "needs_review"})
 # signature's `incident_type` reads the same whether the incident came from a synthetic
 # eval scenario or a real triage. Sub-technique IDs (e.g. "T1567.002") are tried before
 # falling back to their parent ("T1567") via `_technique_incident_type`.
+#
+# **Covers the whole allowlist.** It used to map seven ids while `data/kb/mitre/allowlist.yml`
+# permits thirteen, so six proxy-observable techniques the Analyst can legitimately cite --
+# T1105, T1505.003, T1102, T1090, T1041, T1595, T1204, T1568.002, T1567.004 -- fell through to
+# `uncategorized`. That is what actually filled the fallback bucket: not unmappable incidents,
+# just an incomplete map. A signature is now unmapped only when the verdict genuinely names no
+# technique (`NO_KNOWN_MAPPING`, or none at all), which `should_sync_to_tier2` declines to sync.
 _TECHNIQUE_INCIDENT_TYPE: dict[str, str] = {
+    # Command and control over web protocols.
     "T1071.001": "c2_beaconing",
     "T1071": "c2_beaconing",
+    "T1102": "c2_beaconing",
+    "T1090": "c2_beaconing",
+    "T1568.002": "c2_beaconing",
+    # Data leaving the estate, by whichever channel.
     "T1567.002": "data_exfiltration",
+    "T1567.004": "data_exfiltration",
     "T1567": "data_exfiltration",
+    "T1041": "data_exfiltration",
+    # Bulk access to a data store by someone entitled to a little of it.
     "T1530": "insider_mass_download",
+    # An account behaving unlike its peers.
     "T1078": "peer_group_deviation",
+    # Activity whose shape is a schedule rather than a session.
     "T1029": "seasonal_deviation",
+    # Inbound tooling and footholds. Grouped under ingress_tool_transfer because each is a
+    # payload or probe arriving over the proxy, which is the only part a web proxy can witness.
+    "T1105": "ingress_tool_transfer",
+    "T1505.003": "ingress_tool_transfer",
+    "T1204": "ingress_tool_transfer",
+    "T1595": "ingress_tool_transfer",
 }
 _FALLBACK_INCIDENT_TYPE = "uncategorized"
 
