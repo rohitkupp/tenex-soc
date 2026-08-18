@@ -11,6 +11,8 @@ not by remembering to add a filter. See docs/06-PRIVACY-SECURITY.md.
 
 from __future__ import annotations
 
+import os
+
 from collections.abc import Iterator
 from functools import lru_cache
 from typing import Any, Final
@@ -23,8 +25,15 @@ from app.core.config import get_settings
 # One connection each, with one spare. Fourteen workers plus the API share a pooler capped at 15
 # clients; a worker handles one message at a time, so anything larger is a claim on capacity it
 # cannot use and another worker needs. See `get_engine`.
-DB_POOL_SIZE: Final[int] = 1
-DB_MAX_OVERFLOW: Final[int] = 1
+#
+# Overridable by environment because the constraint is the *deployed* pooler's, not a property of
+# the application. Under pytest a single test legitimately holds a session open while issuing an
+# HTTP request that needs its own connection, which deadlocks against a ceiling of two and
+# surfaces as `QueuePool limit of size 1 overflow 1 reached` half a minute later — a failure that
+# reads like a leak rather than a configuration. The default stays production-safe: a deployment
+# that sets nothing still gets 1+1.
+DB_POOL_SIZE: Final[int] = int(os.environ.get("DB_POOL_SIZE", "1"))
+DB_MAX_OVERFLOW: Final[int] = int(os.environ.get("DB_MAX_OVERFLOW", "1"))
 
 
 class Base(DeclarativeBase):

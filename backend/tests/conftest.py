@@ -10,6 +10,18 @@ created under it (users, uploads, analyses) regardless of exactly what was track
 
 from __future__ import annotations
 
+import os
+
+# Must precede every `app.*` import below: `app.core.db` reads these at module scope, and its
+# production default of one connection plus one spare is sized for the deployed Supabase pooler
+# (14 workers + API against a 15-client cap), not for pytest. Several tests legitimately hold a
+# session open while issuing an HTTP request that needs its own connection, which deadlocks
+# against a ceiling of two and fails thirty seconds later as `QueuePool limit of size 1 overflow
+# 1 reached` — a message that reads like a connection leak rather than a pool sized for somewhere
+# else. `setdefault`, so an explicit value from the environment still wins.
+os.environ.setdefault("DB_POOL_SIZE", "5")
+os.environ.setdefault("DB_MAX_OVERFLOW", "10")
+
 import secrets
 import uuid
 from collections.abc import Iterator
@@ -21,6 +33,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from app.core.config import get_settings
 from app.core.csrf import CSRF_COOKIE_NAME, CSRF_HEADER_NAME, derive_csrf_token
 from app.core.db import get_engine, get_session_factory
 from app.core.rate_limit import limiter
@@ -32,13 +45,25 @@ from app.models.upload import Upload
 from app.models.user import User
 from app.pipeline.redis_client import get_redis
 
-# The default (and, in these tests, only) entry in Settings.cors_origins — see
-# backend/app/core/config.py and backend/.env. Requests from the shared `client`
-# fixture carry this as their Origin header so app.core.csrf's Origin/Referer
-# allowlist check (a defense-in-depth control this milestone adds, independent of the
-# CSRF token) doesn't reject every existing test by default. tests/test_csrf.py is
-# where that check itself gets exercised, including with a *foreign* origin.
-TEST_ORIGIN = "http://localhost:3000"
+# Requests from the shared `client` fixture carry this as their Origin header so
+# `app.core.csrf`'s Origin/Referer allowlist check (a defense-in-depth control independent of
+# the CSRF token) doesn't reject every existing test by default. `tests/test_csrf.py` is where
+# that check itself gets exercised, including with a deliberately *foreign* origin.
+#
+# Read from the running settings rather than hardcoded to `http://localhost:3000`. The literal
+# was correct for `backend/.env` and silently wrong anywhere `CORS_ORIGINS` says something else:
+# running this suite inside the deployed API container, whose allowlist is the Vercel domain,
+# turned every mutating test into a 403 `origin_invalid` — eight failures that looked like an
+# auth regression and were written off as pre-existing. Deriving it means the fixture sends an
+# allowed origin wherever the suite runs, and a genuinely misconfigured allowlist fails loudly
+# below instead of as a wall of 403s.
+_ALLOWED_ORIGINS = get_settings().cors_origins
+if not _ALLOWED_ORIGINS:
+    raise RuntimeError(
+        "CORS_ORIGINS is empty, so no Origin header can satisfy app.core.csrf and every "
+        "mutating test would 403. Set it for the environment this suite runs in."
+    )
+TEST_ORIGIN = _ALLOWED_ORIGINS[0]
 
 
 @pytest.fixture(autouse=True)
