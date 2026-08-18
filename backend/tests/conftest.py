@@ -296,6 +296,51 @@ def make_analysis(
         session.close()
 
 
+# --------------------------------------------------------------------------- production guard
+#
+# This suite is destructive against whatever `DATABASE_URL` points at, and not subtly:
+# `tests/test_baseline_migration.py` and `tests/test_tier2_migration.py` call alembic's
+# `command.downgrade(...)` to a fixed early revision, which walks the database *down past every
+# migration layered on top* and then back up to head. Any column added since is dropped and
+# recreated empty.
+#
+# That is not hypothetical. This suite was run inside the deployed API container to check it, that
+# container's DATABASE_URL is the production database, and the round trip silently nulled
+# `evidence_confidence` on all 153 production triage verdicts. The rows survived, the values did
+# not, and nothing failed -- every test passed. It was visible only because the Anomalies column
+# in the UI had gone to em dashes.
+#
+# So: refuse to start against a database that does not look local. Deliberately a blunt hostname
+# check; a cleverer one that tried to infer intent would be one more thing to get wrong. A false
+# positive costs a minute and an environment variable. A false negative costs production data.
+_LOCAL_DB_HOSTS = frozenset({"localhost", "127.0.0.1", "::1", "postgres", "tier2-postgres", "db"})
+
+
+def _database_host(url: str) -> str | None:
+    match = re.search(r"@([^/:?]+)", url)
+    return match.group(1).lower() if match else None
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Abort the session before a single test runs if this looks like a real deployment."""
+    if os.environ.get("TENEX_ALLOW_NONLOCAL_TEST_DB") == "1":
+        return
+    settings = get_settings()
+    for label, url in (
+        ("DATABASE_URL", settings.database_url),
+        ("TIER2_DATABASE_URL", settings.tier2_database_url),
+    ):
+        host = _database_host(url)
+        if host is not None and host not in _LOCAL_DB_HOSTS:
+            raise pytest.UsageError(
+                f"Refusing to run the test suite against {label} host {host!r}.\n\n"
+                "This suite is destructive: the migration round-trip tests downgrade the database "
+                "past every migration and back, dropping and recreating any column added since. "
+                "Run it against a local stack (docker compose) or in CI.\n\n"
+                "If you genuinely mean to target this database, set TENEX_ALLOW_NONLOCAL_TEST_DB=1."
+            )
+
+
 @pytest.fixture(scope="session")
 def no_competing_queue_consumers() -> None:
     """Warn loudly if a worker stack is consuming the queues a test is about to use.
