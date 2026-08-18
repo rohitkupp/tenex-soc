@@ -59,6 +59,22 @@ log = get_logger(__name__)
 _NAMESPACE: Final[uuid.UUID] = uuid.UUID("6f9c1e3a-2b7d-4c58-9a10-5e8f2d4b7c31")
 _SEED: Final[int] = 20260818
 
+# No signature may be dated before this. The generator previously spread history over ~88 days,
+# which put most of the fleet months before anything a demo actually shows and made the Tier 2
+# panels look like an archive rather than a live store. Day offsets below are expressed as
+# fractions of the window between this date and now, so the *shape* of the data — campaign
+# ordering, per-tenant propagation lag, the long tail of one-off signatures — survives the
+# compression; only the absolute span changes.
+#
+# An absolute floor rather than a rolling "last N days" because the requirement is absolute: no
+# incident earlier than this date. A rolling window would drift past it as time passes.
+HISTORY_START: Final[datetime] = datetime(2026, 8, 12, tzinfo=UTC)
+
+# The widest campaign's original age in days, kept only as the denominator that normalises the
+# `first_day` values in `_campaigns` into [0, 1]. Changing a campaign's `first_day` still moves it
+# earlier or later relative to the others; it can no longer move it out of the window.
+_ORIGINAL_HISTORY_DAYS: Final[float] = 88.0
+
 N_TENANTS: Final[int] = 24
 SIGNATURES_PER_TENANT: Final[tuple[int, int]] = (8, 22)
 
@@ -86,6 +102,21 @@ class _Campaign:
     technique: str
     spread: int
     first_day: int  # days ago the earliest tenant saw it — first-seen propagation needs an origin
+
+
+def _observed_at(now: datetime, days_ago: float, *, extra_hours: float = 0.0) -> datetime:
+    """Map an original `days_ago` offset onto `[HISTORY_START, now]`, then add propagation lag.
+
+    `days_ago` is interpreted against `_ORIGINAL_HISTORY_DAYS`, so a campaign that used to sit 88
+    days back lands on `HISTORY_START` and one that sat 4 days back lands near `now`. The result
+    is clamped into the window at both ends: `extra_hours` (a later tenant's propagation lag) can
+    otherwise push the newest signature past the present, which reads as a clock bug in the
+    first-seen chart.
+    """
+    window = (now - HISTORY_START).total_seconds()
+    fraction = min(max(days_ago / _ORIGINAL_HISTORY_DAYS, 0.0), 1.0)
+    observed = now - timedelta(seconds=window * fraction) + timedelta(hours=extra_hours)
+    return min(max(observed, HISTORY_START), now)
 
 
 def _campaigns(techniques: list[str], rng: random.Random) -> list[_Campaign]:
@@ -200,10 +231,14 @@ def seed_tier2_fleet(*, reset: bool = True) -> dict[str, int]:
                 # Each tenant sees the campaign a little later than the last: that lag *is* the
                 # first-seen propagation the chart plots.
                 position = campaign_members[campaign.domain].index(org)
-                observed = (
-                    now
-                    - timedelta(days=campaign.first_day)
-                    + timedelta(hours=position * rng.uniform(5, 30))
+                # Propagation lag is scaled with the window too: hours that read as a
+                # multi-day stagger across 88 days would collapse into a single bucket across
+                # six, flattening the whole point of the first-seen chart.
+                lag_scale = (now - HISTORY_START).days / _ORIGINAL_HISTORY_DAYS
+                observed = _observed_at(
+                    now,
+                    campaign.first_day,
+                    extra_hours=position * rng.uniform(5, 30) * lag_scale,
                 )
                 session.merge(
                     Tier2Signature(
@@ -250,7 +285,7 @@ def seed_tier2_fleet(*, reset: bool = True) -> dict[str, int]:
                         confidence=round(rng.uniform(0.35, 0.95), 3),
                         evidence_confidence=round(rng.uniform(0.40, 0.90), 3),
                         indicator_hashes=[indicator_hash(local_domain, "domain", shared_salt)],
-                        observed_at=now - timedelta(days=rng.uniform(0.5, 85)),
+                        observed_at=_observed_at(now, rng.uniform(0.5, 85)),
                         embedding=embed_text(
                             canonical_text(
                                 technique_ids=[technique],

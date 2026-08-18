@@ -1,9 +1,58 @@
-import type { IncidentDetail } from "@/lib/api/types";
+import type { EvidenceConfidenceBand, IncidentDetail, TriageVerdict } from "@/lib/api/types";
 import { SeverityBar } from "@/components/severity/SeverityBar";
 import { Badge } from "@/components/ui/Badge";
 import { dispositionLabel, threatConfidenceLabel } from "@/lib/severity";
 import { formatDate, formatScore } from "@/lib/format";
 import { parseTag } from "@/lib/tags";
+
+// Shared with the Anomalies queue's own cell (`EvidenceConfidenceCell`), deliberately by
+// convention rather than by extracting a component: the queue renders a bare colour-coded number
+// in a fixed-width grid track, this renders a labelled sentence in a prose stack, and forcing one
+// component to do both would mean a props flag for every difference.
+const EVIDENCE_BAND_COLOR: Record<EvidenceConfidenceBand, string> = {
+  high: "var(--color-accent-verified)",
+  moderate: "var(--color-text-hi)",
+  low: "var(--color-severity-medium)",
+  very_low: "var(--color-severity-high)",
+};
+
+const EVIDENCE_BAND_LABEL: Record<EvidenceConfidenceBand, string> = {
+  high: "high",
+  moderate: "moderate",
+  low: "low",
+  very_low: "very low",
+};
+
+function resolveBand(band: EvidenceConfidenceBand | null | undefined, score: number): EvidenceConfidenceBand {
+  if (band) return band;
+  // Mirrors app.agent.confidence._BANDS. Only reached if a verdict predates the band column.
+  return score >= 0.75 ? "high" : score >= 0.5 ? "moderate" : score >= 0.25 ? "low" : "very_low";
+}
+
+function evidenceBandColor(band: EvidenceConfidenceBand | null | undefined): string {
+  return EVIDENCE_BAND_COLOR[band ?? "moderate"];
+}
+
+function evidenceBandLabel(band: EvidenceConfidenceBand | null | undefined): string {
+  return EVIDENCE_BAND_LABEL[band ?? "moderate"];
+}
+
+/** The decomposition, on hover: which of the Judge's ten rubric items this finding failed, and
+ *  whether one of them capped the score. This is the whole reason the basis is persisted — a
+ *  confidence an analyst cannot interrogate is one they are asked to take on faith. */
+function evidenceConfidenceTitle(verdict: TriageVerdict): string {
+  const basis = verdict.evidence_confidence_basis;
+  const failed = basis?.failed_items ?? [];
+  if (failed.length === 0) {
+    return "Computed from the Judge's ten-item evidentiary rubric — every item satisfied.";
+  }
+  const lines = failed.map((f) => `• ${f.item}. ${f.text}`).join("\n");
+  const capped =
+    basis?.capped_by != null
+      ? `\n\nCapped by item ${basis.capped_by}: a failure that cannot be explained away.`
+      : "";
+  return `Computed from the Judge's ten-item evidentiary rubric. Items not satisfied:\n${lines}${capped}`;
+}
 
 // 1. Header — docs/10: "title, severity, fused score, disposition, techniques, recurrence link."
 // `analysisId` was only needed to link to a recurrence parent; recurrence detection is gone.
@@ -32,6 +81,32 @@ export function CaseHeader({ incident }: { incident: IncidentDetail }) {
               <span className="font-mono text-[var(--color-text-hi)]">
                 {Math.round(incident.anomaly_confidence)}/100
               </span>
+            </span>
+            {/* The third confidence, directly under the machine's own. `app.agent.confidence`
+                scores the Judge's ten-item rubric in code — no model writes it — so it measures
+                the *triage*, where anomaly confidence above measures the *traffic*. Rendered
+                with the failed rubric items on hover, because a number an analyst cannot
+                interrogate is a number they are asked to take on faith. `null` when triage never
+                reached the Judge, shown as "not assessed" rather than as a zero. */}
+            <span>
+              Evidence confidence:{" "}
+              {incident.verdict?.evidence_confidence != null ? (
+                <span
+                  className="font-mono"
+                  style={{ color: evidenceBandColor(resolveBand(incident.verdict.evidence_confidence_band, incident.verdict.evidence_confidence)) }}
+                  title={evidenceConfidenceTitle(incident.verdict)}
+                >
+                  {incident.verdict.evidence_confidence.toFixed(2)} —{" "}
+                  {evidenceBandLabel(resolveBand(incident.verdict.evidence_confidence_band, incident.verdict.evidence_confidence))}
+                </span>
+              ) : (
+                <span
+                  className="text-[var(--color-text-lo)]"
+                  title="Triage did not reach the Judge, so no rubric assessment exists for this incident"
+                >
+                  not assessed
+                </span>
+              )}
             </span>
             <span>
               Threat assessment:{" "}

@@ -57,7 +57,7 @@ export default async function CaseFilePage({
           Incident not found, or the API is unreachable.
         </p>
         <Link href={`/analyses/${id}/incidents`} className="text-sm text-[var(--color-text-hi)] underline underline-offset-2">
-          Back to incidents
+          Back to anomalies
         </Link>
       </div>
     );
@@ -69,7 +69,11 @@ export default async function CaseFilePage({
         href={`/analyses/${id}/incidents`}
         className="w-fit text-xs text-[var(--color-text-lo)] transition-colors hover:text-[var(--color-text-mid)]"
       >
-        ← Incidents
+        {/* "Anomalies", not "Incidents": the tab this returns to is labelled Anomalies in
+            `AnalysisTabs`, and a back link naming something the reader never clicked reads as a
+            different destination. The route stays /incidents — the URL is the API's vocabulary,
+            the label is the analyst's. */}
+        ← Anomalies
       </Link>
 
       {/* 1. Header */}

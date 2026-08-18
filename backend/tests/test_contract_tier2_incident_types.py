@@ -52,3 +52,48 @@ def test_seeder_never_writes_the_unmapped_fallback() -> None:
     assert _FALLBACK_INCIDENT_TYPE not in _INCIDENT_TYPES
     assert _FALLBACK_INCIDENT_TYPE in INCIDENT_TYPES  # still producible by a real run
     assert CLASSIFIED_INCIDENT_TYPES == INCIDENT_TYPES - {_FALLBACK_INCIDENT_TYPE}
+
+
+def test_an_unmapped_verdict_is_not_synced_at_all() -> None:
+    """`uncategorized` must never reach the store again.
+
+    A verdict whose techniques fall outside the mapping — including the common
+    `NO_KNOWN_MAPPING` case — carries an indicator hash and a tenant hash but no statement about
+    what was seen. That is not threat intelligence: the value of this store is answering "three
+    other tenants saw this doing X", and a row that cannot name X dilutes every aggregate built
+    over it while contributing to none of them.
+    """
+    from app.tier2.signature_sync import should_sync_to_tier2
+
+    class _V:
+        def __init__(self, disposition: str, techniques: list[dict[str, str]]) -> None:
+            self.disposition = disposition
+            self.mitre_techniques = techniques
+
+    mapped = next(iter(_TECHNIQUE_INCIDENT_TYPE))
+    assert should_sync_to_tier2(_V("true_positive", [{"id": mapped}])) is True
+    assert should_sync_to_tier2(_V("needs_review", [{"id": mapped}])) is True
+
+    # Unmapped, no techniques at all, and the explicit sentinel all fall to the fallback.
+    assert should_sync_to_tier2(_V("true_positive", [{"id": "T9999"}])) is False
+    assert should_sync_to_tier2(_V("true_positive", [])) is False
+    assert should_sync_to_tier2(_V("needs_review", [{"id": "NO_KNOWN_MAPPING"}])) is False
+
+    # Disposition still governs independently of the mapping.
+    assert should_sync_to_tier2(_V("benign", [{"id": mapped}])) is False
+
+
+def test_the_seeder_history_floor_is_absolute_not_rolling() -> None:
+    """`HISTORY_START` is a fixed date, so "nothing before August 12" stays true as time passes.
+    A rolling `now - N days` window would silently drift back past it."""
+    from datetime import UTC, datetime
+
+    from app.scripts.seed_tier2_fleet import HISTORY_START, _observed_at
+
+    now = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
+    for days_ago in (0.0, 0.5, 40.0, 85.0, 88.0, 500.0):
+        observed = _observed_at(now, days_ago)
+        assert HISTORY_START <= observed <= now, (days_ago, observed)
+
+    # Propagation lag cannot push a signature past the present either.
+    assert _observed_at(now, 0.0, extra_hours=10_000) <= now

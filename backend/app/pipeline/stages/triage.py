@@ -321,6 +321,19 @@ def _run_triage(message: StageMessage, *, caller: LLMCaller | None = None) -> di
             active_caller = caller or LiveCaller(
                 api_key=settings.anthropic_api_key.get_secret_value()
             )
+
+            # Computed *before* narration, deliberately. `narrate_analysis` below is an unguarded
+            # Anthropic call, and when it raised, this never ran at all -- the analysis kept its
+            # empty `[]` and the Notable Destinations panel stayed blank for a run that had
+            # otherwise fully succeeded. `_compute_domain_semantic_findings` degrades to `[]` on
+            # its own errors rather than raising (see its docstring), so nothing here can take
+            # down a run that reached this point.
+            semantic_findings = _compute_domain_semantic_findings(
+                session,
+                message.tenant_id,
+                message.analysis_id,
+                _compute_notable_destinations(session, message.tenant_id, message.analysis_id),
+            )
             narration = narrate_analysis(
                 overview=_narrator_overview_payload(overview),
                 incidents=incidents_payload,
@@ -369,27 +382,35 @@ def _run_triage(message: StageMessage, *, caller: LLMCaller | None = None) -> di
             # This moved here from inside `GET /api/analyses/{id}/overview`, where it ran a live
             # LLM call on every request — seconds of latency and real tokens per page view.
             # Computed once, with the rest of this analysis's LLM work, and stored.
-            semantic_findings = _compute_domain_semantic_findings(
-                session,
-                message.tenant_id,
-                message.analysis_id,
-                _compute_notable_destinations(session, message.tenant_id, message.analysis_id),
-            )
 
             # Persist the prose, not just its price. This call has always run here; until the
             # `analyses.narrative` columns existed its output was discarded and the UI had to
             # offer a button that paid for it a second time.
+            #
+            # **Two commits, not one, and the order is the point.** These three outputs are
+            # independent products of this stage, but they used to share a single transaction at
+            # the very end of one long `try`. Anything that raised earlier -- and `narrate_analysis`
+            # is an unguarded Anthropic call that certainly can -- discarded all three, including
+            # the semantic findings that had already been computed and paid for. Committing them
+            # as soon as they exist means a narration failure costs the narration and nothing else.
             with tenant_scope(session, message.tenant_id):
                 session.execute(
                     update(Analysis)
                     .where(Analysis.id == message.analysis_id)
                     .values(
-                        llm_cost_usd=func.coalesce(Analysis.llm_cost_usd, 0) + narration_cost,
                         domain_semantic_findings=[
                             f.model_dump(mode="json") for f in semantic_findings
                         ],
                         domain_semantics_generated_at=datetime.now(UTC),
                         event_timeline_summary=timeline_summary,
+                    )
+                )
+                session.commit()
+                session.execute(
+                    update(Analysis)
+                    .where(Analysis.id == message.analysis_id)
+                    .values(
+                        llm_cost_usd=func.coalesce(Analysis.llm_cost_usd, 0) + narration_cost,
                         **narrative_columns(narration),
                     )
                 )

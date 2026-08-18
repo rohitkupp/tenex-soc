@@ -88,8 +88,26 @@ CLASSIFIED_INCIDENT_TYPES: Final[frozenset[str]] = frozenset(_TECHNIQUE_INCIDENT
 
 
 def should_sync_to_tier2(verdict: TriageVerdict) -> bool:
-    """False for `benign`/`false_positive` — see module docstring."""
-    return verdict.disposition in _SYNCABLE_DISPOSITIONS
+    """False for `benign`/`false_positive`, and false when no technique maps to a known
+    incident type — see module docstring.
+
+    **The unmapped case.** A verdict whose techniques fall outside `_TECHNIQUE_INCIDENT_TYPE`
+    (including the common `NO_KNOWN_MAPPING` case, where the Analyst honestly reported that
+    proxy telemetry cannot establish a technique) used to sync under the `uncategorized`
+    fallback. That produced a Tier 2 row carrying an indicator hash and a tenant hash but no
+    statement about *what* was seen, which is not threat intelligence: the entire value of this
+    store is answering "three other tenants saw this doing X", and a row that cannot name X
+    dilutes every aggregate built over it while contributing nothing to any of them. The
+    `uncategorized` bucket then sat in the incident-type breakdown as a category no analyst
+    could act on.
+
+    The fallback constant stays: `_technique_incident_type` still needs a total function, and a
+    row already in the store keeps its label. This only stops new ones being created.
+    """
+    if verdict.disposition not in _SYNCABLE_DISPOSITIONS:
+        return False
+    technique_ids = [t.get("id", "") for t in (verdict.mitre_techniques or []) if isinstance(t, dict)]
+    return _technique_incident_type(technique_ids) != _FALLBACK_INCIDENT_TYPE
 
 
 def _technique_ids(raw: Any) -> list[str]:

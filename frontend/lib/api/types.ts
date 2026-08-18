@@ -527,12 +527,34 @@ export interface ToolTraceEntry {
  * same thing as `IncidentDetail.anomaly_confidence` / `IncidentListItem.anomaly_confidence` —
  * that one lives on the incident, is calibrated (not the LLM's opinion), and must never be
  * phrased as a probability of malice. */
+export interface EvidenceConfidenceBasis {
+  score: number;
+  band: EvidenceConfidenceBand;
+  capped_by: number | null;
+  graded_items: number;
+  /** Rubric *text* is stored alongside the index, not just the index: item wording can change
+   * (it already has once, for polarity) and a stored basis saying only "item 7" would silently
+   * start meaning something else. */
+  failed_items: { item: number; text: string }[];
+}
+
+/** Alias so components can name the verdict shape without importing the `Out` suffix. */
+export type TriageVerdict = TriageVerdictOut;
+
 export interface TriageVerdictOut {
   id: string;
   incident_id: string;
   disposition: Disposition;
   threat_confidence: "low" | "moderate" | "high";
   threat_confidence_reason: string;
+  /** `app.agent.confidence`: the Judge's ten rubric grades weighted into one 0–1 score. No model
+   * writes it — the LLM grades the evidence, code does the arithmetic. `null` when triage never
+   * reached the Judge, which is distinct from a graded-and-low score. */
+  evidence_confidence: number | null;
+  evidence_confidence_band: EvidenceConfidenceBand | null;
+  /** The decomposition behind the score, persisted so a value stays explainable without
+   * re-running triage. Rendered on hover in the case file. */
+  evidence_confidence_basis: EvidenceConfidenceBasis | null;
   llm_severity_opinion: Severity | null;
   mitre_techniques: MitreTechniqueRef[];
   summary: string;
