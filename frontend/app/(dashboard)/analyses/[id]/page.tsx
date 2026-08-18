@@ -26,6 +26,15 @@ import { Panel } from "@/components/ui/Panel";
 
 export const metadata: Metadata = { title: "Analysis — Tenex SOC Analyst" };
 
+// An analysis changes underneath this page while the pipeline runs, so nothing about it may be
+// reused. `fetchServer` already sends `cache: "no-store"`, but that only governs the *server's*
+// fetch — the App Router still caches the rendered RSC payload client-side and replays it on a
+// soft navigation. The visible symptom was a completed run whose Pipeline box still read
+// "Events 23, Signals 28, Incidents 1" from a mid-run render while the panels beside it showed
+// the true 510/639/15, and an Events summary that only appeared after a hard reload.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 // docs/v2_migration change 27: this page now covers three states of one analysis, not
 // just "the overview" — "while `analyses.status` is `queued` or `running`, the page
 // renders the live SSE stage funnel... When the pipeline completes, the same page
