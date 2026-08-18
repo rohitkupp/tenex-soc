@@ -80,6 +80,12 @@ INCIDENT_TYPES: Final[frozenset[str]] = frozenset(
     {*_TECHNIQUE_INCIDENT_TYPE.values(), _FALLBACK_INCIDENT_TYPE}
 )
 
+# The subset a *mapped* technique yields — `INCIDENT_TYPES` minus the fallback. Seeding draws
+# from this rather than the full set: `uncategorized` is what a signature gets when its technique
+# is not in the mapping, so a fleet that seeds it uniformly makes the fallback the second-largest
+# category in the Tier 2 overview and reads as a broken mapping rather than as the rare edge it is.
+CLASSIFIED_INCIDENT_TYPES: Final[frozenset[str]] = frozenset(_TECHNIQUE_INCIDENT_TYPE.values())
+
 
 def should_sync_to_tier2(verdict: TriageVerdict) -> bool:
     """False for `benign`/`false_positive` — see module docstring."""

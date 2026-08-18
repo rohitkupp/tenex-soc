@@ -18,6 +18,7 @@ from app.scripts.seed_tier2_fleet import _INCIDENT_TYPES
 from app.tier2.signature_sync import (
     _FALLBACK_INCIDENT_TYPE,
     _TECHNIQUE_INCIDENT_TYPE,
+    CLASSIFIED_INCIDENT_TYPES,
     INCIDENT_TYPES,
 )
 
@@ -41,3 +42,13 @@ def test_seeder_vocabulary_is_not_empty() -> None:
     """Deriving from another module means a rename upstream could silently empty this, which
     would make `rng.choice` raise deep inside a seeding run rather than fail here."""
     assert len(_INCIDENT_TYPES) >= 5
+
+
+def test_seeder_never_writes_the_unmapped_fallback() -> None:
+    """`uncategorized` is what a signature gets when its technique is not in the mapping. It is
+    a real label the sync path emits, so the subset test above would happily allow seeding it —
+    but seeding it uniformly made it the second-largest category in the Tier 2 overview, which
+    reads as a broken technique mapping instead of the rare edge case it actually is."""
+    assert _FALLBACK_INCIDENT_TYPE not in _INCIDENT_TYPES
+    assert _FALLBACK_INCIDENT_TYPE in INCIDENT_TYPES  # still producible by a real run
+    assert CLASSIFIED_INCIDENT_TYPES == INCIDENT_TYPES - {_FALLBACK_INCIDENT_TYPE}
