@@ -1510,4 +1510,27 @@ def _merged_hypothesis_evaluations(raw: Any) -> Any:
     if not already_present:
         evaluations.append(null_hypothesis)
     merged["hypothesis_evaluations"] = evaluations
+
+    # A finding that maps to NO_KNOWN_MAPPING must not also cite a knowledge-base source: there
+    # is no source for "none of these techniques fit". The model kept setting one anyway, and
+    # `Finding`'s validator rejected the *entire* analysis over it — the same all-or-nothing
+    # failure the null hypothesis itself was causing, one field deeper.
+    #
+    # Dropping the stray id is not inventing anything. The model already said the technique is
+    # NO_KNOWN_MAPPING; a source id attached to that verdict is meaningless by construction, and
+    # discarding it is precisely what the invariant asks for. The alternative is throwing away a
+    # complete investigation because one field should have been null.
+    findings = merged.get("findings")
+    if isinstance(findings, list):
+        normalised = []
+        for finding in findings:
+            if (
+                isinstance(finding, dict)
+                and finding.get("attack_technique_id") == NO_KNOWN_MAPPING
+                and finding.get("attack_source_id") is not None
+            ):
+                finding = {**finding, "attack_source_id": None}
+            normalised.append(finding)
+        merged["findings"] = normalised
+
     return merged
