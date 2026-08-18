@@ -40,10 +40,10 @@ STAGE_SEQUENCE: tuple[str, ...] = (
     "ingest",
     "parse",
     "enrich",
-    "anonymize",
     "detect",
     "correlate",
     "triage",
+    "anonymize",
     "tier2",
 )
 
@@ -62,12 +62,25 @@ STAGE_PROGRESS: dict[str, float] = {
 # `triage` -> `tier2` directly: `respond` (the response action graph / enforcement plane) was
 # removed in docs/v2_migration change 20, closing the gap in the chain so `triage` never
 # publishes into a queue that no longer exists.
+# `anonymize` moved from between `enrich` and `detect` to between `triage` and `tier2`.
+#
+# In its old position it could not actually anonymise anything. Every stage downstream of it
+# needed the plaintext — a detector cannot match `u_8f3a91c204de` against a baseline built from
+# `alice@corp.example`, correlation cannot group entities it can no longer recognise, and the
+# agent's evidence would cite pseudonyms it has no way to resolve. So the stage degraded to an
+# audit: it computed how many identifiers *would* have been pseudonymised and wrote the count to
+# a counter, while its own docstring conceded it "does not rewrite any row".
+#
+# The boundary CLAUDE.md rule 4 actually names is where data leaves the tenant, and that is
+# `tier2` — the one cross-tenant surface in the system. Sitting immediately before it, the stage
+# does the thing it is named for: pseudonymise, redact, and write the result into the Tier 2
+# database. The count and the act become the same operation.
 NEXT_QUEUE: dict[str, str | None] = {
-    "enrich": "anonymize",
-    "anonymize": "detect",
+    "enrich": "detect",
     "detect": "correlate",
     "correlate": "triage",
-    "triage": "tier2",
+    "triage": "anonymize",
+    "anonymize": "tier2",
     "tier2": None,  # terminal — docs/01's `tier2-sync` "Produces" column is "—"
 }
 

@@ -24,7 +24,12 @@ from typing import Any
 
 from sqlalchemy import select
 
-from app.core.db import get_engine, get_session_factory
+from app.core.db import (
+    get_engine,
+    get_session_factory,
+    get_tier2_session_factory,
+    init_tier2_schema,
+)
 from app.core.logging import get_logger
 from app.models.base import tenant_scope
 from app.models.incident import Incident
@@ -51,7 +56,12 @@ def _latest_verdict(session: Any, incident_id: Any) -> TriageVerdict | None:
 
 
 def _run_tier2(message: StageMessage) -> dict[str, Any]:
+    # `anonymize` ran immediately before this stage and created the schema, but this stage is
+    # independently retryable — a dead-lettered `tier2` message replayed on a fresh database
+    # must not fail on a missing table.
+    init_tier2_schema()
     session = get_session_factory()()
+    tier2_session = get_tier2_session_factory()()
     try:
         tenant = session.get(Tenant, message.tenant_id)
         if tenant is None:
@@ -73,15 +83,23 @@ def _run_tier2(message: StageMessage) -> dict[str, Any]:
                     n_no_verdict += 1
                     continue
                 signature = sync_incident_to_tier2(
-                    session, incident=incident, verdict=verdict, tenant=tenant
+                    session,
+                    tier2_session=tier2_session,
+                    incident=incident,
+                    verdict=verdict,
+                    tenant=tenant,
                 )
                 if signature is not None:
                     n_synced += 1
                 else:
                     n_not_syncable += 1
 
+            # The signature rows live in the Tier 2 database; the primary session made no
+            # writes here and is only committed to release its read transaction.
+            tier2_session.commit()
             session.commit()
     finally:
+        tier2_session.close()
         session.close()
 
     with get_engine().begin() as conn:

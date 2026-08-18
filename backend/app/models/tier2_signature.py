@@ -41,10 +41,15 @@ from sqlalchemy import ARRAY, REAL, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import DateTime, Uuid
 
-from app.core.db import Base
+from app.core.db import Tier2Base
 
 
-class Tier2Signature(Base):
+class Tier2Signature(Tier2Base):
+    """Lives in the Tier 2 database, not the primary one. It is cross-tenant by construction —
+    `tenant_hash` exists precisely so rows from different tenants can sit side by side — so it
+    has no business sharing a database with the tenant-scoped tables, and no `TenantScopedMixin`
+    to enforce a filter that would be meaningless here."""
+
     __tablename__ = "tier2_signatures"
 
     id: Mapped[uuid.UUID] = mapped_column(

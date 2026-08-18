@@ -2,6 +2,9 @@ name: tenex-soc
 
 x-backend-env: &backend-env
   DATABASE_URL: postgresql+psycopg://tenex:tenex@postgres:5432/tenex
+  # Tier 2's own database — the cross-tenant side of the boundary. Only pseudonymised data is
+  # written here, by the `anonymize` stage, which now runs after `triage`.
+  TIER2_DATABASE_URL: postgresql+psycopg://tenex:tenex@tier2-postgres:5432/tenex_tier2
   RABBITMQ_URL: amqp://tenex:tenex@rabbitmq:5672/
   REDIS_URL: redis://redis:6379/0
   S3_ENDPOINT: http://minio:9000
@@ -34,6 +37,9 @@ x-worker-defaults: &worker-defaults
     - ./backend:/app
   depends_on:
     postgres: {condition: service_healthy}
+    # Both the `anonymize` and `tier2` stages write to the Tier 2 database, and every worker
+    # shares this block, so all of them wait for it rather than each declaring its own list.
+    tier2-postgres: {condition: service_healthy}
     rabbitmq: {condition: service_healthy}
     minio: {condition: service_healthy}
     redis: {condition: service_healthy}
@@ -51,6 +57,25 @@ services:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U tenex -d tenex"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # A second, physically separate Postgres for Tier 2. Same pgvector image — tier2_signatures
+  # carries a 1024-d embedding — but its own instance, volume and credentials, so the
+  # cross-tenant store and the tenant-scoped store cannot be joined, and a query against one
+  # cannot reach the other.
+  tier2-postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: tenex
+      POSTGRES_PASSWORD: tenex
+      POSTGRES_DB: tenex_tier2
+    ports: ["5433:5432"]
+    volumes:
+      - tier2pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tenex -d tenex_tier2"]
       interval: 5s
       timeout: 3s
       retries: 20
@@ -101,6 +126,7 @@ services:
       - ./backend:/app
     depends_on:
       postgres: {condition: service_healthy}
+      tier2-postgres: {condition: service_healthy}
       rabbitmq: {condition: service_healthy}
       minio: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -176,4 +202,5 @@ services:
 
 volumes:
   pgdata:
+  tier2pgdata:
   miniodata:

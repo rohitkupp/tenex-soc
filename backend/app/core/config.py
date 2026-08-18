@@ -49,6 +49,13 @@ class Settings(BaseSettings):
 
     # --- Infrastructure ---
     database_url: str = "postgresql+psycopg://tenex:tenex@localhost:5432/tenex"
+    # Tier 2's own database. Tier 2 is the cross-tenant surface — the one place data from one
+    # tenant is compared against another's — so it is the boundary CLAUDE.md rule 4 actually
+    # names ("nothing identifiable leaves the tenant boundary"). Keeping it in a separate
+    # database makes that boundary a physical one rather than a convention: the tenant-scoped
+    # tables and the cross-tenant ones cannot be joined by accident, and the pseudonymised copy
+    # is the only representation that exists on this side.
+    tier2_database_url: str = "postgresql+psycopg://tenex:tenex@localhost:5433/tenex_tier2"
     rabbitmq_url: str = "amqp://tenex:tenex@localhost:5672/"
     redis_url: str = "redis://localhost:6379/0"
 

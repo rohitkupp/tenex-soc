@@ -214,6 +214,7 @@ def build_signature(
 def sync_incident_to_tier2(
     session: Session,
     *,
+    tier2_session: Session,
     incident: Incident,
     verdict: TriageVerdict,
     tenant: Tenant,
@@ -221,10 +222,18 @@ def sync_incident_to_tier2(
 ) -> Tier2Signature | None:
     """The end-to-end entry point: derive indicators/source types from the DB, build the
     signature, persist it. Returns `None` (and writes nothing) if
-    `should_sync_to_tier2(verdict)` is false. Caller is responsible for `session.commit()`
-    (matching every other write path in this codebase — see `app.core.db.get_db`'s
-    docstring) except when this is the last thing done in an already-committing scope, in
-    which case a `flush()` is enough for the returned row's `id` to be populated.
+    `should_sync_to_tier2(verdict)` is false.
+
+    **Two sessions, deliberately.** `session` reads the tenant-scoped tables in the primary
+    database (`incidents`, `entities`, `analyses`, `uploads`); `tier2_session` writes the
+    signature into the physically separate Tier 2 database. They are different engines over
+    different databases, so one session cannot do both — which is the point: a cross-tenant row
+    and a tenant-scoped row can no longer end up in the same transaction, or the same database,
+    by accident.
+
+    Caller is responsible for committing `tier2_session` (matching every other write path in
+    this codebase — see `app.core.db.get_db`'s docstring); a `flush()` is enough for the
+    returned row's `id` to be populated.
 
     Binds `session` to `tenant.id` for the duration of this call (`app.models.base.
     tenant_scope`) — `derive_source_types` reads `analyses`/`uploads`, both tenant-scoped
@@ -251,11 +260,12 @@ def sync_incident_to_tier2(
         indicators=indicators,
         settings=settings,
     )
-    # tier2_signatures itself is never tenant-scoped (see this module's docstring), so
-    # the add/flush below deliberately happens *outside* the `tenant_scope` block above —
-    # this write does not want the tenant guard involved at all, not even redundantly.
-    session.add(signature)
-    session.flush()
+    # tier2_signatures is never tenant-scoped (see this module's docstring) and now does not
+    # even live in the same database, so this write goes to `tier2_session` and deliberately
+    # happens outside the `tenant_scope` block above — it does not want the tenant guard
+    # involved at all, not even redundantly.
+    tier2_session.add(signature)
+    tier2_session.flush()
     log.info(
         "tier2.sync_written",
         incident_id=str(incident.id),

@@ -1,34 +1,39 @@
-"""Anonymize — docs/01's `anonymize` stage contract, made real.
+"""Anonymize — the tenant boundary, made real.
 
-docs/01's literal postcondition ("`pseudonym_map` written, `events.redacted` populated") names
-two persisted structures that were never added to the real schema: `docs/02-DATA-MODEL.md` has no
-`pseudonym_map` table and `events` has no `redacted` column (grepped — zero hits in
-`alembic/versions/`, confirmed against the live migrations before writing this module). This is
-not a gap this stage should paper over with a new table invented on the spot — CLAUDE.md is
-explicit that a schema change gets reported before it lands, and the design question ("what does
-a durable reverse map look like, what does it cost to maintain") deserves an actual decision, not
-one made silently mid-wiring-task.
+This stage used to sit between `enrich` and `detect`, where it could not anonymise anything.
+Every stage downstream of it needs the plaintext: a detector cannot match `u_8f3a91c204de`
+against a baseline built from `alice@corp.example`, correlation cannot group entities it can no
+longer recognise, and the agent's citations would point at pseudonyms it has no way to resolve.
+So the stage degraded into an audit — it counted how many identifiers *would* have been
+pseudonymised and wrote the number to a counter, while its own docstring conceded it "does not
+rewrite any row".
 
-More importantly, **this checkout already has a working, tested answer to "pseudonymize before
-data leaves the tenant boundary" that does not depend on either structure**: `app.agent.context`'s
-own module docstring states it plainly — "every tool in this package pseudonymizes and redacts
-defensively, every time, using `app.privacy`'s public API directly" (CLAUDE.md rule 4). The
-boundary CLAUDE.md rule 4 actually cares about is the LLM call, not the Postgres row, and that
-boundary is already enforced, independently of whether this stage ran at all. Rewriting a
-pseudonymized/redacted *copy* of every event at rest would be a second, redundant enforcement
-point for the same rule — and one that is actively wrong to rely on, since every downstream
-detector (`app.detection.*`) and the graph (`app.graph.*`) need the *real* `principal`/`src_ip`/
-`domain` values to correlate correctly; only the LLM-facing edge should ever see a pseudonym.
+It now runs after `triage` and immediately before `tier2`, which is the boundary CLAUDE.md rule 4
+actually names: `tier2` is the one cross-tenant surface in the system, the only place one
+tenant's data is compared against another's. Here the stage does the thing it is named for.
 
-So this stage's real, honest job is the *audit* half of docs/06's own talking point ("1,204
-secrets redacted before LLM submission"): run the same `app.privacy.pseudonymize`/`app.privacy.
-redact` functions this analysis's raw events would actually go through at the LLM boundary, once,
-for real, over every event, and publish the true counts. It does not rewrite any row — there is
-nothing downstream that reads a rewritten one — but the numbers it reports are genuine
-per-analysis measurements, not fabricated, and they are stored as internal `analyses.counters`
-bookkeeping (`_privacy_identifiers_pseudonymized` / `_privacy_secrets_redacted`, the same
-underscore-prefixed-internal-key convention `app.pipeline.stages.parse`'s `_parse_failed_lines`
-already established) so the number survives past the SSE message.
+## What it does
+
+1. Pseudonymises every identity field of every event in the analysis
+   (`app.privacy.event_privacy.anonymize_event`, HMAC-SHA256 under the tenant's own salt).
+2. Redacts secrets and PII out of the free-text fields (`app.privacy.redact`).
+3. Writes the result into the **Tier 2 database** (`app.core.db.Tier2Base`) — a physically
+   separate Postgres. The primary database keeps the real values; nothing identifiable is
+   copied across.
+4. Publishes the true counts, which are now a report of what it did rather than a projection of
+   what it would have done.
+
+`domain` is deliberately *not* pseudonymised. docs/06 exempts it: a domain is threat
+intelligence, not an identity, and hashing it under a per-tenant salt would make the
+cross-tenant overlap Tier 2 exists to compute impossible — the same reasoning
+`app.privacy.pseudonymize.indicator_hash` documents for its shared-salt path.
+
+## Re-runs replace, they do not accumulate
+
+An analysis re-run deletes its own `tier2_events` rows first. Tier 2 holds a derived projection,
+so the correct state after a re-run is "what this run produced", not "everything every run ever
+produced". Without the delete a retried analysis would double-count every event in Tier 2's
+aggregates.
 """
 
 from __future__ import annotations
@@ -37,10 +42,11 @@ import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import delete, text
 
-from app.core.db import get_engine
+from app.core.db import get_engine, get_tier2_session_factory, init_tier2_schema
 from app.core.logging import get_logger
+from app.models.tier2_event import Tier2Event
 from app.pipeline import state
 from app.pipeline.contracts import NEXT_QUEUE, STAGE_PROGRESS, public_counters
 from app.pipeline.errors import PermanentStageError
@@ -49,20 +55,19 @@ from app.pipeline.progress import publish_progress
 from app.pipeline.redis_client import get_redis
 from app.privacy.event_privacy import anonymize_event
 from app.privacy.redact import redact_text
+from app.tier2.hashing import tenant_hash
 
 log = get_logger(__name__)
 
 _IDENTIFIERS_COUNTER_KEY = "_privacy_identifiers_pseudonymized"
 _SECRETS_COUNTER_KEY = "_privacy_secrets_redacted"
 
-# The two free-text hot columns this stage can reach directly (`events.url_path`,
-# `events.user_agent`) — matches `app.agent.context.TRUNCATE_FIELDS`'s hot-column subset (that
-# tuple also includes `referrer`, which is OCSF-JSONB-only, not a hot column here; the live
-# per-call redaction at the LLM boundary still covers it when a prompt actually needs it).
-_FREE_TEXT_FIELDS = ("url_path", "user_agent")
+# Rows per INSERT into the Tier 2 database. Large enough that a 500-event analysis is one or two
+# round trips, small enough that a very large upload does not build one enormous statement.
+_COPY_BATCH = 500
 
 
-def _privacy_audit(message: StageMessage) -> dict[str, Any]:
+def _anonymize_to_tier2(message: StageMessage) -> dict[str, Any]:
     with get_engine().begin() as conn:
         tenant_row = conn.execute(
             text("SELECT pseudonym_salt FROM tenants WHERE id = :tenant_id"),
@@ -72,61 +77,102 @@ def _privacy_audit(message: StageMessage) -> dict[str, Any]:
             raise PermanentStageError(f"tenant {message.tenant_id} not found")
         salt = bytes(tenant_row[0])
 
-        # Hand-written text() SQL against a tenant-scoped table — same documented convention
-        # `app.pipeline.stages.enrich` follows; see that module's matching comment.
-        rows = conn.execute(
-            text(
-                """
-                SELECT principal, src_ip, dst_ip, url_path, user_agent,
-                       hostname, device_name, device_owner
+        rows = (
+            conn.execute(
+                text(
+                    """
+                SELECT id, ts, principal, src_ip, dst_ip, domain, action, http_method,
+                       status_code, bytes_in, bytes_out, url_path, user_agent,
+                       hostname, device_name, device_owner, enrichment
                 FROM events
                 WHERE analysis_id = :analysis_id AND tenant_id = :tenant_id
+                ORDER BY id
                 """
-            ),
-            {"analysis_id": message.analysis_id, "tenant_id": message.tenant_id},
-        ).all()
+                ),
+                {"analysis_id": message.analysis_id, "tenant_id": message.tenant_id},
+            )
+            .mappings()
+            .all()
+        )
 
-        n_events = 0
-        n_identifiers = 0
-        redaction_counts: dict[str, int] = {}
-        for (
-            principal,
-            src_ip,
-            dst_ip,
-            url_path,
-            user_agent,
-            hostname,
-            device_name,
-            device_owner,
-        ) in rows:
+    # The tenant identifier Tier 2 sees is the same salted hash `tier2_signatures` uses, so the
+    # two tables join on equal terms and neither carries a real tenant id.
+    hashed_tenant = tenant_hash(message.tenant_id, salt)
+
+    init_tier2_schema()
+    n_events = 0
+    n_identifiers = 0
+    redaction_counts: dict[str, int] = {}
+    pending: list[dict[str, Any]] = []
+
+    session_factory = get_tier2_session_factory()
+    with session_factory() as tier2:
+        # Replace this analysis's own projection — see module docstring.
+        tier2.execute(delete(Tier2Event).where(Tier2Event.analysis_id == message.analysis_id))
+
+        for row in rows:
             n_events += 1
             anonymized = anonymize_event(
                 {
-                    "principal": principal,
-                    "src_ip": str(src_ip) if src_ip is not None else None,
-                    "dst_ip": str(dst_ip) if dst_ip is not None else None,
-                    # Asset/device identifiers (this task) — see
-                    # `app.privacy.event_privacy`'s module docstring for the full accounting.
-                    "hostname": hostname,
-                    "device_name": device_name,
-                    "device_owner": device_owner,
+                    "principal": row["principal"],
+                    "src_ip": str(row["src_ip"]) if row["src_ip"] is not None else None,
+                    "dst_ip": str(row["dst_ip"]) if row["dst_ip"] is not None else None,
+                    "hostname": row["hostname"],
+                    "device_name": row["device_name"],
+                    "device_owner": row["device_owner"],
                 },
                 tenant_id=message.tenant_id,
                 salt=salt,
             )
             n_identifiers += len(anonymized.reverse_entries)
 
-            # The field names are carried in the tuple for readability at the call site — which
-            # field a redaction came from is not needed here, only the aggregate counts.
-            for value in (url_path, user_agent):
+            redacted: dict[str, str | None] = {}
+            for field in ("url_path", "user_agent"):
+                value = row[field]
                 if not value:
+                    redacted[field] = value
                     continue
                 result = redact_text(value)
-                for pattern_name, count in result.counts.items():
-                    redaction_counts[pattern_name] = redaction_counts.get(pattern_name, 0) + count
+                redacted[field] = result.text
+                for name, count in result.counts.items():
+                    redaction_counts[name] = redaction_counts.get(name, 0) + count
 
-        n_secrets = sum(redaction_counts.values())
+            pending.append(
+                {
+                    "tenant_hash": hashed_tenant,
+                    "analysis_id": message.analysis_id,
+                    "source_event_id": row["id"],
+                    "ts": row["ts"],
+                    # Pseudonyms only, never the originals.
+                    "principal": anonymized.event.get("principal"),
+                    "src_ip": anonymized.event.get("src_ip"),
+                    "dst_ip": anonymized.event.get("dst_ip"),
+                    "hostname": anonymized.event.get("hostname"),
+                    "device_name": anonymized.event.get("device_name"),
+                    "device_owner": anonymized.event.get("device_owner"),
+                    # docs/06's do-NOT list — threat intelligence, not identity.
+                    "domain": row["domain"],
+                    "action": row["action"],
+                    "http_method": row["http_method"],
+                    "status_code": row["status_code"],
+                    "bytes_in": row["bytes_in"],
+                    "bytes_out": row["bytes_out"],
+                    "url_path": redacted["url_path"],
+                    "user_agent": redacted["user_agent"],
+                    "enrichment": row["enrichment"] or {},
+                }
+            )
+            if len(pending) >= _COPY_BATCH:
+                tier2.execute(Tier2Event.__table__.insert(), pending)
+                pending.clear()
 
+        if pending:
+            tier2.execute(Tier2Event.__table__.insert(), pending)
+        tier2.commit()
+
+    n_secrets = sum(redaction_counts.values())
+
+    with get_engine().begin() as conn:
         state.mark_stage(
             conn,
             analysis_id=message.analysis_id,
@@ -162,7 +208,7 @@ def _privacy_audit(message: StageMessage) -> dict[str, Any]:
 
 
 async def handle(message: StageMessage) -> list[tuple[str, StageMessage]]:
-    result = await asyncio.to_thread(_privacy_audit, message)
+    result = await asyncio.to_thread(_anonymize_to_tier2, message)
 
     await publish_progress(
         get_redis(),
@@ -171,11 +217,10 @@ async def handle(message: StageMessage) -> list[tuple[str, StageMessage]]:
         progress=STAGE_PROGRESS["anonymize"],
         status="running",
         message=(
-            f"Privacy pass over {result['n_events']} event(s): {result['n_identifiers']} "
-            f"identifier(s) pseudonymizable, {result['n_secrets']} secret(s)/PII pattern(s) "
-            "redactable. Real values stay in Postgres for detection; every field is "
-            "pseudonymized/redacted again at the point it actually reaches an LLM prompt "
-            "(app.agent.context, CLAUDE.md rule 4)."
+            f"Copied {result['n_events']} event(s) into the Tier 2 database with "
+            f"{result['n_identifiers']} identifier(s) pseudonymized and {result['n_secrets']} "
+            "secret(s)/PII pattern(s) redacted. The primary database keeps the real values; "
+            "nothing identifiable crosses the tenant boundary (CLAUDE.md rule 4)."
         ),
         counters=public_counters(result["counters"]),
     )
