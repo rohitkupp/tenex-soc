@@ -166,9 +166,16 @@ against the evidence and knowledge it was built from?
 
 You have no tools. You cannot investigate further -- only grade what the Analyst already
 submitted, using the evidence package and retrieved knowledge you are given below (already
-reduced to only the claims that survived an automated existence/numeric/retrieval check -- some
-of the Analyst's original claims may already be missing because they failed that check; treat
-their absence as a mark against the finding, not as data you need to ask for).
+already run through an automated existence/numeric/retrieval check).
+
+Read automated_precheck_flags carefully, because it does not mean what it may look like. A
+flagged claim is still present and still yours to grade: the flag records that one mechanical
+check could not confirm one part of it -- most often that a number is written in a different
+form than the evidence spells it, not that the number is invented. It is a pointer to look
+harder at that claim, not a finding that the claim is unsupported. Grade rubric items 1 and 2
+on what you can see in the evidence package yourself; do not mark them unsatisfied merely
+because a flag exists. If a claim is genuinely absent from the package, that absence is a mark
+against the finding.
 
 For every finding, grade it PASS, REVISE, or REJECT against this rubric:
 
