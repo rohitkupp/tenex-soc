@@ -6,8 +6,9 @@ serverless body limit never applies. See docs/01-ARCHITECTURE.md.
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,12 +31,35 @@ from app.core.csrf import CSRFMiddleware
 from app.core.errors import ApiError, api_error_handler
 from app.core.logging import configure_logging, get_logger
 from app.core.rate_limit import limiter, rate_limit_exceeded_handler
+from app.pipeline.reaper import reap_stale_analyses
 from app.queue import dispatch
 from app.queue.topology import declare_topology_on_new_channel, get_connection
 
 settings = get_settings()
 configure_logging(settings.log_level)
 log = get_logger(__name__)
+
+
+# Well below `reaper.STALE_AFTER`, so a stuck analysis surfaces within a few minutes of crossing
+# the threshold rather than up to a full interval later.
+REAP_INTERVAL_SECONDS = 300
+
+
+async def _reap_periodically() -> None:
+    """Run the reaper on an interval until cancelled. Never lets one failure end the loop: a
+    transient database error must not silently disable stuck-analysis detection for the lifetime
+    of the process, which is precisely the kind of quiet degradation this reaper exists to
+    catch."""
+    while True:
+        try:
+            await asyncio.sleep(REAP_INTERVAL_SECONDS)
+            reaped = await asyncio.to_thread(reap_stale_analyses)
+            if reaped:
+                log.info("api.reaper_pass", n_reaped=len(reaped))
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.warning("api.reaper_failed", exc_info=True)
 
 
 @asynccontextmanager
@@ -58,9 +82,20 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await warmup_connection.close()
     except Exception:
         log.warning("api.topology_declare_failed", exc_info=True)
-    yield
-    await dispatch.close()
-    log.info("api.shutdown")
+
+    # Nothing else in the system notices an analysis whose driving message was lost — see
+    # `app.pipeline.reaper`. Runs here rather than as a separate worker because it is a few
+    # seconds of work on an interval measured in minutes; a dedicated container for one UPDATE
+    # would be more moving parts than the job is worth.
+    reaper_task = asyncio.create_task(_reap_periodically())
+    try:
+        yield
+    finally:
+        reaper_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await reaper_task
+        await dispatch.close()
+        log.info("api.shutdown")
 
 
 app = FastAPI(

@@ -787,7 +787,7 @@ def _run_flow(
         effort=JUDGE_EFFORT,
     )
     try:
-        judge_output = JudgeOutput.model_validate(judgement_raw)
+        judge_output = JudgeOutput.model_validate(_repair_judge_output(judgement_raw))
     except ValidationError as exc:
         raise SchemaValidationError(f"judge submit_judgement invalid: {exc}") from exc
 
@@ -1534,3 +1534,46 @@ def _merged_hypothesis_evaluations(raw: Any) -> Any:
         merged["findings"] = normalised
 
     return merged
+
+
+def _repair_judge_output(raw: Any) -> Any:
+    """Drop duplicate rubric items before `JudgeOutput` validation.
+
+    The Judge must assess all ten rubric items exactly once. It occasionally emits one twice —
+    observed live as `got [1, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10]`, a second entry for item 3 whose
+    rationale literally read "see item 3 above". The validator then rejected the whole judgement,
+    which discards a complete four-stage investigation (analyst, verifier, judge) over a
+    duplicated cross-reference.
+
+    Keeping the first assessment of each item is not a guess about what the model meant: a
+    duplicate that back-references the original is a restatement, and every item still has an
+    assessment the model actually wrote. Nothing is invented and nothing is dropped except a
+    repetition. If items are genuinely *missing* the validator still rejects, because that is a
+    real gap in the review rather than a formatting slip.
+    """
+    if not isinstance(raw, dict):
+        return raw
+    verdicts = raw.get("verdicts")
+    if not isinstance(verdicts, list):
+        return raw
+
+    repaired_verdicts = []
+    for verdict in verdicts:
+        if not isinstance(verdict, dict):
+            repaired_verdicts.append(verdict)
+            continue
+        rubric = verdict.get("rubric_assessment")
+        if not isinstance(rubric, list):
+            repaired_verdicts.append(verdict)
+            continue
+        seen: set[Any] = set()
+        deduped = []
+        for entry in rubric:
+            item = entry.get("item") if isinstance(entry, dict) else None
+            if item in seen:
+                log.info("agent.judge_rubric_duplicate_dropped", item=item)
+                continue
+            seen.add(item)
+            deduped.append(entry)
+        repaired_verdicts.append({**verdict, "rubric_assessment": deduped})
+    return {**raw, "verdicts": repaired_verdicts}

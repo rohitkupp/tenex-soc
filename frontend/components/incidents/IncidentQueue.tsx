@@ -190,12 +190,18 @@ export function IncidentQueue({ analysisId, incidents }: IncidentQueueProps) {
       ) : (
         <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
           <div className="grid grid-cols-[auto_1fr_auto_auto_auto_auto_auto] items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[var(--color-text-lo)]">
+            {/* Every header cell must share the exact responsive visibility of the row cell
+                beneath it. `hidden`/`display: none` removes an element from grid flow entirely
+                rather than leaving an empty track, so a header cell that stays visible while its
+                row cell disappears shifts every following column left by one — which is why
+                Score, Signals and Citations sat under the wrong headings below the `sm`
+                breakpoint. The `sm:` guards below mirror the row exactly. */}
             <span className="w-1" aria-hidden="true" />
             <span>Title</span>
-            <span>Techniques</span>
+            <span className="hidden sm:inline">Techniques</span>
             <span className="text-right">Score</span>
             <span className="text-right">Signals</span>
-            <span>Disposition</span>
+            <span className="hidden sm:inline">Disposition</span>
             <span>Citations</span>
           </div>
           <ul>
@@ -215,15 +221,6 @@ export function IncidentQueue({ analysisId, incidents }: IncidentQueueProps) {
                   <SeverityBar severity={incident.severity} />
                   <span className="flex min-w-0 items-center gap-2">
                     <span className="truncate text-[var(--color-text-hi)]">{incident.title}</span>
-                    {incident.recurrence_of && (
-                      <span
-                        title={`Recurrence of incident ${incident.recurrence_of}`}
-                        className="shrink-0 text-xs text-[var(--color-text-lo)]"
-                        aria-label="Recurring incident"
-                      >
-                        ↻
-                      </span>
-                    )}
                     {incident.tags.includes("multi-layer") && (
                       <span
                         title="Corroborated across more than one detection layer"

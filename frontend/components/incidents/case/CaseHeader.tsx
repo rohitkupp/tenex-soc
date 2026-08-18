@@ -1,4 +1,3 @@
-import Link from "next/link";
 import type { IncidentDetail } from "@/lib/api/types";
 import { SeverityBar } from "@/components/severity/SeverityBar";
 import { Badge } from "@/components/ui/Badge";
@@ -7,7 +6,8 @@ import { formatDate, formatScore } from "@/lib/format";
 import { parseTag } from "@/lib/tags";
 
 // 1. Header — docs/10: "title, severity, fused score, disposition, techniques, recurrence link."
-export function CaseHeader({ incident, analysisId }: { incident: IncidentDetail; analysisId: string }) {
+// `analysisId` was only needed to link to a recurrence parent; recurrence detection is gone.
+export function CaseHeader({ incident }: { incident: IncidentDetail }) {
   const techniques = incident.verdict?.mitre_techniques ?? [];
   return (
     <header className="flex flex-col gap-3 border-b border-[var(--color-border)] pb-6">
@@ -83,15 +83,6 @@ export function CaseHeader({ incident, analysisId }: { incident: IncidentDetail;
         </div>
       )}
 
-      {incident.recurrence_of && (
-        <Link
-          href={`/analyses/${analysisId}/incidents/${incident.recurrence_of}`}
-          className="w-fit text-xs text-[var(--color-text-mid)] underline underline-offset-2 transition-colors hover:text-[var(--color-text-hi)]"
-        >
-          Recurrence of incident {incident.recurrence_of.slice(0, 8)}
-          {incident.recurrence_similarity !== null && ` · similarity ${formatScore(incident.recurrence_similarity)}`}
-        </Link>
-      )}
     </header>
   );
 }

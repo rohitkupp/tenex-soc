@@ -73,7 +73,7 @@ export default async function CaseFilePage({
       </Link>
 
       {/* 1. Header */}
-      <CaseHeader incident={incident} analysisId={id} />
+      <CaseHeader incident={incident} />
 
       {/* 2. Summary — always present (this is a pipeline output now, not an LLM side effect):
           `incident.summary` is deterministic, computed at correlate time for every incident,

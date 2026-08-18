@@ -249,7 +249,6 @@ export interface IncidentListItem {
   tags: string[];
   entity_count: number;
   signal_count: number;
-  recurrence_of: string | null;
   created_at: string;
   needs_attention?: boolean;
 }
@@ -561,8 +560,6 @@ export interface IncidentDetail {
    * change 3's "two confidences, never mixed" precedent applied to prose.
    */
   summary: string;
-  recurrence_of: string | null;
-  recurrence_similarity: number | null;
   created_at: string;
   entities: EntityOut[];
   signals: SignalOut[];
