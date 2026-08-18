@@ -48,6 +48,7 @@ from app.core.config import get_settings
 from app.core.db import get_tier2_session_factory, init_tier2_schema
 from app.core.logging import configure_logging, get_logger
 from app.models.tier2_signature import Tier2Signature
+from app.tier2.signature_sync import INCIDENT_TYPES
 from app.tier2.embedding import canonical_text, embed_text
 from app.tier2.hashing import indicator_hash, tenant_hash
 from app.tier2.mitre_allowlist import load_allowlisted_techniques
@@ -61,14 +62,15 @@ _SEED: Final[int] = 20260818
 N_TENANTS: Final[int] = 24
 SIGNATURES_PER_TENANT: Final[tuple[int, int]] = (8, 22)
 
-_INCIDENT_TYPES: Final[tuple[str, ...]] = (
-    "c2_beacon",
-    "data_exfiltration",
-    "credential_access",
-    "web_shell",
-    "suspicious_activity",
-    "ingress_tool_transfer",
-)
+# Derived from the real sync path, never hand-listed. The first version of this file spelled
+# its own six labels ("c2_beacon", "credential_access", "web_shell", ...) and only one of them
+# — data_exfiltration — was a label `app.tier2.signature_sync` can actually emit. The Tier 2
+# overview then showed `c2_beacon` (86 signatures, seeded) and `c2_beaconing` (1, real) as two
+# separate incident types for the same thing, and four more rows that no real triage could ever
+# add to. Reading the vocabulary off `signature_sync.INCIDENT_TYPES` means a seeded fleet and a live
+# run are describing the same taxonomy by construction, and adding a technique mapping there
+# cannot silently desynchronize this file.
+_INCIDENT_TYPES: Final[tuple[str, ...]] = tuple(sorted(INCIDENT_TYPES))
 _SOURCE_TYPES: Final[tuple[str, ...]] = ("zscaler",)
 
 

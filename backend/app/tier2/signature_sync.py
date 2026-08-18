@@ -25,7 +25,7 @@ downstream of this table).
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, Final
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -71,6 +71,14 @@ _TECHNIQUE_INCIDENT_TYPE: dict[str, str] = {
     "T1029": "seasonal_deviation",
 }
 _FALLBACK_INCIDENT_TYPE = "uncategorized"
+
+# The closed vocabulary a signature's `incident_type` can ever hold, fallback included. Public
+# because it is a contract, not an implementation detail: anything that writes `tier2_signatures`
+# (the fleet seeder in `app.scripts.seed_tier2_fleet`) must draw from exactly this set, or the
+# Tier 2 overview groups the same threat under two spellings.
+INCIDENT_TYPES: Final[frozenset[str]] = frozenset(
+    {*_TECHNIQUE_INCIDENT_TYPE.values(), _FALLBACK_INCIDENT_TYPE}
+)
 
 
 def should_sync_to_tier2(verdict: TriageVerdict) -> bool:
