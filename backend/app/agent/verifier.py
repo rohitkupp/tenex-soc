@@ -477,13 +477,55 @@ def _in_scope(ctx: AgentContext, event: Event) -> bool:
     return bool(pairs & ctx.entity_scope) and lo <= event.ts <= hi
 
 
+def _incident_numeric_pool(ctx: AgentContext) -> list[float]:
+    """Every number in *this incident's* evidence, as the pool a claim's figures are checked
+    against.
+
+    Previously each claim was checked only against the numeric leaves of the citation ids
+    attached to that one sentence. That asks "did the model attach the right citation to the
+    sentence containing this number?", not "did the model invent this number?" — and because a
+    finding is valid only if every claim passes, one citation-placement slip discarded an entire
+    investigation: nine tool calls, a judge pass and a full verification pass.
+
+    It was not a hypothetical failure. In production it rejected claims quoting evidence
+    verbatim, e.g. "an org_wide_event_count of 2 with a domain_rarity of 0.3333333333333333" —
+    both real field values — and 0 of 62 verdicts completed, 60% of them because no finding
+    survived this check.
+
+    Widening the pool to the incident keeps the property that matters. A number appearing
+    nowhere in the evidence the agent was given is still rejected, which is the case that
+    actually means fabrication. What is no longer punished is quoting a figure from
+    `EVIDENCE-3` on a sentence that cites `EVIDENCE-19` of the same incident — an imprecision in
+    attribution, not an unverified claim.
+
+    Citation *existence* and *scope* are untouched and still per-claim: a fabricated id and a
+    reference outside the incident's entity/time window both still fail. This loosens only the
+    numeric check, and only in scope, never in kind.
+    """
+    pool: list[float] = []
+    for payload in ctx.evidence_payloads:
+        pool.extend(numeric_leaves(payload.measurements))
+        pool.extend(numeric_leaves(payload.historical))
+        pool.extend(numeric_leaves(payload.entity))
+    return pool
+
+
 def _check_claim(
-    ctx: AgentContext, claim: Claim, resolved: dict[str, Citation], *, check_scope: bool
+    ctx: AgentContext,
+    claim: Claim,
+    resolved: dict[str, Citation],
+    *,
+    check_scope: bool,
+    incident_pool: list[float] | None = None,
 ) -> ClaimCheck:
     missing: list[str] = []
     unretrieved: list[str] = []
     out_of_scope: list[str] = []
-    pool: list[float] = []
+    # Seeded with the whole incident's evidence, then extended with each cited id's own numbers
+    # (which covers LOG-n events and MITRE-n techniques, neither of which is an EvidencePayload).
+    pool: list[float] = list(
+        incident_pool if incident_pool is not None else _incident_numeric_pool(ctx)
+    )
     scope_relevant = False
     scope_ok = True
 
@@ -568,10 +610,19 @@ def claims_for_finding(finding: Finding) -> list[Claim]:
 
 
 def check_finding(
-    ctx: AgentContext, finding: Finding, resolved: dict[str, Citation], *, check_scope: bool
+    ctx: AgentContext,
+    finding: Finding,
+    resolved: dict[str, Citation],
+    *,
+    check_scope: bool,
+    incident_pool: list[float] | None = None,
 ) -> FindingCheck:
+    """`incident_pool` is threaded through so a caller checking several findings computes the
+    incident's numeric pool once rather than per claim; omitted, it is derived here."""
+    incident_pool = incident_pool if incident_pool is not None else _incident_numeric_pool(ctx)
     claim_checks = tuple(
-        _check_claim(ctx, c, resolved, check_scope=check_scope) for c in claims_for_finding(finding)
+        _check_claim(ctx, c, resolved, check_scope=check_scope, incident_pool=incident_pool)
+        for c in claims_for_finding(finding)
     )
     technique_ok = finding.attack_technique_id == NO_KNOWN_MAPPING or (
         finding.attack_technique_id in ctx.retrieved_technique_ids
@@ -666,8 +717,9 @@ def verify_pass1(ctx: AgentContext, analyst_output: AnalystOutput) -> Pass1Resul
         dropped.extend(d)
 
     finding_flags: dict[str, tuple[str, ...]] = {}
+    pass1_pool = _incident_numeric_pool(ctx)
     for f in analyst_output.findings:
-        check = check_finding(ctx, f, resolved, check_scope=False)
+        check = check_finding(ctx, f, resolved, check_scope=False, incident_pool=pass1_pool)
         notes = _finding_flag_notes(check)
         if notes:
             finding_flags[f.finding_id] = notes
@@ -704,7 +756,11 @@ def verify_pass2(ctx: AgentContext, findings: list[Finding]) -> Pass2Result:
     )
     resolved = _resolve_citations(ctx, all_ids, events_by_line_no)
 
-    checks = tuple(check_finding(ctx, f, resolved, check_scope=True) for f in findings)
+    pass2_pool = _incident_numeric_pool(ctx)
+    checks = tuple(
+        check_finding(ctx, f, resolved, check_scope=True, incident_pool=pass2_pool)
+        for f in findings
+    )
     invalid: list[dict[str, Any]] = []
     for check in checks:
         if not check.technique_retrieval_ok:
@@ -817,7 +873,11 @@ def verify_citations(
         ctx, {int(m.group(1)) for cid in all_ids if (m := _LOG_RE.match(cid))}
     )
     resolved = _resolve_citations(ctx, all_ids, events_by_line_no)
-    checks = [_check_claim(ctx, c, resolved, check_scope=True) for c in claims]
+    incident_pool = _incident_numeric_pool(ctx)
+    checks = [
+        _check_claim(ctx, c, resolved, check_scope=True, incident_pool=incident_pool)
+        for c in claims
+    ]
     invalid = [c.as_dict() for c in checks if not c.valid]
     return not invalid, invalid, checks
 

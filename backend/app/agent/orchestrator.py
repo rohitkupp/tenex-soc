@@ -53,12 +53,13 @@ from __future__ import annotations
 import json
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Any, Final
+from typing import Any, Final, TypeVar
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
@@ -747,10 +748,27 @@ def _run_flow(
         model=model,
         effort=ANALYST_EFFORT,
     )
-    try:
-        analyst_output = AnalystOutput.model_validate(_merged_hypothesis_evaluations(analysis_raw))
-    except ValidationError as exc:
-        raise SchemaValidationError(f"analyst submit_analysis invalid: {exc}") from exc
+    # A repair is one forced terminal-tool call, not a re-investigation: the Analyst's tool loop
+    # already ran and its findings are in `analysis_raw`. Re-running `_run_tool_role` would pay
+    # for the whole investigation again to fix a formatting slip.
+    analyst_output = _validate_with_repair(
+        AnalystOutput,
+        analysis_raw,
+        tool_name="submit_analysis",
+        role="analyst",
+        normalise=_merged_hypothesis_evaluations,
+        retry=lambda correction: _run_notool_role(
+            caller=caller,
+            role="analyst",
+            system_prompt=prompts.ANALYST_SYSTEM_PROMPT,
+            user_content=f"{incident_context}\n\n{correction}",
+            terminal_tool=build_submit_analysis_tool(),
+            model=model,
+            deadline=deadline,
+            usage=usage,
+            effort=ANALYST_EFFORT,
+        ),
+    )
 
     # ---- verifier pass 1 (cheap, no LLM) — change 15 ----
     pass1: Pass1Result = verify_pass1(ctx, analyst_output)
@@ -787,7 +805,24 @@ def _run_flow(
         effort=JUDGE_EFFORT,
     )
     try:
-        judge_output = JudgeOutput.model_validate(_repair_judge_output(judgement_raw))
+        judge_output = _validate_with_repair(
+            JudgeOutput,
+            judgement_raw,
+            tool_name="submit_judgement",
+            role="judge",
+            normalise=_repair_judge_output,
+            retry=lambda correction: _run_notool_role(
+                caller=caller,
+                role="judge",
+                system_prompt=prompts.JUDGE_SYSTEM_PROMPT,
+                user_content=f"{judge_content}\n\n{correction}",
+                terminal_tool=build_submit_judgement_tool(),
+                model=model,
+                deadline=deadline,
+                usage=usage,
+                effort=JUDGE_EFFORT,
+            ),
+        )
     except ValidationError as exc:
         raise SchemaValidationError(f"judge submit_judgement invalid: {exc}") from exc
 
@@ -872,10 +907,23 @@ def _run_flow(
         )
     )
 
-    try:
-        verdict = TriageVerdictOut.model_validate(verdict_raw)
-    except ValidationError as exc:
-        raise SchemaValidationError(f"presenter present_verdict invalid: {exc}") from exc
+    verdict = _validate_with_repair(
+        TriageVerdictOut,
+        verdict_raw,
+        tool_name="present_verdict",
+        role="presenter",
+        retry=lambda correction: _run_notool_role(
+            caller=caller,
+            role="presenter",
+            system_prompt=prompts.PRESENTER_SYSTEM_PROMPT,
+            user_content=f"{presenter_content}\n\n{correction}",
+            terminal_tool=build_present_verdict_tool(),
+            model=model,
+            deadline=deadline,
+            usage=usage,
+            effort=PRESENTER_EFFORT,
+        ),
+    )
 
     # docs/v2_migration change 3: hard rejection, not a warning — see verifier.verify_anomaly_
     # confidence's own docstring for why this gets different treatment from citation verification.
@@ -1577,3 +1625,83 @@ def _repair_judge_output(raw: Any) -> Any:
             deduped.append(entry)
         repaired_verdicts.append({**verdict, "rubric_assessment": deduped})
     return {**raw, "verdicts": repaired_verdicts}
+
+
+# One repair attempt per role. A model that cannot satisfy the schema when handed its own
+# validation error is not going to on a third try, and each attempt is a full-price call.
+MAX_SCHEMA_REPAIR_ATTEMPTS: Final[int] = 1
+
+
+def _repair_prompt(exc: ValidationError, tool_name: str) -> str:
+    """The correction message sent back after a schema rejection.
+
+    Quotes pydantic's own error verbatim rather than paraphrasing it. The model needs to know
+    which field failed and why, and a hand-written summary of a validation error is one more
+    thing that drifts from the validator it describes.
+    """
+    return (
+        f"Your previous `{tool_name}` call was rejected because it did not match the required "
+        f"schema. Fix exactly what the validator reports and call `{tool_name}` again. Change "
+        f"nothing else: keep your analysis, your evidence citations and your reasoning identical "
+        f"— this is a formatting correction, not a request to reconsider.\n\n"
+        f"Validator output:\n{exc}"
+    )
+
+
+_ModelT = TypeVar("_ModelT", bound=BaseModel)
+
+
+def _validate_with_repair(
+    model_cls: type[_ModelT],
+    raw: Any,
+    *,
+    tool_name: str,
+    role: str,
+    retry: Callable[[str], Any],
+    normalise: Callable[[Any], Any] = lambda x: x,
+) -> _ModelT:
+    """Validate `raw`; on a schema rejection, hand the error back to the model once and revalidate.
+
+    Every schema invariant in this pipeline was all-or-nothing: a single malformed field threw
+    away the entire investigation behind it — the analyst's tool calls, the verifier pass, the
+    judge's ten-item rubric — and the incident was recorded as "Triage did not complete". In
+    production that happened on every incident, four different ways (a missing null-hypothesis
+    entry, a non-null `attack_source_id` beside `NO_KNOWN_MAPPING`, a duplicated rubric item, an
+    empty `findings` list), and 0 of 62 verdicts completed.
+
+    None of those were analytical failures. They were formatting slips over work already done,
+    and the cheapest correct response to a formatting slip is to say what was wrong and ask
+    again — which is what a schema-constrained tool call makes safe to do, because the retry is
+    checked by the same validator.
+
+    Deliberately *not* a substitute for the normalisers around it: `_merged_hypothesis_evaluations`
+    and `_repair_judge_output` fix shapes that are unambiguous to fix in code, with no call. This
+    is for everything else.
+    """
+    try:
+        return model_cls.model_validate(normalise(raw))
+    except ValidationError as first_error:
+        for _ in range(MAX_SCHEMA_REPAIR_ATTEMPTS):
+            log.info(
+                "agent.schema_repair_attempt",
+                role=role,
+                tool_name=tool_name,
+                error=str(first_error)[:300],
+            )
+            repaired_raw = retry(_repair_prompt(first_error, tool_name))
+            try:
+                validated = model_cls.model_validate(normalise(repaired_raw))
+            except ValidationError as retry_error:
+                log.warning(
+                    "agent.schema_repair_failed",
+                    role=role,
+                    tool_name=tool_name,
+                    error=str(retry_error)[:300],
+                )
+                raise SchemaValidationError(
+                    f"{role} {tool_name} invalid after {MAX_SCHEMA_REPAIR_ATTEMPTS} repair "
+                    f"attempt(s): {retry_error}"
+                ) from retry_error
+            log.info("agent.schema_repair_succeeded", role=role, tool_name=tool_name)
+            return validated
+        raise SchemaValidationError(f"{role} {tool_name} invalid: {first_error}") from first_error

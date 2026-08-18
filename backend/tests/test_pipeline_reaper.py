@@ -32,7 +32,9 @@ def _row(analysis_id: uuid.UUID) -> dict:
             conn.execute(
                 text("SELECT status, error, finished_at FROM analyses WHERE id = :a"),
                 {"a": analysis_id},
-            ).mappings().one()
+            )
+            .mappings()
+            .one()
         )
 
 

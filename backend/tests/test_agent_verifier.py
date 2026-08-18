@@ -266,8 +266,13 @@ def test_check_claim_existence_rejects_nonexistent_evidence_id(
         session.close()
     assert check.existence_ok is False
     assert check.missing_ids == ("EVIDENCE-99",)
-    # No citation to verify against -> a bare count with no valid pool cannot be confirmed either.
-    assert check.numeric_ok is False
+    # `numeric_ok` stays True, and the two checks being independent is the point. "63" is a
+    # real measurement from this incident's evidence, so the number is not fabricated — the
+    # *citation* is, and `existence_ok` is what says so. The pool used to be built only from
+    # the cited ids, so one bad citation emptied it and every number in the sentence was
+    # reported mismatched too, conflating two defects and discarding findings whose figures
+    # were entirely real. See `app.agent.verifier._incident_numeric_pool`.
+    assert check.numeric_ok is True
 
 
 def test_check_claim_existence_accepts_real_log_id(tenant_cleanup: list[uuid.UUID]) -> None:
