@@ -13,12 +13,18 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from functools import lru_cache
-from typing import Any
+from typing import Any, Final
 
 from sqlalchemy import Engine, create_engine, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.core.config import get_settings
+
+# One connection each, with one spare. Fourteen workers plus the API share a pooler capped at 15
+# clients; a worker handles one message at a time, so anything larger is a claim on capacity it
+# cannot use and another worker needs. See `get_engine`.
+DB_POOL_SIZE: Final[int] = 1
+DB_MAX_OVERFLOW: Final[int] = 1
 
 
 class Base(DeclarativeBase):
@@ -39,12 +45,32 @@ class Tier2Base(DeclarativeBase):
 
 @lru_cache
 def get_engine() -> Engine:
+    """Engine for the primary database.
+
+    **Pool sizing is deliberately small.** The deployed topology is 14 worker containers plus the
+    API against one managed pooler, and each of those holds its own pool: at the previous
+    `pool_size=10, max_overflow=20` that is a theoretical 420 connections against a Supabase
+    session-mode pooler capped at 15 clients. It did not merely risk exhaustion, it guaranteed it
+    under load — a run whose triage had fully succeeded was dead-lettered at the next stage
+    because no connection was available. Each worker processes one message at a time (prefetch 1),
+    so a large pool buys nothing; the ceiling has to be shared, not claimed.
+
+    `connect_args` disables psycopg's prepared statements, which is what makes transaction-mode
+    pooling usable. In transaction mode a connection is handed back to the pooler between
+    statements, so a prepared statement created on one physical connection may not exist on the
+    next — surfacing as intermittent `prepared statement "..." does not exist` errors that look
+    like corruption rather than configuration. Harmless in session mode, required in transaction
+    mode, so it is set unconditionally rather than made another thing to remember when the URL
+    changes.
+    """
     settings = get_settings()
     return create_engine(
         settings.database_url,
         pool_pre_ping=True,
-        pool_size=10,
-        max_overflow=20,
+        pool_size=DB_POOL_SIZE,
+        max_overflow=DB_MAX_OVERFLOW,
+        pool_recycle=300,
+        connect_args={"prepare_threshold": None},
         future=True,
     )
 
@@ -62,8 +88,12 @@ def get_tier2_engine() -> Engine:
     return create_engine(
         settings.tier2_database_url,
         pool_pre_ping=True,
-        pool_size=5,
-        max_overflow=5,
+        # Tier 2 is a Postgres container on the same host with no pooler in front of it, so it
+        # has no 15-client ceiling to respect — but only two stages touch it, at the end of a
+        # run, so it needs very little either.
+        pool_size=2,
+        max_overflow=3,
+        pool_recycle=300,
         future=True,
     )
 

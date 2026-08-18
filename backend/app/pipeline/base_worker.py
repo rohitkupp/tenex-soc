@@ -88,40 +88,27 @@ def _progress_at_stage_start(stage: str) -> float:
     return STAGE_PROGRESS[STAGE_SEQUENCE[index - 1]] if index > 0 else 0.0
 
 
-def _counters_for(message: StageMessage) -> dict[str, Any]:
-    with get_engine().begin() as conn:
-        return get_counters(conn, analysis_id=message.analysis_id, tenant_id=message.tenant_id)
+def _claim_and_read_counters(message: StageMessage, stage: str) -> dict[str, Any]:
+    """Claim `analyses.stage` and read the counters for the SSE frame, in one transaction.
 
-
-def _mark_stage_started(message: StageMessage, queue_name: str) -> None:
-    """Claim `analyses.stage` for the stage now running.
-
-    Progress is deliberately left alone: `STAGE_PROGRESS` is a completion ladder, and a stage
-    that has only just started has not completed anything. The stage *label* is what was wrong —
-    it named the last finished stage — and that is what this corrects. Within-stage progress is
-    published separately by stages that can measure it (see `app.pipeline.stages.triage`).
-
-    Best-effort. A worker must not refuse to do its job because a cosmetic label write failed;
-    the stage's own completion write will correct the field a few minutes later regardless.
+    Deliberately one connection. Split across two, this was the change that tipped a pooler
+    already at its ceiling — see `_claim_stage`. The two statements are also naturally one unit
+    of work: the counters reported alongside a stage claim should be the counters as of that
+    claim.
     """
-    stage = QUEUE_STAGE_LABEL.get(queue_name)
-    if stage is None:
-        return
-    try:
-        with get_engine().begin() as conn:
-            conn.execute(
-                text(
-                    "UPDATE analyses SET stage = :stage "
-                    "WHERE id = :analysis_id AND tenant_id = :tenant_id AND status = 'running'"
-                ),
-                {
-                    "stage": stage,
-                    "analysis_id": message.analysis_id,
-                    "tenant_id": message.tenant_id,
-                },
-            )
-    except Exception:
-        log.warning("worker.stage_claim_failed", queue=queue_name, exc_info=True)
+    with get_engine().begin() as conn:
+        conn.execute(
+            text(
+                "UPDATE analyses SET stage = :stage "
+                "WHERE id = :analysis_id AND tenant_id = :tenant_id AND status = 'running'"
+            ),
+            {
+                "stage": stage,
+                "analysis_id": message.analysis_id,
+                "tenant_id": message.tenant_id,
+            },
+        )
+        return get_counters(conn, analysis_id=message.analysis_id, tenant_id=message.tenant_id)
 
 
 class StageWorker:
@@ -196,15 +183,25 @@ class StageWorker:
 
         Both halves are best-effort and independent: a stage must not refuse to run because a
         progress frame could not be delivered.
+
+        **One database connection, not two.** The first version wrote the stage on one connection
+        and then fetched counters for the SSE frame on another, doubling this worker's connection
+        demand at exactly the moment every worker is contending for the same small pooler. That
+        is what exhausted Supabase's session-mode limit (15 clients across 14 workers) and
+        dead-lettered a run whose triage had already succeeded. The write and the read now share
+        one transaction.
         """
         stage = QUEUE_STAGE_LABEL.get(self.queue_name)
         if stage is None:
             return
 
-        await asyncio.to_thread(_mark_stage_started, message, self.queue_name)
+        try:
+            counters = await asyncio.to_thread(_claim_and_read_counters, message, stage)
+        except Exception:
+            log.warning("worker.stage_claim_failed", queue=self.queue_name, exc_info=True)
+            return
 
         try:
-            counters = await asyncio.to_thread(_counters_for, message)
             await publish_progress(
                 get_redis(),
                 analysis_id=message.analysis_id,
