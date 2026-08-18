@@ -257,9 +257,20 @@ and the overclaim guard (10) carry least — they are usually downstream symptom
 failure, and weighting them heavily would count one defect twice.
 
 **Caps.** A weighted mean alone lets nine cheap passes bury one disqualifying failure. Failing
-item 1, 2, 3, or 9 ceilings the score (0.45–0.55) regardless of the rest. Caps are ceilings,
-never floors, and all sit below the `high` band by construction, so a finding with a
-disqualifying defect can never present as high confidence.
+item 3 (a citation that does not support its statement) or item 9 (a technique this telemetry
+cannot observe) ceilings the score at 0.50 regardless of the rest. Caps are ceilings, never
+floors, and both sit below the `high` band, so a finding with a disqualifying defect can never
+present as high confidence.
+
+**Only independent failures cap, and that was learned in production.** Items 1, 2 and 3 are not
+three separate tests — item 1 asks whether *every* claim is supported, so its own quantifier
+makes it a roll-up that fails automatically whenever 2 or 3 fails. Capping on item 1 charged one
+defect twice, and since item 1 also carries the heaviest weight, the commonest artifact in this
+pipeline (a number written in a different form than the evidence spells it, which the
+report-only verifier tolerates by design) drew the maximum penalty available. Eight of ten
+incidents across the first two production runs landed on exactly item 1's ceiling, including one
+the Judge itself described as "supported by sigma rule 37561, ML detectors, and burst evidence".
+Items 1 and 2 keep their weights and lose their caps.
 
 **Aggregation** across a multi-finding incident is the mean of the *surviving* findings, not the
 max — one airtight finding must not launder a shaky one in the same case file. Rejected findings

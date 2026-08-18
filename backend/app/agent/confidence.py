@@ -32,7 +32,8 @@ double-counting would make one defect look like two.
 **Caps.** A weighted mean alone lets nine cheap passes bury one disqualifying failure — a
 finding whose citations do not support it would still score 0.85. Failing a `_CAPS` item
 therefore ceilings the result regardless of the rest. Caps are ceilings, never floors, and
-the tightest applicable one wins.
+the tightest applicable one wins. Only *independent* failures cap: see `_CAPS` on why items 1
+and 2 deliberately do not, despite being the two heaviest-weighted integrity items.
 
 The caps are deliberately moderate (0.45-0.55, not 0.1). A capped finding should read as
 "corroborate this before acting", which is a real analyst state, rather than as a broken
@@ -97,11 +98,23 @@ JUDGE_RUBRIC_WEIGHTS: Final[tuple[float, ...]] = (
     0.05,  # 10. maliciousness claimed only where evidence establishes it
 )
 
-# item number -> ceiling imposed when that item is graded unsatisfied. See the module docstring
-# on why these are moderate rather than punitive.
+# item number -> ceiling imposed when that item is graded unsatisfied.
+#
+# **Only genuinely independent failures cap.** Items 1, 2 and 3 are not three separate tests.
+# Item 1 asks whether *every* factual claim is supported, which its own quantifier makes a
+# roll-up: it fails automatically whenever item 2 or item 3 fails. Capping on item 1 as well as
+# on its constituents charged one defect twice, and because item 1 also carries the heaviest
+# weight, the commonest artifact in this pipeline -- a number written in a different form than
+# the evidence spells it, which the report-only verifier tolerates by design -- was landing the
+# maximum penalty available. The first two production runs scored eight of ten incidents at
+# exactly item 1's old ceiling, and the Judge's own note on one of them read "core claim ... is
+# supported by sigma rule 37561, ML detectors, and burst evidence".
+#
+# So item 1 keeps its weight (a roll-up failing is real information) and loses its cap, and item
+# 2 loses its cap too: an unmatched number is a precision defect, not a fabrication. What remains
+# is the pair that cannot be explained away -- a citation that does not support the statement it
+# is attached to (3), and a technique this telemetry cannot observe at all (9).
 _CAPS: Final[dict[int, float]] = {
-    1: 0.45,  # claims not supported by evidence
-    2: 0.55,  # a number that is not in the evidence
     3: 0.50,  # a citation that does not support its statement
     9: 0.50,  # a technique this telemetry cannot observe
 }

@@ -84,21 +84,41 @@ def test_a_light_failure_lowers_the_score_without_capping() -> None:
     assert result.failed_items == [8]
 
 
-def test_unsupported_claims_cap_the_score_hard() -> None:
+def test_unsupported_citations_cap_the_score_hard() -> None:
     """Nine cheap passes must not bury the one failure that matters. Without the cap this
-    scores 0.82 — a finding whose claims are not in the evidence presenting as high confidence."""
-    result = evidence_confidence(_grades(**{"1": False}))
+    scores 0.85 — a finding whose citations do not support it presenting as high confidence."""
+    result = evidence_confidence(_grades(**{"3": False}))
     assert result is not None
-    assert result.score == 0.45
-    assert result.capped_by == 1
-    assert result.band == "low"
+    assert result.score == 0.50
+    assert result.capped_by == 3
+    assert result.band == "moderate"
+
+
+def test_the_rollup_item_does_not_cap_on_its_own() -> None:
+    """Item 1 ("is *every* claim supported") fails whenever item 2 or 3 does, so capping on it
+    charges one defect twice. Observed in production: a finding the Judge described as
+    "supported by sigma rule 37561, ML detectors, and burst evidence" scored at item 1's old
+    ceiling purely because some figures were written in a different form than the evidence."""
+    result = evidence_confidence(_grades(**{"1": False, "2": False}))
+    assert result is not None
+    assert result.capped_by is None
+    assert result.score == pytest.approx(0.70)
+    assert result.band == "moderate"
+
+
+def test_a_numeric_mismatch_alone_cannot_drag_a_finding_to_low() -> None:
+    """The report-only verifier tolerates unmatched numbers by design; the score must not
+    re-litigate that as if it were fabrication."""
+    result = evidence_confidence(_grades(**{"2": False}))
+    assert result is not None
+    assert result.band in ("high", "moderate")
 
 
 def test_tightest_cap_wins_when_several_apply() -> None:
-    result = evidence_confidence(_grades(**{"1": False, "2": False, "3": False}))
+    result = evidence_confidence(_grades(**{"3": False, "9": False}))
     assert result is not None
-    assert result.score == 0.45  # item 1's 0.45, not item 2's 0.55
-    assert result.capped_by == 1
+    assert result.capped_by in (3, 9)
+    assert result.score == 0.50
 
 
 def test_a_cap_is_a_ceiling_never_a_floor() -> None:
@@ -106,7 +126,16 @@ def test_a_cap_is_a_ceiling_never_a_floor() -> None:
     grades = [RubricGrade(item=i, satisfied=(i == 5)) for i in range(1, 11)]
     result = evidence_confidence(grades)
     assert result is not None
-    assert result.score == pytest.approx(0.10)  # item 5's weight alone, well under the 0.45 cap
+    assert result.score == pytest.approx(0.10)  # item 5's weight alone, well under the 0.50 cap
+
+
+def test_caps_only_apply_to_items_that_are_not_rollups_of_other_items() -> None:
+    """Guards the reasoning in `_CAPS`, not just its current contents: item 1's wording makes it
+    fail whenever 2 or 3 fails, so it must never be a capping item however the weights change."""
+    from app.agent.confidence import _CAPS
+
+    assert 1 not in _CAPS
+    assert 2 not in _CAPS
 
 
 def test_partial_grading_normalizes_over_what_was_graded() -> None:
