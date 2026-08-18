@@ -237,6 +237,8 @@ def list_incidents(
         verdict = verdicts.get(inc.id)
         disposition = verdict.disposition if verdict is not None else None
         citation_valid = verdict.citation_valid if verdict is not None else None
+        evidence_confidence = verdict.evidence_confidence if verdict is not None else None
+        evidence_confidence_band = verdict.evidence_confidence_band if verdict is not None else None
         items.append(
             IncidentListItem(
                 id=inc.id,
@@ -246,6 +248,8 @@ def list_incidents(
                 anomaly_confidence=inc.anomaly_confidence,
                 disposition=disposition,
                 citation_valid=citation_valid,
+                evidence_confidence=evidence_confidence,
+                evidence_confidence_band=evidence_confidence_band,
                 mitre_techniques=_technique_ids(verdict),
                 tags=list(inc.tags),
                 entity_count=len(inc.entity_ids),

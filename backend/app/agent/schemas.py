@@ -145,6 +145,15 @@ NO_KNOWN_MAPPING: Final[str] = "NO_KNOWN_MAPPING"
 # (`app.agent.prompts`) and `JudgeVerdict.rubric_assessment`'s completeness check below render
 # from this single tuple, so the ten items can never drift between what the model is told to
 # grade against and what a submitted verdict is checked to have actually graded.
+#
+# **Every item is phrased so that `satisfied=True` is the good answer.** Two originally were
+# not ("Is required evidence missing?", "Has maliciousness been claimed where only anomaly is
+# established?"), where a literal yes meant the finding was *worse*. That was survivable while
+# the grades only informed a human-read PASS/REVISE/REJECT, but `app.agent.confidence` now
+# computes a number from them, and a model answering either item literally would have pushed
+# the score in exactly the wrong direction with nothing to catch it. Uniform polarity is a
+# load-bearing invariant of this tuple now, asserted in tests -- do not add an item that reads
+# well as a question but inverts it.
 JUDGE_RUBRIC: Final[tuple[str, ...]] = (
     "Is every factual claim supported by supplied evidence?",
     "Do all numerical claims appear exactly in the evidence?",
@@ -152,10 +161,10 @@ JUDGE_RUBRIC: Final[tuple[str, ...]] = (
     "Does the cited ATT&CK document support the mapping?",
     "Is observation clearly separated from inference?",
     "Are benign alternatives considered?",
-    "Is required evidence missing?",
+    "Is all the evidence this finding requires actually present?",
     "Does confidence match evidence strength?",
     "Is the technique observable from Zscaler proxy telemetry?",
-    "Has maliciousness been claimed where only anomaly is established?",
+    "Is maliciousness claimed only where evidence establishes it, never for mere anomaly?",
 )
 
 
@@ -479,6 +488,13 @@ class TriageVerdictOut(BaseModel):
       and required back on this model unchanged; `app.agent.verifier.verify_anomaly_confidence` is
       the deterministic check. Transport only -- never persisted to `triage_verdicts` (no such
       column exists there) and never written back to `incidents.anomaly_confidence`.
+    - `evidence_confidence` / `evidence_confidence_basis` -- a third value, and the only one of
+      the three that measures *the triage itself* rather than the traffic. No LLM emits it: it
+      is `app.agent.confidence` scoring the Judge's own rubric grades, attached by the
+      orchestrator after the Presenter returns. It is therefore absent from
+      `build_present_verdict_tool`'s schema on purpose -- a field the model cannot write is a
+      field the model cannot inflate. `None` when the Judge never ran (a `needs_review`
+      fallback), which is deliberately distinct from a graded-and-low score.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -493,6 +509,11 @@ class TriageVerdictOut(BaseModel):
     narrative: tuple[NarrativeStep, ...]
     contradicting_evidence: str
     recommended_actions: tuple[str, ...] = Field(default_factory=tuple)
+
+    # --- computed from the Judge's rubric grades, never emitted by any model ---
+    evidence_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    evidence_confidence_band: str | None = None
+    evidence_confidence_basis: dict[str, Any] | None = None
 
     # --- filled in after construction, not part of the LLM's tool-use payload ---
     tool_trace: tuple[ToolTraceEntry, ...] = Field(default_factory=tuple)

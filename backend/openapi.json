@@ -1700,6 +1700,28 @@
             "title": "Entity Count",
             "type": "integer"
           },
+          "evidence_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Confidence"
+          },
+          "evidence_confidence_band": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Confidence Band"
+          },
           "fused_score": {
             "title": "Fused Score",
             "type": "number"
@@ -1748,6 +1770,8 @@
           "anomaly_confidence",
           "disposition",
           "citation_valid",
+          "evidence_confidence",
+          "evidence_confidence_band",
           "mitre_techniques",
           "tags",
           "entity_count",
@@ -1763,6 +1787,22 @@
           "avg_confidence": {
             "title": "Avg Confidence",
             "type": "number"
+          },
+          "avg_evidence_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Evidence Confidence"
+          },
+          "evidence_confidence_count": {
+            "default": 0,
+            "title": "Evidence Confidence Count",
+            "type": "integer"
           },
           "incident_type": {
             "title": "Incident Type",
@@ -2632,6 +2672,40 @@
             "title": "Disposition",
             "type": "string"
           },
+          "evidence_confidence": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Confidence"
+          },
+          "evidence_confidence_band": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Confidence Band"
+          },
+          "evidence_confidence_basis": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Evidence Confidence Basis"
+          },
           "id": {
             "format": "uuid",
             "title": "Id",
@@ -2748,6 +2822,9 @@
           "disposition",
           "threat_confidence",
           "threat_confidence_reason",
+          "evidence_confidence",
+          "evidence_confidence_band",
+          "evidence_confidence_basis",
           "llm_severity_opinion",
           "mitre_techniques",
           "summary",

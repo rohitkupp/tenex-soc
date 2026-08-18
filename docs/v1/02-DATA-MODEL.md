@@ -181,6 +181,10 @@ CREATE TABLE triage_verdicts (
   incident_id UUID NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
   disposition TEXT NOT NULL,
   confidence REAL NOT NULL,
+  -- Superseded by threat_confidence/threat_confidence_reason (v2 migration change 3).
+  evidence_confidence REAL,        -- 0..1, computed by app.agent.confidence from the Judge's
+  evidence_confidence_band TEXT,   -- rubric grades. No LLM writes it. NULL = never assessed,
+  evidence_confidence_basis JSONB, -- which is distinct from assessed-and-low.
   llm_severity_opinion TEXT,       -- recorded for disagreement metric, not used for ranking
   mitre_techniques JSONB NOT NULL,
   summary TEXT NOT NULL,
@@ -258,7 +262,9 @@ CREATE TABLE tier2_signatures (
   incident_type TEXT NOT NULL,
   mitre_techniques TEXT[] NOT NULL,
   source_types TEXT[] NOT NULL,
-  confidence REAL NOT NULL,
+  confidence REAL NOT NULL,          -- calibrated detector fusion: how unusual the traffic was
+  evidence_confidence REAL,          -- Judge rubric, scored in code: how well-supported the
+                                     -- conclusion was. NULL when triage never reached the Judge.
   indicator_hashes TEXT[] NOT NULL,  -- HMAC'd domains/IPs for cross-tenant overlap
   observed_at TIMESTAMPTZ NOT NULL,
   embedding VECTOR(1024)

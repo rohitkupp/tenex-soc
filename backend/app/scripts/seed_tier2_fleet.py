@@ -213,6 +213,13 @@ def seed_tier2_fleet(*, reset: bool = True) -> dict[str, int]:
                         mitre_techniques=[campaign.technique],
                         source_types=list(_SOURCE_TYPES),
                         confidence=round(rng.uniform(0.62, 0.99), 3),
+                        # Independent of `confidence` on purpose. The two measure different
+                        # things (traffic anomaly vs. evidentiary support for the conclusion),
+                        # and seeding them correlated would manufacture a relationship the Tier 2
+                        # charts would then appear to discover. Drawn a little lower and wider
+                        # than the campaign confidence because real rubric scores cluster below
+                        # the detector scores that surfaced them.
+                        evidence_confidence=round(rng.uniform(0.45, 0.92), 3),
                         indicator_hashes=[indicator_hash(campaign.domain, "domain", shared_salt)],
                         observed_at=observed,
                         embedding=embed_text(
@@ -241,6 +248,7 @@ def seed_tier2_fleet(*, reset: bool = True) -> dict[str, int]:
                         mitre_techniques=[technique],
                         source_types=list(_SOURCE_TYPES),
                         confidence=round(rng.uniform(0.35, 0.95), 3),
+                        evidence_confidence=round(rng.uniform(0.40, 0.90), 3),
                         indicator_hashes=[indicator_hash(local_domain, "domain", shared_salt)],
                         observed_at=now - timedelta(days=rng.uniform(0.5, 85)),
                         embedding=embed_text(

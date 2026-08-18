@@ -128,7 +128,31 @@ def init_tier2_schema() -> None:
         # database must enable it, and `tier2_signatures.embedding` is a `vector(1024)`.
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
     Tier2Base.metadata.create_all(engine)
+    _add_missing_tier2_columns(engine)
     _create_tier2_readonly_surface(engine)
+
+
+# Columns added to a Tier 2 model after the table already exists somewhere. `create_all` only
+# ever CREATEs — it inspects for the table's presence and skips it entirely, so a new attribute
+# on the model is silently absent on every environment that already ran once, and the failure
+# surfaces as an `UndefinedColumn` on the next sync rather than at startup.
+#
+# This is the price of the deliberate no-Alembic exception documented on `init_tier2_schema`.
+# It stays honest for the same reason that exception does: the store is derived and every row is
+# regenerable, so an additive, idempotent `ADD COLUMN IF NOT EXISTS` is the whole migration story
+# a nullable column needs. Anything non-additive (a drop, a type change, a NOT NULL backfill) is
+# the signal that Tier 2 has outgrown this and needs a real migration tree.
+_TIER2_ADDED_COLUMNS: Final[tuple[tuple[str, str, str], ...]] = (
+    ("tier2_signatures", "evidence_confidence", "REAL"),
+)
+
+
+def _add_missing_tier2_columns(engine: Engine) -> None:
+    with engine.begin() as conn:
+        for table, column, ddl_type in _TIER2_ADDED_COLUMNS:
+            conn.execute(
+                text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {ddl_type}")
+            )
 
 
 def get_db() -> Iterator[Session]:
@@ -227,8 +251,13 @@ def _create_tier2_readonly_surface(engine: Engine) -> None:
         conn.execute(
             text(
                 f"CREATE OR REPLACE VIEW {_SIGNATURES_VIEW} AS "  # noqa: S608
+                # `evidence_confidence` is appended *last* and must stay last. Postgres lets
+                # CREATE OR REPLACE VIEW add columns only at the end of the select list —
+                # inserting it next to `confidence`, where it reads better, makes the replace
+                # fail on every environment whose view already exists.
                 "SELECT id, tenant_hash, incident_type, mitre_techniques, source_types, "
-                "confidence, indicator_hashes, observed_at FROM tier2_signatures"
+                "confidence, indicator_hashes, observed_at, evidence_confidence "
+                "FROM tier2_signatures"
             )
         )
         conn.execute(

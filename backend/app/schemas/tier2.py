@@ -12,6 +12,10 @@ class IncidentTypeBreakdownOut(BaseModel):
     signature_count: int
     tenant_count: int
     avg_confidence: float
+    # See `app.tier2.indicator_overlap.IncidentTypeBreakdown` for why the count travels with the
+    # mean rather than being derivable from `signature_count`.
+    avg_evidence_confidence: float | None = None
+    evidence_confidence_count: int = 0
 
 
 class Tier2OverviewResponse(BaseModel):

@@ -106,6 +106,12 @@ class IncidentListItem(BaseModel):
     anomaly_confidence: float
     disposition: str | None
     citation_valid: bool | None
+    # `app.agent.confidence`: the Judge's rubric grades scored into one number, and the band it
+    # falls in. `None` when the incident was never triaged or triage never reached the Judge —
+    # the queue renders that as an em dash, never as a zero. Distinct from `anomaly_confidence`
+    # above, which is calibrated detector fusion and says nothing about the reasoning.
+    evidence_confidence: float | None
+    evidence_confidence_band: str | None
     mitre_techniques: list[str]
     # Deterministic, always-populated pipeline output — see this class's own docstring.
     tags: list[str]

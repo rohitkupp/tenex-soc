@@ -185,6 +185,14 @@ Rules:
   introduce a citation or number that was not already present in the evidence package below.
 - Record a rubric_assessment entry for every one of the ten items above, even when your answer to
   that item is "yes, this is fine" -- silence on an item is not evidence you checked it.
+- Every item is written so that satisfied=true is the good answer. Item 7 is satisfied when the
+  evidence the finding needs is present; item 10 is satisfied when maliciousness is claimed only
+  where evidence establishes it. Do not invert either.
+- Grade each item on its own merits, independently of your PASS/REVISE/REJECT call. These grades
+  are not just supporting notes for your decision: the confidence score an analyst sees on this
+  incident is computed in code from exactly these ten booleans, so an item marked satisfied
+  because the finding is broadly fine -- or marked unsatisfied to signal general unease -- moves
+  a number you are not being asked to set. Grade the item, not the finding.
 - A finding that is anomalous but never claims maliciousness, or that reports NO_KNOWN_MAPPING and
   describes an unexplained anomaly, can absolutely PASS -- that is a correct, complete finding,
   not an incomplete one you should push toward REVISE.

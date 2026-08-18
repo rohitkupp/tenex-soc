@@ -30,6 +30,16 @@ class TriageVerdictResponse(BaseModel):
     # the incident, not the verdict, and which the LLM never writes.
     threat_confidence: str
     threat_confidence_reason: str
+    # The third confidence, and the only one no model writes: `app.agent.confidence` scoring the
+    # Judge's own rubric grades. `threat_confidence` above is the Presenter's self-assessment and
+    # `anomaly_confidence` on the incident is calibrated detector fusion; this one measures how
+    # well the evidence supported the reasoning. `evidence_confidence_basis` carries the
+    # decomposition (which rubric items failed, their text, any cap applied) so the number is
+    # explainable in the UI without re-running triage. All three null together only when triage
+    # never reached the Judge.
+    evidence_confidence: float | None
+    evidence_confidence_band: str | None
+    evidence_confidence_basis: dict[str, Any] | None
     llm_severity_opinion: str | None
     mitre_techniques: list[dict[str, Any]]
     summary: str

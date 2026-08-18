@@ -101,6 +101,13 @@ class IncidentTypeBreakdown(NamedTuple):
     signature_count: int
     tenant_count: int
     avg_confidence: float
+    # Mean of `evidence_confidence` over the signatures of this type that have one, and how many
+    # that was. `None` when no signature of this type carries an assessment — AVG ignores NULLs,
+    # so without the count a type where one of eighty signatures was graded would present its
+    # single sample as the type's average. Reporting the denominator is what makes the mean
+    # honest here; the UI shows it and greys the value when the sample is thin.
+    avg_evidence_confidence: float | None
+    evidence_confidence_count: int
 
 
 class Tier2Overview(NamedTuple):
@@ -130,7 +137,9 @@ def get_overview(session: Session) -> Tier2Overview:
 
     breakdown_query = (
         f"SELECT incident_type, COUNT(*) AS signature_count, "  # noqa: S608
-        f"COUNT(DISTINCT tenant_hash) AS tenant_count, AVG(confidence) AS avg_confidence "
+        f"COUNT(DISTINCT tenant_hash) AS tenant_count, AVG(confidence) AS avg_confidence, "
+        f"AVG(evidence_confidence) AS avg_evidence_confidence, "
+        f"COUNT(evidence_confidence) AS evidence_confidence_count "
         f"FROM {TIER2_SIGNATURES_VIEW} GROUP BY incident_type "
         f"ORDER BY signature_count DESC"
     )
@@ -146,6 +155,12 @@ def get_overview(session: Session) -> Tier2Overview:
                 signature_count=row.signature_count,
                 tenant_count=row.tenant_count,
                 avg_confidence=float(row.avg_confidence),
+                avg_evidence_confidence=(
+                    float(row.avg_evidence_confidence)
+                    if row.avg_evidence_confidence is not None
+                    else None
+                ),
+                evidence_confidence_count=int(row.evidence_confidence_count),
             )
             for row in breakdown_rows
         ],

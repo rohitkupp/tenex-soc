@@ -204,6 +204,14 @@ def build_signature(
         # should come from the same calibrated detector fusion every other ranking in this
         # system uses, not from the model's own opinion of itself.
         confidence=incident.fused_score,
+        # The second axis, and the reason both columns exist. `confidence` above answers "how
+        # unusual was this traffic", calibrated from detectors. This answers "how well did the
+        # evidence support the conclusion we drew about it", computed by `app.agent.confidence`
+        # from the Judge's rubric grades. Cross-tenant, the pair is more informative than either
+        # alone: an indicator every tenant scores high on but whose triages all rest on thin
+        # evidence is a very different fleet-wide signal from one that is consistently
+        # well-evidenced. `None` for a verdict that never reached the Judge.
+        evidence_confidence=verdict.evidence_confidence,
         indicator_hashes=unique_indicator_hashes,
         # When the incident's activity actually happened, not when triage got around to
         # looking at it — `incident.created_at` is when correlation formed the incident

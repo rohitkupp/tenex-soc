@@ -45,6 +45,9 @@ VIEW_SCHEMAS: dict[str, tuple[tuple[str, str], ...]] = {
         ("confidence", "real"),
         ("indicator_hashes", "text[]"),
         ("observed_at", "timestamptz"),
+        # Last by requirement, not by preference — see the view's own CREATE OR REPLACE comment
+        # in `app.core.db._create_tier2_readonly_surface`.
+        ("evidence_confidence", "real"),
     ),
     TIER2_INDICATOR_OVERLAP_VIEW: (
         ("indicator_hash", "text"),

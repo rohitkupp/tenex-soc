@@ -16,6 +16,7 @@ import Link from "next/link";
 import type { Disposition, IncidentListItem, Severity } from "@/lib/api/types";
 import { SEVERITY_ORDER, dispositionLabel, severityLabel } from "@/lib/severity";
 import { SeverityBar } from "@/components/severity/SeverityBar";
+import { EvidenceConfidenceCell } from "@/components/incidents/EvidenceConfidenceCell";
 import { Badge } from "@/components/ui/Badge";
 import { formatScore } from "@/lib/format";
 import { techniqueIdsFromTags } from "@/lib/tags";
@@ -189,7 +190,7 @@ export function IncidentQueue({ analysisId, incidents }: IncidentQueueProps) {
         </div>
       ) : (
         <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
-          <div className="grid grid-cols-[auto_1fr_auto_5rem_5rem_8rem_6rem] items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[var(--color-text-lo)]">
+          <div className="grid grid-cols-[auto_1fr_auto_5rem_5rem_5rem_8rem_6rem] items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[var(--color-text-lo)]">
             {/* Every header cell must share the exact responsive visibility of the row cell
                 beneath it. `hidden`/`display: none` removes an element from grid flow entirely
                 rather than leaving an empty track, so a header cell that stays visible while its
@@ -206,6 +207,14 @@ export function IncidentQueue({ analysisId, incidents }: IncidentQueueProps) {
                 headings. A fixed track plus `text-center` on both halves makes the two share one
                 box and one alignment. */}
             <span className="text-center">Score</span>
+            {/* Two different questions sitting side by side, which is the point: Score is
+                calibrated detector fusion ("how unusual"), Evidence is the Judge's rubric scored
+                in code ("how well supported"). Both always visible — hiding Evidence at a
+                breakpoint while its row cell stayed put is exactly the column-shift bug the
+                comment above describes. */}
+            <span className="text-center" title="Evidence confidence — computed from the Judge's ten-item rubric">
+              Evidence
+            </span>
             <span className="text-center">Signals</span>
             <span className="hidden text-center sm:inline">Disposition</span>
             <span className="text-center">Citations</span>
@@ -220,7 +229,7 @@ export function IncidentQueue({ analysisId, incidents }: IncidentQueueProps) {
                   href={`/analyses/${analysisId}/incidents/${incident.id}`}
                   onMouseEnter={() => setFocusedIndex(index)}
                   aria-current={index === focusedIndex ? "true" : undefined}
-                  className={`grid grid-cols-[auto_1fr_auto_5rem_5rem_8rem_6rem] items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2.5 text-sm transition-colors last:border-b-0 hover:bg-[var(--color-surface-2)] ${
+                  className={`grid grid-cols-[auto_1fr_auto_5rem_5rem_5rem_8rem_6rem] items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2.5 text-sm transition-colors last:border-b-0 hover:bg-[var(--color-surface-2)] ${
                     index === focusedIndex ? "bg-[var(--color-surface-2)] outline outline-1 outline-[var(--color-text-mid)] -outline-offset-1" : ""
                   }`}
                 >
@@ -256,6 +265,10 @@ export function IncidentQueue({ analysisId, incidents }: IncidentQueueProps) {
                   <span className="text-center font-mono text-xs text-[var(--color-text-hi)]">
                     {formatScore(incident.fused_score)}
                   </span>
+                  <EvidenceConfidenceCell
+                    value={incident.evidence_confidence ?? null}
+                    band={incident.evidence_confidence_band ?? null}
+                  />
                   <span className="text-center font-mono text-xs text-[var(--color-text-mid)]">
                     {incident.signal_count}
                   </span>

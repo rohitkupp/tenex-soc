@@ -8,6 +8,7 @@ CREATE TABLE tier2_signatures (
   mitre_techniques TEXT[] NOT NULL,
   source_types TEXT[] NOT NULL,
   confidence REAL NOT NULL,
+  evidence_confidence REAL,          -- added after docs/02; see the column comment below
   indicator_hashes TEXT[] NOT NULL,
   observed_at TIMESTAMPTZ NOT NULL,
   embedding VECTOR(1024)
@@ -60,6 +61,13 @@ class Tier2Signature(Tier2Base):
     mitre_techniques: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
     source_types: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
     confidence: Mapped[float] = mapped_column(REAL, nullable=False)
+    # The Judge's rubric-derived assessment of the *triage*, alongside `confidence`'s calibrated
+    # assessment of the *traffic*. Both belong here and neither substitutes for the other: two
+    # tenants can see the same indicator with the same fused score while one tenant's evidence
+    # supported the conclusion and the other's did not. Nullable -- a signature synced from a
+    # verdict that never reached the Judge has no assessment (see `app.agent.confidence`), and
+    # pre-existing rows predate the column entirely.
+    evidence_confidence: Mapped[float | None] = mapped_column(REAL, nullable=True)
     indicator_hashes: Mapped[list[str]] = mapped_column(ARRAY(Text), nullable=False)
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1024), nullable=True)

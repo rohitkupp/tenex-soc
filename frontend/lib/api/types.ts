@@ -222,6 +222,8 @@ export type Disposition = "true_positive" | "false_positive" | "benign" | "needs
  * than invent a field the backend may never send, this is optional and `IncidentQueue`
  * derives it client-side when absent (see that component for the derivation and why).
  */
+export type EvidenceConfidenceBand = "high" | "moderate" | "low" | "very_low";
+
 export interface IncidentListItem {
   id: string;
   title: string;
@@ -232,6 +234,19 @@ export interface IncidentListItem {
   anomaly_confidence: number;
   disposition: Disposition | null;
   citation_valid: boolean | null;
+  /**
+   * `app.agent.confidence`: the Judge's ten rubric grades weighted into one 0–1 score. No model
+   * emits this — the LLM grades the evidence, code does the arithmetic — which is why it can be
+   * compared across incidents at all. `null` when the incident was never triaged or triage never
+   * reached the Judge; render that as an em dash, never as a zero.
+   *
+   * Not interchangeable with `anomaly_confidence` above: that one measures how unusual the
+   * traffic was, this one measures how well the evidence supported the conclusion drawn from it.
+   * A high-anomaly / low-evidence incident is precisely the row an analyst should look at first.
+   */
+  evidence_confidence: number | null;
+  /** Band for `evidence_confidence`: high ≥0.75, moderate ≥0.50, low ≥0.25, else very_low. */
+  evidence_confidence_band: EvidenceConfidenceBand | null;
   mitre_techniques: string[];
   /**
    * Deterministic, always-populated pipeline output — two unioned families, both computed at
@@ -915,6 +930,11 @@ export interface IncidentTypeBreakdownOut {
   signature_count: number;
   tenant_count: number;
   avg_confidence: number;
+  /** Mean `evidence_confidence` over the signatures of this type that carry one, and how many
+   * that was. `null` when none do. The count travels with the mean because SQL `AVG` skips
+   * NULLs — without it a single assessed signature would look like the whole type's average. */
+  avg_evidence_confidence: number | null;
+  evidence_confidence_count: number;
 }
 export interface Tier2OverviewResponse {
   total_signatures: number;

@@ -226,6 +226,62 @@ Change 14 states `1 narrator + (4 × triaged incidents)`. That over-counts: stag
 deterministic verifier, which is code. The real figure is **1 + (3 × triaged incidents)** — at
 `MAX_TRIAGE_INCIDENTS=15`, at most 46 calls per upload rather than 61.
 
+## Evidence confidence — the Judge's rubric, scored in code
+
+The pipeline carried two confidence-shaped numbers and neither answered *how much should an
+analyst trust this triage?*
+
+| Value | Lives on | Produced by | Answers |
+|---|---|---|---|
+| `anomaly_confidence` | incident | calibrated detector fusion | How unusual is this vs. history? |
+| `threat_confidence` | verdict | the Presenter, in prose | The model's own `low\|moderate\|high` self-report |
+| `evidence_confidence` | verdict | **code, from the Judge's grades** | How well did the evidence support the conclusion? |
+
+`threat_confidence` is emitted in the same call that writes the narrative, with nothing
+constraining it to the evidence. It stays (it is a useful record of what the model thought of
+itself) but it is not a number to rank or compare on.
+
+**The mechanism.** The Judge already grades every finding against `JUDGE_RUBRIC`'s ten
+evidentiary items — one boolean and a note each — having read the same evidence package the
+Analyst worked from. Those grades were being discarded after the PASS/REVISE/REJECT call.
+`app.agent.confidence` weights them into a 0–1 score.
+
+This is the migration's governing sentence applied to confidence itself: **the LLM interprets
+(does this item hold up against the evidence?), the machine calculates (what is that worth?).**
+No stage is asked to emit the number — it is deliberately absent from `present_verdict`'s tool
+schema, because a field the model can write is a field the model can inflate.
+
+**Weights.** The three citation/evidence-integrity items (1, 2, 3) carry 45% between them: a
+finding whose claims are not in the evidence is not weak, it is fabricated. Self-calibration (8)
+and the overclaim guard (10) carry least — they are usually downstream symptoms of an integrity
+failure, and weighting them heavily would count one defect twice.
+
+**Caps.** A weighted mean alone lets nine cheap passes bury one disqualifying failure. Failing
+item 1, 2, 3, or 9 ceilings the score (0.45–0.55) regardless of the rest. Caps are ceilings,
+never floors, and all sit below the `high` band by construction, so a finding with a
+disqualifying defect can never present as high confidence.
+
+**Aggregation** across a multi-finding incident is the mean of the *surviving* findings, not the
+max — one airtight finding must not launder a shaky one in the same case file. Rejected findings
+are dropped before this point, so they contribute nothing rather than counting against the
+incident twice.
+
+**Nullability is load-bearing.** A triage that never reached the Judge has no assessment, which
+is a different fact from an assessment that scored zero. The column is nullable end to end and
+the UI renders it as an em dash.
+
+**Rubric polarity is now an invariant.** Two items were originally phrased so that a literal
+"yes" meant the finding was *worse* ("Is required evidence missing?"). Harmless while the grades
+only informed a human-read decision; silently score-inverting once code reads them. Both are
+reworded so `satisfied=true` is good on all ten, and a test asserts it stays that way.
+
+**Downstream.** `tier2_signatures.evidence_confidence` carries it cross-tenant alongside the
+calibrated `confidence`, and the Tier 2 overview reports the mean per incident type *with the
+count of assessed signatures* — SQL `AVG` skips NULLs, so the denominator is what keeps the mean
+honest. An indicator every tenant scores high on but whose triages all rest on thin evidence is a
+fleet-wide detection-quality problem, not a fleet-wide threat, and only the pair distinguishes
+them.
+
 ## Known gaps, recorded rather than hidden
 
 - **`ZscalerVerdictEvidence` is not yet wired.** `retrieval.retrieve_candidates` supports Zscaler's

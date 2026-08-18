@@ -79,6 +79,8 @@ def get_tier2_overview(
                 signature_count=row.signature_count,
                 tenant_count=row.tenant_count,
                 avg_confidence=row.avg_confidence,
+                avg_evidence_confidence=row.avg_evidence_confidence,
+                evidence_confidence_count=row.evidence_confidence_count,
             )
             for row in overview.by_incident_type
         ],

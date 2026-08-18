@@ -1502,6 +1502,10 @@ export interface components {
             disposition: string | null;
             /** Entity Count */
             entity_count: number;
+            /** Evidence Confidence */
+            evidence_confidence: number | null;
+            /** Evidence Confidence Band */
+            evidence_confidence_band: string | null;
             /** Fused Score */
             fused_score: number;
             /**
@@ -1526,6 +1530,13 @@ export interface components {
         IncidentTypeBreakdownOut: {
             /** Avg Confidence */
             avg_confidence: number;
+            /** Avg Evidence Confidence */
+            avg_evidence_confidence?: number | null;
+            /**
+             * Evidence Confidence Count
+             * @default 0
+             */
+            evidence_confidence_count: number;
             /** Incident Type */
             incident_type: string;
             /** Signature Count */
@@ -1878,6 +1889,14 @@ export interface components {
             created_at: string;
             /** Disposition */
             disposition: string;
+            /** Evidence Confidence */
+            evidence_confidence: number | null;
+            /** Evidence Confidence Band */
+            evidence_confidence_band: string | null;
+            /** Evidence Confidence Basis */
+            evidence_confidence_basis: {
+                [key: string]: unknown;
+            } | null;
             /**
              * Id
              * Format: uuid

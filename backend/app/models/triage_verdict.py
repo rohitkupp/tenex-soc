@@ -51,7 +51,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, Text, func, text
+from sqlalchemy import REAL, Boolean, ForeignKey, Integer, Numeric, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.types import DateTime, Uuid
@@ -75,6 +75,15 @@ class TriageVerdict(Base):
     # is never a bare, unexplained enum value.
     threat_confidence: Mapped[str] = mapped_column(Text, nullable=False)
     threat_confidence_reason: Mapped[str] = mapped_column(Text, nullable=False)
+    # Computed by `app.agent.confidence` from the Judge's rubric grades -- no model emits it.
+    # Nullable because a triage that never reached the Judge has no evidence assessment at all,
+    # which is a different fact from one that was assessed and scored badly; the UI renders the
+    # two differently and collapsing them into 0.0 would lie about both.
+    evidence_confidence: Mapped[float | None] = mapped_column(REAL, nullable=True)
+    evidence_confidence_band: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The decomposition behind the number: which rubric items failed, their text, any cap
+    # applied. Persisted so a score stays explainable without re-running triage.
+    evidence_confidence_basis: Mapped[Any | None] = mapped_column(JSONB, nullable=True)
     llm_severity_opinion: Mapped[str | None] = mapped_column(Text, nullable=True)
     mitre_techniques: Mapped[Any] = mapped_column(JSONB, nullable=False)
     summary: Mapped[str] = mapped_column(Text, nullable=False)

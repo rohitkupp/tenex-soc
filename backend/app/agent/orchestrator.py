@@ -73,6 +73,12 @@ from app.agent.context import (
     log_citation_id,
 )
 from app.agent.retrieval import RetrievalCandidate, retrieve_candidates
+from app.agent.confidence import (
+    EvidenceConfidence,
+    RubricGrade,
+    aggregate_evidence_confidence,
+    evidence_confidence,
+)
 from app.agent.schemas import (
     NO_KNOWN_MAPPING,
     AnalystOutput,
@@ -844,12 +850,23 @@ def _run_flow(
 
     findings_by_id = {f.finding_id: f for f in analyst_output.findings}
     judge_survived: list[Finding] = []
+    # Scored from the same verdicts loop that decides survival, so a finding's confidence and
+    # its survival can never come from different judgements. Only surviving findings are scored:
+    # a REJECTed finding is not shown to anyone, and letting it drag the incident's number down
+    # would penalise the incident twice for a defect the Judge already removed.
+    survivor_confidences: list[EvidenceConfidence | None] = []
     for v in judge_output.verdicts:
         if v.decision == "PASS":
             judge_survived.append(findings_by_id[v.finding_id])
         elif v.decision == "REVISE":
             assert v.revised_finding is not None  # JudgeVerdict's own validator guarantees this
             judge_survived.append(v.revised_finding)
+        else:
+            continue
+        survivor_confidences.append(
+            evidence_confidence(RubricGrade.from_items(v.rubric_assessment))
+        )
+    incident_confidence = aggregate_evidence_confidence(survivor_confidences)
 
     if not judge_survived:
         # A unanimous REJECT used to end the run: no surviving finding, no verdict, the incident
@@ -869,6 +886,10 @@ def _run_flow(
             decisions=[v.decision for v in judge_output.verdicts],
         )
         judge_survived = list(analyst_output.findings)
+        # Every finding was rejected, so no rubric assessment describes something an analyst is
+        # being shown. Scoring the REJECTs here would attach a confidence to findings the Judge
+        # explicitly disowned; `None` correctly says "not assessed" instead.
+        incident_confidence = None
         # REJECT: excluded entirely from what reaches the Presenter.
 
     # ---- verifier pass 2 (full, incl. scope + confidence integrity) — change 15 ----
@@ -962,6 +983,26 @@ def _run_flow(
         )
         raise AnomalyConfidenceIntegrityError(confidence_check.reason)
 
+    # Attached after validation rather than requested in `present_verdict`'s schema: the number
+    # is the machine's, computed from the Judge's grades, and a Presenter that could write it
+    # could talk it upward in the same breath as its prose. See `app.agent.confidence`.
+    if incident_confidence is not None:
+        verdict = verdict.model_copy(
+            update={
+                "evidence_confidence": incident_confidence.score,
+                "evidence_confidence_band": incident_confidence.band,
+                "evidence_confidence_basis": incident_confidence.as_basis(),
+            }
+        )
+        log.info(
+            "agent.evidence_confidence",
+            incident_id=str(ctx.incident_id),
+            score=incident_confidence.score,
+            band=incident_confidence.band,
+            failed_items=incident_confidence.failed_items,
+            capped_by=incident_confidence.capped_by,
+        )
+
     # Pass 2's catches ride out alongside the verdict: they no longer discard the finding, so the
     # only way they reach the analyst is on the row itself.
     return verdict, carried_invalid_citations
@@ -1044,6 +1085,9 @@ def _persist(session: Session, incident_id: uuid.UUID, verdict: TriageVerdictOut
         disposition=verdict.disposition,
         threat_confidence=verdict.threat_confidence,
         threat_confidence_reason=verdict.threat_confidence_reason,
+        evidence_confidence=verdict.evidence_confidence,
+        evidence_confidence_band=verdict.evidence_confidence_band,
+        evidence_confidence_basis=verdict.evidence_confidence_basis,
         llm_severity_opinion=verdict.llm_severity_opinion,
         mitre_techniques=[t.model_dump(mode="json") for t in verdict.mitre_techniques],
         summary=verdict.summary,
