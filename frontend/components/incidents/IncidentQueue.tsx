@@ -189,7 +189,7 @@ export function IncidentQueue({ analysisId, incidents }: IncidentQueueProps) {
         </div>
       ) : (
         <div className="overflow-hidden rounded-lg border border-[var(--color-border)]">
-          <div className="grid grid-cols-[auto_1fr_auto_auto_auto_auto_auto] items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[var(--color-text-lo)]">
+          <div className="grid grid-cols-[auto_1fr_auto_5rem_5rem_8rem_6rem] items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2 text-xs text-[var(--color-text-lo)]">
             {/* Every header cell must share the exact responsive visibility of the row cell
                 beneath it. `hidden`/`display: none` removes an element from grid flow entirely
                 rather than leaving an empty track, so a header cell that stays visible while its
@@ -199,10 +199,16 @@ export function IncidentQueue({ analysisId, incidents }: IncidentQueueProps) {
             <span className="w-1" aria-hidden="true" />
             <span>Title</span>
             <span className="hidden sm:inline">Techniques</span>
-            <span className="text-right">Score</span>
-            <span className="text-right">Signals</span>
-            <span className="hidden sm:inline">Disposition</span>
-            <span>Citations</span>
+            {/* The four right-hand columns carry fixed widths in the grid template above rather
+                than `auto`. An `auto` track shrinks to its content, so the header cell and the
+                value cell below it sized independently and `text-right` aligned each within its
+                own differently-sized box — which is why the numbers did not sit under their
+                headings. A fixed track plus `text-center` on both halves makes the two share one
+                box and one alignment. */}
+            <span className="text-center">Score</span>
+            <span className="text-center">Signals</span>
+            <span className="hidden text-center sm:inline">Disposition</span>
+            <span className="text-center">Citations</span>
           </div>
           <ul>
             {filtered.map((incident, index) => (
@@ -214,7 +220,7 @@ export function IncidentQueue({ analysisId, incidents }: IncidentQueueProps) {
                   href={`/analyses/${analysisId}/incidents/${incident.id}`}
                   onMouseEnter={() => setFocusedIndex(index)}
                   aria-current={index === focusedIndex ? "true" : undefined}
-                  className={`grid grid-cols-[auto_1fr_auto_auto_auto_auto_auto] items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2.5 text-sm transition-colors last:border-b-0 hover:bg-[var(--color-surface-2)] ${
+                  className={`grid grid-cols-[auto_1fr_auto_5rem_5rem_8rem_6rem] items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-surface-1)] px-3 py-2.5 text-sm transition-colors last:border-b-0 hover:bg-[var(--color-surface-2)] ${
                     index === focusedIndex ? "bg-[var(--color-surface-2)] outline outline-1 outline-[var(--color-text-mid)] -outline-offset-1" : ""
                   }`}
                 >
@@ -247,17 +253,17 @@ export function IncidentQueue({ analysisId, incidents }: IncidentQueueProps) {
                       <span className="text-xs text-[var(--color-text-lo)]">+{allTechniqueIds(incident).length - 2}</span>
                     )}
                   </span>
-                  <span className="text-right font-mono text-xs text-[var(--color-text-hi)]">
+                  <span className="text-center font-mono text-xs text-[var(--color-text-hi)]">
                     {formatScore(incident.fused_score)}
                   </span>
-                  <span className="text-right font-mono text-xs text-[var(--color-text-mid)]">
+                  <span className="text-center font-mono text-xs text-[var(--color-text-mid)]">
                     {incident.signal_count}
                   </span>
-                  <span className="hidden text-xs text-[var(--color-text-mid)] sm:inline">
+                  <span className="hidden text-center text-xs text-[var(--color-text-mid)] sm:inline">
                     {dispositionLabel(incident.disposition)}
                   </span>
                   <span
-                    className="text-xs"
+                    className="text-center text-xs"
                     style={{
                       color:
                         incident.citation_valid === true

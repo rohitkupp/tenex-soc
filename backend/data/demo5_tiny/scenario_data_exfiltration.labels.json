@@ -1,0 +1,57 @@
+{
+  "log_file": "scenario_data_exfiltration.log",
+  "seed": 900,
+  "org_fingerprint": "d34600aaf9c258ed677a225566800ff5",
+  "total_lines": 73,
+  "window_start": "2026-02-26T00:00:00Z",
+  "window_end": "2026-03-01T00:00:00Z",
+  "scenarios": [
+    {
+      "scenario_id": "data_exfiltration_001",
+      "technique": "T1567.002",
+      "malicious_line_numbers": [
+        39,
+        40,
+        41,
+        42,
+        43,
+        44,
+        45,
+        46,
+        47,
+        48,
+        49,
+        50,
+        51,
+        52,
+        54,
+        55,
+        56,
+        57,
+        58,
+        59,
+        60,
+        61,
+        62,
+        63,
+        64,
+        65,
+        66
+      ],
+      "primary_entity": {
+        "type": "user",
+        "value": "nbertrando@corp.example"
+      },
+      "expected_detectors": [
+        "signal.burst",
+        "signal.out_in_ratio",
+        "signal.newly_registered_domain",
+        "ml.autoencoder",
+        "sigma.large_post_to_new_domain"
+      ],
+      "expected_disposition": "true_positive",
+      "must_correlate_into_one_incident": true,
+      "notes": "951 MB in 23 POSTs of ~40 MB over 2h to drivehub.buzz (registered 6d ago) from 77.120.238.66; off-hours start 2026-02-28T06:30:00.292253+00:00 [automation_ua=False, blend_with_normal_traffic=True, chunk_mb=40.0, domain_age_days=6, duration_h=2.0, off_hours=True, retry_rate=0.04, size_jitter_pct=0.18, total_mb=900.0]"
+    }
+  ]
+}

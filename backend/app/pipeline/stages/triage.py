@@ -70,6 +70,7 @@ from decimal import Decimal
 from typing import Any, Final
 
 import anthropic
+import redis.asyncio as redis
 from sqlalchemy import func, select, update
 
 from app.agent.client import LiveCaller, LLMCaller
@@ -176,17 +177,31 @@ def _publish_triage_progress(message: StageMessage, *, progress: float, text: st
                 stage="triage",
                 progress=progress,
             )
-        asyncio.run(
-            publish_progress(
-                get_redis(),
-                analysis_id=message.analysis_id,
-                stage="triage",
-                progress=progress,
-                status="running",
-                message=text,
-                counters=public_counters(counters),
-            )
-        )
+
+        # A *fresh* client, created inside the loop `asyncio.run` opens. `get_redis()` returns a
+        # client bound to whichever loop first used it — the worker's — and reusing it here
+        # raises "attached to a different loop" / "Event loop is closed", because this runs on a
+        # worker thread with its own short-lived loop. Closed in `finally` so each progress frame
+        # cleans up after itself rather than leaking a connection per incident.
+        async def _send() -> None:
+            # A genuinely new client, not `get_redis()` — that one is `lru_cache`d, so calling
+            # it here would hand back the worker's own client and closing it below would tear
+            # down the connection every other stage is using.
+            client = redis.from_url(get_settings().redis_url, decode_responses=True)
+            try:
+                await publish_progress(
+                    client,
+                    analysis_id=message.analysis_id,
+                    stage="triage",
+                    progress=progress,
+                    status="running",
+                    message=text,
+                    counters=public_counters(counters),
+                )
+            finally:
+                await client.aclose()
+
+        asyncio.run(_send())
     except Exception:
         log.warning("triage.progress_publish_failed", exc_info=True)
 

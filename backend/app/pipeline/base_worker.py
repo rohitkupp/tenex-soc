@@ -55,6 +55,7 @@ from app.pipeline.contracts import (
     DEFAULT_COUNTERS,
     QUEUE_STAGE_LABEL,
     STAGE_PROGRESS,
+    STAGE_SEQUENCE,
     public_counters,
 )
 from app.pipeline.dead_letters import insert_dead_letter
@@ -75,6 +76,21 @@ from app.queue.topology import (
 log = get_logger(__name__)
 
 StageHandler = Callable[[StageMessage], Awaitable[list[tuple[str, StageMessage]]]]
+
+
+def _progress_at_stage_start(stage: str) -> float:
+    """The completion value of the stage *before* `stage` — where the bar sits when this stage
+    begins. `ingest` (the first) starts at 0."""
+    try:
+        index = STAGE_SEQUENCE.index(stage)
+    except ValueError:
+        return 0.0
+    return STAGE_PROGRESS[STAGE_SEQUENCE[index - 1]] if index > 0 else 0.0
+
+
+def _counters_for(message: StageMessage) -> dict[str, Any]:
+    with get_engine().begin() as conn:
+        return get_counters(conn, analysis_id=message.analysis_id, tenant_id=message.tenant_id)
 
 
 def _mark_stage_started(message: StageMessage, queue_name: str) -> None:
@@ -154,7 +170,7 @@ class StageWorker:
         # "correlate", and the funnel never advanced past it while the agent was plainly working.
         # Marking on pickup makes the field mean "what is happening now", which is what both the
         # UI and anyone reading the row assume it means.
-        await asyncio.to_thread(_mark_stage_started, message, self.queue_name)
+        await self._claim_stage(message)
 
         try:
             next_messages = await self.handler(message)
@@ -168,6 +184,41 @@ class StageWorker:
             await publish_stage_message(channel, queue_name, next_message)
         await delivery.ack()
         log.info("worker.stage_done", forwarded=[q for q, _ in next_messages], **log_ctx)
+
+    async def _claim_stage(self, message: StageMessage) -> None:
+        """Record the stage now starting, in the database *and* over SSE.
+
+        The database write alone was not enough and that was the whole bug: the funnel is driven
+        by the SSE stream, not by polling `analyses`, so a stage change nothing published was
+        invisible. The UI sat on "Correlate" for the entire triage — visibly wrong while the API
+        key was plainly being spent — because the next frame only arrived when triage *finished*
+        ten-plus minutes later.
+
+        Both halves are best-effort and independent: a stage must not refuse to run because a
+        progress frame could not be delivered.
+        """
+        stage = QUEUE_STAGE_LABEL.get(self.queue_name)
+        if stage is None:
+            return
+
+        await asyncio.to_thread(_mark_stage_started, message, self.queue_name)
+
+        try:
+            counters = await asyncio.to_thread(_counters_for, message)
+            await publish_progress(
+                get_redis(),
+                analysis_id=message.analysis_id,
+                stage=stage,
+                # The *previous* stage's completion value: this stage has started, not finished,
+                # and STAGE_PROGRESS is a completion ladder. Reporting this stage's own rung here
+                # would show it complete the instant it began.
+                progress=_progress_at_stage_start(stage),
+                status="running",
+                message=f"{stage} stage started",
+                counters=public_counters(counters),
+            )
+        except Exception:
+            log.warning("worker.stage_claim_publish_failed", queue=self.queue_name, exc_info=True)
 
     async def _handle_failure(
         self, channel: AbstractChannel, message: StageMessage, exc: Exception
