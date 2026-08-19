@@ -2263,6 +2263,7 @@ export interface operations {
                 entity_value?: string | null;
                 min_percentile?: number | null;
                 line_no?: number | null;
+                detector_key?: string | null;
                 limit?: number;
             };
             header?: never;

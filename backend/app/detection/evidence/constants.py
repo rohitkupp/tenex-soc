@@ -98,6 +98,24 @@ EXTRACTOR_RARITY: Final[str] = "rarity"
 EXTRACTOR_STL: Final[str] = "stl"
 EXTRACTOR_URL_ENTROPY: Final[str] = "url_entropy"
 
+# ---------------------------------------------------------------------------- detector -> extractor
+#
+# The join between the two namespaces above: which extractor's evidence payloads substantiate
+# which L2 detector's signals. Declared here — the one module that owns both vocabularies — so
+# no caller ever derives it by string surgery ("signal.stl_residual".removeprefix("signal.") is
+# "stl_residual", not "stl", and that near-miss is exactly how a hand-rolled copy would rot).
+# Detectors absent from this map (sigma rules, ml.* models, graph features) have no evidence
+# extractor: their explanation lives on the signal row itself, and an evidence query filtered to
+# them correctly returns nothing.
+EXTRACTOR_FOR_DETECTOR: Final[dict[str, str]] = {
+    SIGNAL_BEACONING: EXTRACTOR_BEACONING,
+    SIGNAL_DGA: EXTRACTOR_DGA,
+    SIGNAL_BURST: EXTRACTOR_BURST,
+    SIGNAL_RARITY: EXTRACTOR_RARITY,
+    SIGNAL_STL_RESIDUAL: EXTRACTOR_STL,
+    SIGNAL_URL_PATH: EXTRACTOR_URL_ENTROPY,
+}
+
 # ---------------------------------------------------------------------------- entity_type
 
 ENTITY_USER: Final[str] = "user"

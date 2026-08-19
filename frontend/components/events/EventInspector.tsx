@@ -36,12 +36,18 @@ type LoadState =
 export function EventDetailView({
   event,
   evidenceSlot,
+  onlyDetectorKey,
 }: {
   event: EventOut;
   /** Rendered between "Why flagged" and "Raw event" — the reading order goes interpretation
    * before raw material: what fired, what the extractors made of it, then the field dump for
    * whoever needs to check the underlying values. */
   evidenceSlot?: React.ReactNode;
+  /** Scope "Why flagged" to one detector — the Signals tab's expansion, where the reader is
+   * already inside one signal's row and every *other* detector that happened to fire on the
+   * same event is noise. The Events tab passes nothing and shows the full set: there the
+   * question is "everything about this event". */
+  onlyDetectorKey?: string;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -52,13 +58,23 @@ export function EventDetailView({
         </span>
       </div>
 
-      {event.signals.length > 0 && (
+      {(() => {
+        const shownSignals = onlyDetectorKey
+          ? event.signals.filter((s) => s.detector_key === onlyDetectorKey)
+          : event.signals;
+        const hidden = event.signals.length - shownSignals.length;
+        return shownSignals.length > 0 ? (
         <div className="flex flex-col gap-2">
           <h3 className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-lo)]">
-            Why flagged ({event.signals.length})
+            Why flagged ({shownSignals.length})
+            {hidden > 0 && (
+              <span className="ml-2 normal-case tracking-normal text-[var(--color-text-lo)]">
+                — {hidden} other detector{hidden === 1 ? "" : "s"} also fired; see the Events tab
+              </span>
+            )}
           </h3>
           <div className="flex flex-col gap-2">
-            {event.signals.map((signal) => (
+            {shownSignals.map((signal) => (
               <details
                 key={signal.id}
                 className="group rounded-md border border-[var(--color-border)] bg-[var(--color-surface-1)]"
@@ -92,7 +108,8 @@ export function EventDetailView({
             ))}
           </div>
         </div>
-      )}
+        ) : null;
+      })()}
 
       {evidenceSlot}
 
@@ -128,12 +145,16 @@ export function EventFetchFrame({
   path,
   notFoundMessage,
   analysisId,
+  detectorKey,
 }: {
   path: string;
   notFoundMessage: string;
   /** When set, the frame also loads the evidence payloads citing this event's raw line —
    * the Evidence tab's content, folded into the row expansion it always belonged to. */
   analysisId?: string;
+  /** Scope the whole expansion — "Why flagged" and the evidence — to one detector.
+   * Set by the Signals tab, whose rows *are* single detector firings. */
+  detectorKey?: string;
 }) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
@@ -178,9 +199,14 @@ export function EventFetchFrame({
       {state.status === "ready" && (
         <EventDetailView
           event={state.event}
+          onlyDetectorKey={detectorKey}
           evidenceSlot={
             analysisId ? (
-              <EventEvidence analysisId={analysisId} rawLineNo={state.event.raw_line_no} />
+              <EventEvidence
+                analysisId={analysisId}
+                rawLineNo={state.event.raw_line_no}
+                detectorKey={detectorKey}
+              />
             ) : undefined
           }
         />
@@ -204,13 +230,27 @@ type EvidenceState =
  * the same join the case file's LOG-n citation chips make in the other direction, done
  * server-side by the `line_no` filter on `GET /api/analyses/{id}/evidence`.
  */
-function EventEvidence({ analysisId, rawLineNo }: { analysisId: string; rawLineNo: number }) {
+function EventEvidence({
+  analysisId,
+  rawLineNo,
+  detectorKey,
+}: {
+  analysisId: string;
+  rawLineNo: number;
+  detectorKey?: string;
+}) {
   const [state, setState] = useState<EvidenceState>({ status: "loading" });
 
   useEffect(() => {
     let cancelled = false;
     setState({ status: "loading" });
-    apiFetch<AnalysisEvidenceResponse>(`/api/analyses/${analysisId}/evidence?line_no=${rawLineNo}`)
+    // `detector_key` narrows to the one extractor that substantiates this detector's signals —
+    // the backend owns that join (`EXTRACTOR_FOR_DETECTOR`); the frontend never derives extractor
+    // names from detector keys.
+    const detectorParam = detectorKey ? `&detector_key=${encodeURIComponent(detectorKey)}` : "";
+    apiFetch<AnalysisEvidenceResponse>(
+      `/api/analyses/${analysisId}/evidence?line_no=${rawLineNo}${detectorParam}`
+    )
       .then((res) => {
         if (!cancelled) setState({ status: "ready", items: res.items });
       })
@@ -222,7 +262,7 @@ function EventEvidence({ analysisId, rawLineNo }: { analysisId: string; rawLineN
     return () => {
       cancelled = true;
     };
-  }, [analysisId, rawLineNo]);
+  }, [analysisId, rawLineNo, detectorKey]);
 
   if (state.status === "loading") {
     return <div className="h-3 w-40 animate-pulse rounded bg-[var(--color-surface-2)]" />;
@@ -238,7 +278,9 @@ function EventEvidence({ analysisId, rawLineNo }: { analysisId: string; rawLineN
     // A real, common answer: most benign events contribute to no extractor's evidence.
     return (
       <p className="text-xs text-[var(--color-text-lo)]">
-        No evidence payload cites this event&apos;s log line.
+        {detectorKey
+          ? `No ${detectorKey} evidence payload cites this event's log line — for sigma, ml and graph detectors the explanation above is the whole story.`
+          : "No evidence payload cites this event's log line."}
       </p>
     );
   }
@@ -257,15 +299,18 @@ function EventEvidence({ analysisId, rawLineNo }: { analysisId: string; rawLineN
 export function EventInspector({
   eventId,
   analysisId,
+  detectorKey,
 }: {
   eventId: number;
   analysisId?: string;
+  detectorKey?: string;
 }) {
   return (
     <EventFetchFrame
       path={`/api/events/${eventId}`}
       notFoundMessage="Event not found."
       analysisId={analysisId}
+      detectorKey={detectorKey}
     />
   );
 }

@@ -52,6 +52,7 @@ from app.agent.context import (
     build_agent_context,
     compute_evidence_payloads,
 )
+from app.detection.evidence.constants import EXTRACTOR_FOR_DETECTOR
 from app.core.db import get_db
 from app.core.errors import ApiError
 from app.core.security import CurrentUser, require_user
@@ -700,6 +701,7 @@ def get_analysis_evidence(
     entity_value: str | None = None,
     min_percentile: Annotated[float | None, Query(ge=0, le=100)] = None,
     line_no: Annotated[int | None, Query(ge=1)] = None,
+    detector_key: str | None = None,
     limit: Annotated[
         int, Query(ge=1, le=MAX_ANALYSIS_EVIDENCE_ITEMS)
     ] = MAX_ANALYSIS_EVIDENCE_ITEMS,
@@ -739,6 +741,15 @@ def get_analysis_evidence(
         # payloads carry `contributing_line_numbers`; this is the same join the LOG-n citation
         # chips already make in the other direction).
         if (line_no is None or line_no in p.contributing_line_numbers)
+        # `detector_key` narrows to the evidence extractor that substantiates one detector's
+        # signals — the Signals tab's expansion asks "show me *this* signal's evidence", not
+        # everything citing the line. The join is `EXTRACTOR_FOR_DETECTOR`, owned by the module
+        # that owns both vocabularies; a detector with no extractor (sigma/ml/graph) matches
+        # nothing, which is the honest answer rather than a fallback to unfiltered.
+        and (
+            detector_key is None
+            or p.extractor == EXTRACTOR_FOR_DETECTOR.get(detector_key, "\x00no-such-extractor")
+        )
         and (extractor is None or p.extractor == extractor)
         and (entity_type is None or p.entity.get("type") == entity_type)
         and (entity_value is None or p.entity.get("value") == entity_value)

@@ -155,7 +155,12 @@ function SignalRow({ phase, analysisId }: { phase: TimelinePhaseOut; analysisId:
       {expanded && (
         <div className="mt-1 flex flex-col gap-2">
           {shownEventIds.map((eventId) => (
-            <EventInspector key={eventId} eventId={eventId} analysisId={analysisId} />
+            <EventInspector
+              key={eventId}
+              eventId={eventId}
+              analysisId={analysisId}
+              detectorKey={phase.detector_key ?? undefined}
+            />
           ))}
           {phase.event_ids.length > MAX_EVENTS_SHOWN && (
             <p className="text-xs text-[var(--color-text-lo)]">
