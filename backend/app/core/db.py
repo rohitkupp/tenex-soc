@@ -112,7 +112,24 @@ def get_engine() -> Engine:
         pool_size=DB_POOL_SIZE,
         max_overflow=DB_MAX_OVERFLOW,
         pool_recycle=300,
-        connect_args={"prepare_threshold": None},
+        # `prepare_threshold: None` — transaction-mode pooling hands the connection back between
+        # statements, so a prepared statement can vanish between uses (see the docstring).
+        #
+        # The TCP keepalives and timeouts exist because of a measured failure, not hygiene: when
+        # the database crash-looped, in-flight queries were left waiting on sockets whose far end
+        # was gone. Nothing ever timed out — psycopg's default is to wait forever — so those
+        # checkouts never returned to the pool, and once all of them were hung the API answered
+        # every request with a 30s QueuePool timeout until manually restarted. Keepalives detect
+        # a dead peer in ~60s (30 idle + 3 probes × 10s) and fail the query, which returns the
+        # connection to the pool and lets `pool_pre_ping` replace it.
+        connect_args={
+            "prepare_threshold": None,
+            "connect_timeout": 10,
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 3,
+        },
         future=True,
     )
 
