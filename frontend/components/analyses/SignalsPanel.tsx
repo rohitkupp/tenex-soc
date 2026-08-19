@@ -18,6 +18,7 @@
  * is the most misleading thing this view can say.
  */
 import { useMemo, useState } from "react";
+import { EventInspector } from "@/components/events/EventInspector";
 import type { AnalysisTimelineResponse, TimelinePhaseOut } from "@/lib/api/types";
 import { formatDate, formatScore } from "@/lib/format";
 import { Badge } from "@/components/ui/Badge";
@@ -25,7 +26,13 @@ import { Panel } from "@/components/ui/Panel";
 
 const PAGE_SIZE = 100;
 
-export function SignalsPanel({ data }: { data: AnalysisTimelineResponse | null }) {
+export function SignalsPanel({
+  data,
+  analysisId,
+}: {
+  data: AnalysisTimelineResponse | null;
+  analysisId: string;
+}) {
   const [shown, setShown] = useState(PAGE_SIZE);
 
   const ranked = useMemo(() => {
@@ -64,7 +71,7 @@ export function SignalsPanel({ data }: { data: AnalysisTimelineResponse | null }
       </p>
       <ol className="flex flex-col divide-y divide-[var(--color-border)]">
         {page.map((phase, i) => (
-          <SignalRow key={`${phase.detector_key}-${phase.ts}-${i}`} phase={phase} />
+          <SignalRow key={`${phase.detector_key}-${phase.ts}-${i}`} phase={phase} analysisId={analysisId} />
         ))}
       </ol>
       {remaining > 0 && (
@@ -80,8 +87,15 @@ export function SignalsPanel({ data }: { data: AnalysisTimelineResponse | null }
   );
 }
 
-function SignalRow({ phase }: { phase: TimelinePhaseOut }) {
+// Expanding a signal fetches at most this many of its events — a chatty detector can cite
+// dozens of events per window, and the point of the expansion is "show me what fired this",
+// not a second events table.
+const MAX_EVENTS_SHOWN = 5;
+
+function SignalRow({ phase, analysisId }: { phase: TimelinePhaseOut; analysisId: string }) {
   const hasConfidence = phase.confidence !== undefined && phase.confidence !== null;
+  const [expanded, setExpanded] = useState(false);
+  const shownEventIds = phase.event_ids.slice(0, MAX_EVENTS_SHOWN);
   return (
     <li className="flex flex-col gap-1 py-2.5">
       <div className="flex flex-wrap items-center gap-2">
@@ -124,10 +138,33 @@ function SignalRow({ phase }: { phase: TimelinePhaseOut }) {
       <p className="text-sm text-[var(--color-text-hi)]">{phase.summary}</p>
       <span className="flex flex-wrap items-center gap-x-3 text-xs text-[var(--color-text-lo)]">
         {phase.detector_key && <span className="font-mono">{phase.detector_key}</span>}
-        <span>
-          {phase.event_ids.length} event{phase.event_ids.length === 1 ? "" : "s"}
-        </span>
+        {phase.event_ids.length > 0 ? (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            aria-expanded={expanded}
+            className="rounded border border-[var(--color-border)] px-1.5 py-0.5 text-[11px] text-[var(--color-text-mid)] transition-colors hover:bg-[var(--color-surface-2)]"
+          >
+            {expanded ? "hide" : "show"} {phase.event_ids.length} event
+            {phase.event_ids.length === 1 ? "" : "s"}
+          </button>
+        ) : (
+          <span>0 events</span>
+        )}
       </span>
+      {expanded && (
+        <div className="mt-1 flex flex-col gap-2">
+          {shownEventIds.map((eventId) => (
+            <EventInspector key={eventId} eventId={eventId} analysisId={analysisId} />
+          ))}
+          {phase.event_ids.length > MAX_EVENTS_SHOWN && (
+            <p className="text-xs text-[var(--color-text-lo)]">
+              Showing the first {MAX_EVENTS_SHOWN} of {phase.event_ids.length} events — the full
+              set is on the Events tab, filtered by this signal&apos;s entity.
+            </p>
+          )}
+        </div>
+      )}
     </li>
   );
 }

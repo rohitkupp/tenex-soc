@@ -11,7 +11,8 @@
  */
 import { useEffect, useState } from "react";
 import { apiFetch, ApiError } from "@/lib/api/client";
-import type { EventOut } from "@/lib/api/types";
+import type { AnalysisEvidenceResponse, EventOut } from "@/lib/api/types";
+import { EvidenceCard } from "@/components/evidence/EvidenceCard";
 import { flattenForDisplay } from "@/lib/flatten";
 import { formatDate, formatScore } from "@/lib/format";
 import { ExplanationRenderer } from "@/components/explanations/ExplanationRenderer";
@@ -115,9 +116,13 @@ export function EventDetailView({ event }: { event: EventOut }) {
 export function EventFetchFrame({
   path,
   notFoundMessage,
+  analysisId,
 }: {
   path: string;
   notFoundMessage: string;
+  /** When set, the frame also loads the evidence payloads citing this event's raw line —
+   * the Evidence tab's content, folded into the row expansion it always belonged to. */
+  analysisId?: string;
 }) {
   const [state, setState] = useState<LoadState>({ status: "loading" });
 
@@ -159,11 +164,95 @@ export function EventFetchFrame({
         </p>
       )}
 
-      {state.status === "ready" && <EventDetailView event={state.event} />}
+      {state.status === "ready" && (
+        <>
+          <EventDetailView event={state.event} />
+          {analysisId && (
+            <EventEvidence analysisId={analysisId} rawLineNo={state.event.raw_line_no} />
+          )}
+        </>
+      )}
     </div>
   );
 }
 
-export function EventInspector({ eventId }: { eventId: number }) {
-  return <EventFetchFrame path={`/api/events/${eventId}`} notFoundMessage="Event not found." />;
+type EvidenceState =
+  | { status: "loading" }
+  | { status: "error"; message: string }
+  | { status: "ready"; items: AnalysisEvidenceResponse["items"] };
+
+/**
+ * The evidence payloads citing one event's raw log line, rendered beneath its detail view.
+ *
+ * This replaces the standalone Evidence tab: the tab listed every payload for the analysis and
+ * left the analyst to join payload → line → event by eye, when the question is always asked the
+ * other way around — "I am looking at this event; what did the extractors make of it?". The
+ * join is `line_no` (events carry `raw_line_no`, payloads carry `contributing_line_numbers`) —
+ * the same join the case file's LOG-n citation chips make in the other direction, done
+ * server-side by the `line_no` filter on `GET /api/analyses/{id}/evidence`.
+ */
+function EventEvidence({ analysisId, rawLineNo }: { analysisId: string; rawLineNo: number }) {
+  const [state, setState] = useState<EvidenceState>({ status: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+    setState({ status: "loading" });
+    apiFetch<AnalysisEvidenceResponse>(`/api/analyses/${analysisId}/evidence?line_no=${rawLineNo}`)
+      .then((res) => {
+        if (!cancelled) setState({ status: "ready", items: res.items });
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        const message = err instanceof ApiError ? err.message : "Could not reach the API.";
+        setState({ status: "error", message });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [analysisId, rawLineNo]);
+
+  if (state.status === "loading") {
+    return <div className="mt-3 h-3 w-40 animate-pulse rounded bg-[var(--color-surface-2)]" />;
+  }
+  if (state.status === "error") {
+    return (
+      <p role="alert" className="mt-3 text-xs text-[var(--color-severity-high)]">
+        Evidence failed to load: {state.message}
+      </p>
+    );
+  }
+  if (state.items.length === 0) {
+    // A real, common answer: most benign events contribute to no extractor's evidence.
+    return (
+      <p className="mt-3 text-xs text-[var(--color-text-lo)]">
+        No evidence payload cites this event&apos;s log line.
+      </p>
+    );
+  }
+  return (
+    <div className="mt-3 flex flex-col gap-2">
+      <h3 className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-lo)]">
+        Evidence citing line {rawLineNo} ({state.items.length})
+      </h3>
+      {state.items.map((item) => (
+        <EvidenceCard key={item.evidence_id} evidence={item} analysisId={analysisId} />
+      ))}
+    </div>
+  );
+}
+
+export function EventInspector({
+  eventId,
+  analysisId,
+}: {
+  eventId: number;
+  analysisId?: string;
+}) {
+  return (
+    <EventFetchFrame
+      path={`/api/events/${eventId}`}
+      notFoundMessage="Event not found."
+      analysisId={analysisId}
+    />
+  );
 }

@@ -3,7 +3,8 @@
 /**
  * One `EvidencePayload`, rendered — shared by the per-incident Evidence section
  * (`components/incidents/case/EvidenceSection.tsx`, change 16 primary) and the analysis-wide
- * evidence browser (`components/evidence/EvidenceExplorer.tsx`, change 16 secondary), so an
+ * per-event evidence expansion (`EventInspector`'s EventEvidence — the standalone browser it
+ * replaced was `EvidenceExplorer.tsx`), so an
  * evidence payload looks identical wherever it's read.
  *
  * Per change 16, every card carries:
@@ -38,85 +39,6 @@ function formatMeasurement(value: unknown): string {
   if (typeof value === "string") return truncate(value, 200);
   if (Array.isArray(value)) return truncate(value.map(String).join(", "), 200);
   return truncate(JSON.stringify(value), 200);
-}
-
-interface BaselineGroup {
-  prefix: string;
-  percentile: number | null;
-  baselineStatus: string | null;
-  nWindows: number | null;
-  ratioVsBaseline: number | null;
-}
-
-function asNumberOrNull(v: unknown): number | null {
-  return typeof v === "number" && Number.isFinite(v) ? v : null;
-}
-
-/**
- * `app.detection.evidence.payload.historical_from_percentile` always writes
- * `{prefix}_percentile`/`{prefix}_baseline_status`/`{prefix}_n_windows` (and optionally
- * `{prefix}_ratio_vs_baseline`) together, `prefix=""` collapsing to the bare names — this
- * groups them back up from the flat `historical` dict so the cold-start state renders as one
- * coherent line per scope (burst has three: user/department/org) rather than four scattered
- * key/value rows.
- */
-function extractBaselineGroups(historical: Record<string, unknown>): BaselineGroup[] {
-  const groups: BaselineGroup[] = [];
-  const seen = new Set<string>();
-  for (const key of Object.keys(historical)) {
-    if (!key.endsWith("baseline_status")) continue;
-    const prefix = key === "baseline_status" ? "" : key.slice(0, -"_baseline_status".length);
-    if (seen.has(prefix)) continue;
-    seen.add(prefix);
-    const withPrefix = (k: string) => (prefix ? `${prefix}_${k}` : k);
-    const statusValue = historical[withPrefix("baseline_status")];
-    groups.push({
-      prefix,
-      percentile: asNumberOrNull(historical[withPrefix("percentile")]),
-      baselineStatus: typeof statusValue === "string" ? statusValue : null,
-      nWindows: asNumberOrNull(historical[withPrefix("n_windows")]),
-      ratioVsBaseline: asNumberOrNull(historical[withPrefix("ratio_vs_baseline")]),
-    });
-  }
-  return groups.sort((a, b) => a.prefix.localeCompare(b.prefix));
-}
-
-function groupedKeys(groups: BaselineGroup[]): Set<string> {
-  const keys = new Set<string>();
-  for (const g of groups) {
-    const p = (k: string) => (g.prefix ? `${g.prefix}_${k}` : k);
-    keys.add(p("percentile"));
-    keys.add(p("baseline_status"));
-    keys.add(p("n_windows"));
-    keys.add(p("ratio_vs_baseline"));
-  }
-  return keys;
-}
-
-function BaselineRow({ group }: { group: BaselineGroup }) {
-  const insufficient = group.baselineStatus === "insufficient_history";
-  return (
-    <div className="flex flex-wrap items-center gap-2 text-xs">
-      {group.prefix && (
-        <span className="w-20 shrink-0 text-[var(--color-text-lo)]">{humanizeKey(group.prefix)}</span>
-      )}
-      {insufficient ? (
-        <span className="rounded border border-dashed border-[var(--color-border)] px-1.5 py-0.5 text-[var(--color-text-mid)]">
-          insufficient history — n={group.nWindows ?? 0} window{group.nWindows === 1 ? "" : "s"}
-        </span>
-      ) : (
-        <>
-          <span className="font-mono text-[var(--color-text-hi)]">
-            {group.percentile !== null ? `${group.percentile.toFixed(1)}th percentile` : "—"}
-          </span>
-          <span className="text-[var(--color-text-lo)]">n={group.nWindows ?? "—"} windows</span>
-          {group.ratioVsBaseline !== null && (
-            <span className="text-[var(--color-text-lo)]">{group.ratioVsBaseline.toFixed(2)}× baseline</span>
-          )}
-        </>
-      )}
-    </div>
-  );
 }
 
 function EvidenceRelevanceToggle({
@@ -194,9 +116,6 @@ export function EvidenceCard({
   highlighted?: boolean;
 }) {
   const [expandedLine, setExpandedLine] = useState<number | null>(null);
-  const baselineGroups = extractBaselineGroups(evidence.historical);
-  const grouped = groupedKeys(baselineGroups);
-  const leftoverHistorical = Object.entries(evidence.historical).filter(([k]) => !grouped.has(k));
 
   return (
     <div
@@ -226,43 +145,21 @@ export function EvidenceCard({
         </span>
       </div>
 
-      <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div className="flex flex-col gap-1.5">
-          <h4 className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-lo)]">
-            Measurements
-          </h4>
-          <dl className="flex flex-col gap-1">
-            {Object.entries(evidence.measurements).map(([key, value]) => (
-              <div key={key} className="flex items-baseline justify-between gap-3 text-xs">
-                <dt className="text-[var(--color-text-lo)]">{humanizeKey(key)}</dt>
-                <dd className="text-right font-mono text-[var(--color-text-hi)]">{formatMeasurement(value)}</dd>
-              </div>
-            ))}
-          </dl>
-        </div>
-
-        <div className="flex flex-col gap-1.5">
-          <h4 className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-lo)]">
-            Historical context
-          </h4>
-          {baselineGroups.length === 0 && leftoverHistorical.length === 0 ? (
-            <p className="text-xs text-[var(--color-text-mid)]">
-              No baseline comparison for this extractor — the score is already the answer.
-            </p>
-          ) : (
-            <div className="flex flex-col gap-1.5">
-              {baselineGroups.map((g) => (
-                <BaselineRow key={g.prefix || "—"} group={g} />
-              ))}
-              {leftoverHistorical.map(([key, value]) => (
-                <div key={key} className="flex items-baseline justify-between gap-3 text-xs">
-                  <dt className="text-[var(--color-text-lo)]">{humanizeKey(key)}</dt>
-                  <dd className="text-right font-mono text-[var(--color-text-hi)]">{formatMeasurement(value)}</dd>
-                </div>
-              ))}
+      {/* The "Historical context" column (baseline percentiles per scope) was removed by
+          request; `evidence.historical` still arrives on the wire and the nomination badge
+          above still reflects it — only the per-card table is gone. */}
+      <div className="mt-3 flex flex-col gap-1.5">
+        <h4 className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-lo)]">
+          Measurements
+        </h4>
+        <dl className="flex flex-col gap-1 sm:max-w-md">
+          {Object.entries(evidence.measurements).map(([key, value]) => (
+            <div key={key} className="flex items-baseline justify-between gap-3 text-xs">
+              <dt className="text-[var(--color-text-lo)]">{humanizeKey(key)}</dt>
+              <dd className="text-right font-mono text-[var(--color-text-hi)]">{formatMeasurement(value)}</dd>
             </div>
-          )}
-        </div>
+          ))}
+        </dl>
       </div>
 
       {evidence.contributing_line_numbers.length > 0 && (

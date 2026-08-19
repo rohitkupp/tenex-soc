@@ -224,7 +224,7 @@ export function EventExplorer({
                     {expandedId === event.id && (
                       <tr>
                         <td colSpan={9} className="bg-[var(--color-surface-0)] p-3">
-                          <EventInspector eventId={event.id} />
+                          <EventInspector eventId={event.id} analysisId={analysisId} />
                         </td>
                       </tr>
                     )}

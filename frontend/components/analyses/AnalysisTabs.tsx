@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * Overview · Events · Signals · Incidents · Evidence as tabs on the analysis page.
+ * Overview · Events · Signals · Anomalies as tabs on the analysis page.
  *
  * These were four routes (`/analyses/[id]`, `.../incidents`, `.../events`, `.../evidence`).
  * Every switch between them was a full server navigation, which on this app meant a fresh
@@ -24,19 +24,18 @@
  * filters, sort order, scroll position — survives a round trip through another tab.
  */
 import { useCallback, useEffect, useState, type ReactNode } from "react";
-import { LazyEvidenceTab } from "@/components/evidence/LazyEvidenceTab";
 
-export type AnalysisTabKey = "overview" | "events" | "signals" | "incidents" | "evidence";
+export type AnalysisTabKey = "overview" | "events" | "signals" | "incidents";
 
 // Order is deliberate and reads outward from the summary: what happened (Overview), then the
 // readable account of the traffic (Events), then the raw detector firings behind it (Signals),
-// then what those correlated into (Incidents), then the underlying payloads (Evidence).
+// then what those correlated into (Anomalies). Evidence payloads render inside each event's
+// row expansion on the Events tab.
 const TABS: { key: AnalysisTabKey; label: string }[] = [
   { key: "overview", label: "Overview" },
   { key: "events", label: "Events" },
   { key: "signals", label: "Signals" },
   { key: "incidents", label: "Anomalies" },
-  { key: "evidence", label: "Evidence" },
 ];
 
 function isTabKey(value: string | null): value is AnalysisTabKey {
@@ -48,14 +47,12 @@ export function AnalysisTabs({
   incidents,
   events,
   signals,
-  analysisId,
   counts,
 }: {
   overview: ReactNode;
   incidents: ReactNode;
   events: ReactNode;
   signals: ReactNode;
-  analysisId: string;
   counts?: Partial<Record<AnalysisTabKey, number>>;
 }) {
   const [active, setActive] = useState<AnalysisTabKey>("overview");
@@ -76,16 +73,15 @@ export function AnalysisTabs({
     window.history.replaceState(null, "", url);
   }, []);
 
+  // The Evidence tab is gone (removed by request): its payloads now render inside each event's
+  // own row expansion on the Events tab (`EventInspector`'s EventEvidence), where the analyst
+  // was always going to join them anyway. The `?tab=evidence` deep link falls back to Overview
+  // via `isTabKey` rejecting the stale key — no redirect needed.
   const panels: Record<AnalysisTabKey, ReactNode> = {
     overview,
     events,
     signals,
     incidents,
-    // Rendered here rather than handed in as a prop: the Evidence panel needs to know whether
-    // its tab is open (it fetches its own large, slow payload only once opened), and a server
-    // component cannot pass a function across the RSC boundary to compute that — functions are
-    // not serializable, which produced a server-side exception on every load of this page.
-    evidence: <LazyEvidenceTab analysisId={analysisId} active={active === "evidence"} />,
   };
 
   return (

@@ -1,12 +1,12 @@
 /**
- * change 9/10: "Notable users" — anomalous windows, volume vs. baseline, first-seen domain
- * count, top anomaly score. Every field here is deterministic (`GET /api/analyses/{id}/
- * overview`, computed from `entities`/`signals`/`entity_edges`/the baseline store) — no LLM
- * involvement, so nothing here needs the `SemanticFindingBadge` treatment.
+ * change 9/10: "Notable users" — anomalous windows, first-seen domain count, top anomaly
+ * score. Every field here is deterministic (`GET /api/analyses/{id}/overview`, computed from
+ * `entities`/`signals`/`entity_edges`/the baseline store) — no LLM involvement, so nothing
+ * here needs the `SemanticFindingBadge` treatment.
  *
- * Cold start must stay visible (CLAUDE.md/change 1): a user whose `volume_vs_baseline.
- * baseline_status !== "ok"` shows "insufficient history", never a percentile computed from a
- * handful of windows dressed up to look trustworthy.
+ * `volume_vs_baseline` is still on the wire (the API contract is unchanged) but no longer
+ * rendered — removed by request. Its cold-start honesty rule now applies to the evidence
+ * layer's percentile annotations instead, which read the same baseline store.
  */
 import type { NotableUser } from "@/lib/api/types";
 import { formatNumber, formatScore } from "@/lib/format";
@@ -38,18 +38,6 @@ export function NotableUsersPanel({ users }: { users: NotableUser[] }) {
                   <span className="font-mono text-[var(--color-text-hi)]">
                     {formatNumber(user.first_seen_domain_count)}
                   </span>
-                </span>
-                <span title={`n=${user.volume_vs_baseline.n_windows} baseline windows`}>
-                  volume vs. baseline{" "}
-                  {user.volume_vs_baseline.baseline_status === "ok" ? (
-                    <span className="font-mono text-[var(--color-text-hi)]">
-                      {user.volume_vs_baseline.percentile?.toFixed(1)}th pct
-                    </span>
-                  ) : (
-                    <span className="rounded border border-dashed border-[var(--color-border)] px-1 py-0.5">
-                      insufficient history (n={user.volume_vs_baseline.n_windows})
-                    </span>
-                  )}
                 </span>
               </div>
             </div>

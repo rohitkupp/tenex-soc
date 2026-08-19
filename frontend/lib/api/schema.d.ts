@@ -2262,6 +2262,7 @@ export interface operations {
                 entity_type?: string | null;
                 entity_value?: string | null;
                 min_percentile?: number | null;
+                line_no?: number | null;
                 limit?: number;
             };
             header?: never;

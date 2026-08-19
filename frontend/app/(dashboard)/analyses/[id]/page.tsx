@@ -62,9 +62,9 @@ export default async function AnalysisDetailPage({
     fetchServer<AnalysisOverviewResponse>(`/api/analyses/${id}/overview`),
     fetchServer<IncidentsListResponse>(`/api/analyses/${id}/incidents`),
     fetchServer<EventListResponse>(`/api/analyses/${id}/events?limit=100`),
-    // Evidence is deliberately absent: it is ~13s and 328KB, and putting it here would make
-    // opening the analysis page cost the slowest tab nobody asked for. `LazyEvidenceTab`
-    // fetches it when the tab is first opened.
+    // Evidence is deliberately absent: the standalone tab is gone (its payloads render inside
+    // each event's row expansion, fetched per-line on expand), and the analysis-wide payload it
+    // used to need was ~13s and 328KB — the slowest fetch nobody asked for.
   ]);
 
   // fetchServer collapses "not found" and "API unreachable" to the same
@@ -238,8 +238,7 @@ export default async function AnalysisDetailPage({
             </>
           )
         }
-        signals={<SignalsPanel data={timeline} />}
-        analysisId={analysis.id}
+        signals={<SignalsPanel data={timeline} analysisId={analysis.id} />}
       />
     </div>
   );

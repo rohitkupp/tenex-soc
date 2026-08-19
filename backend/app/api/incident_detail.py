@@ -699,6 +699,7 @@ def get_analysis_evidence(
     entity_type: str | None = None,
     entity_value: str | None = None,
     min_percentile: Annotated[float | None, Query(ge=0, le=100)] = None,
+    line_no: Annotated[int | None, Query(ge=1)] = None,
     limit: Annotated[
         int, Query(ge=1, le=MAX_ANALYSIS_EVIDENCE_ITEMS)
     ] = MAX_ANALYSIS_EVIDENCE_ITEMS,
@@ -733,7 +734,12 @@ def get_analysis_evidence(
     filtered = [
         p
         for p in all_evidence
-        if (extractor is None or p.extractor == extractor)
+        # `line_no` keys evidence to one raw log line — the Events tab's expanded row asks
+        # "which evidence cites the line this event came from" (events carry `raw_line_no`,
+        # payloads carry `contributing_line_numbers`; this is the same join the LOG-n citation
+        # chips already make in the other direction).
+        if (line_no is None or line_no in p.contributing_line_numbers)
+        and (extractor is None or p.extractor == extractor)
         and (entity_type is None or p.entity.get("type") == entity_type)
         and (entity_value is None or p.entity.get("value") == entity_value)
         and _meets_min_percentile(p)
