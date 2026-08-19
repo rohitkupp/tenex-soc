@@ -12,6 +12,7 @@ not by remembering to add a filter. See docs/06-PRIVACY-SECURITY.md.
 from __future__ import annotations
 
 import os
+import re
 
 from collections.abc import Iterator
 from functools import lru_cache
@@ -50,6 +51,38 @@ class Tier2Base(DeclarativeBase):
     place. The separation CLAUDE.md rule 4 asks for is then a property of the wiring, not of
     everyone remembering which tables are which.
     """
+
+
+_LOCAL_DB_HOSTS: Final[frozenset[str]] = frozenset(
+    {"localhost", "127.0.0.1", "::1", "postgres", "tier2-postgres", "db"}
+)
+
+
+def assert_local_database(what: str) -> None:
+    """Refuse to run a bulk-writing tool against a database that does not look local.
+
+    The pytest suite grew this check after its migration round-trip nulled production columns
+    (`tests/conftest.pytest_configure`). This is the same check for non-test entry points, added
+    after the second incident of the same shape: `pipeline_demo fit-calibrators` — a harness that
+    generates and ingests hundreds of thousands of synthetic events — was run on the deployed VM,
+    whose `DATABASE_URL` is the production pooler. It filled the disk mid-run; Postgres died on
+    `pg_wal: No space left on device` and crash-looped until the synthetic tenants were purged.
+
+    Deliberately blunt, like its pytest sibling: a hostname allowlist, overridable by an explicit
+    environment variable. A false positive costs a minute; a false negative costs an outage.
+    """
+    if os.environ.get("TENEX_ALLOW_NONLOCAL_DB") == "1":
+        return
+    url = get_settings().database_url
+    match = re.search(r"@([^/:?]+)", url)
+    host = match.group(1).lower() if match else None
+    if host is not None and host not in _LOCAL_DB_HOSTS:
+        raise RuntimeError(
+            f"Refusing to run {what} against DATABASE_URL host {host!r}. It bulk-writes "
+            "synthetic data and is meant for a local stack; running it against a deployed "
+            "database has already caused a disk-full outage. Set TENEX_ALLOW_NONLOCAL_DB=1 "
+            "only if you genuinely mean to target this database."
+        )
 
 
 @lru_cache

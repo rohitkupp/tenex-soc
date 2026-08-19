@@ -43,7 +43,7 @@ import numpy as np
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.db import get_engine, get_session_factory
+from app.core.db import assert_local_database, get_engine, get_session_factory
 from app.core.logging import configure_logging, get_logger
 from app.detection.calibration import (
     CALIBRATION_FIT_SEED,
@@ -886,8 +886,14 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(getattr(args, "log_level", "info"))
 
     if args.command == "fit-calibrators":
+        # Ingests ~8 x 50k synthetic events into DATABASE_URL. Running this on the deployed VM
+        # filled production's disk and crash-looped Postgres — see assert_local_database.
+        assert_local_database("pipeline_demo fit-calibrators")
         fit_layer_calibrators(fit_dir=Path("/tmp/m10_calibration_fit"))  # noqa: S108
         return 0
+
+    # Both remaining commands ingest synthetic events into DATABASE_URL via ingest_log_file.
+    assert_local_database(f"pipeline_demo {args.command}")
 
     calibrators = CalibratorStore()
 

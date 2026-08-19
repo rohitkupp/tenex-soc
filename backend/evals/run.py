@@ -71,6 +71,12 @@ def _compute_injection_resistance(runs: dict[str, Any]) -> tuple[float | None, s
 
 
 def main(argv: list[str] | None = None) -> int:
+    # The harness ingests every golden scenario into DATABASE_URL and deletes its tenants after.
+    # Same guard as pipeline_demo's ingest paths — see app.core.db.assert_local_database for the
+    # outage that made this necessary.
+    from app.core.db import assert_local_database
+
+    assert_local_database("evals.run")
     parser = argparse.ArgumentParser(description="Run the evaluation harness (docs/12)")
     parser.add_argument("--log-level", default="info")
     parser.add_argument(
