@@ -583,10 +583,21 @@ either way. The reliability diagram below is read against the balanced prior acc
 
 ### Incident-level fusion
 ```
-fused = 1 - Π (1 - w_d * c_d)     for each contributing signal d
+e_d    = max(0, 2·c_d − 1)            evidence in excess of the balanced midpoint
+fused  = 1 - Π (1 - w_d · e_d)        for each contributing signal d
 ```
 where `c_d` is calibrated confidence and `w_d` is `detector_stats.fusion_weight` (updated by
 analyst feedback, `docs/08`).
+
+**Why the `2c−1` rescale.** Calibrated confidences are class-balanced posteriors (§Per-detector
+calibration above), where 0.5 means "this firing carries no information" — likelihood ratio 1.
+Noisy-OR's neutral element is 0, not 0.5: fed the posteriors directly, four completely
+uninformative detectors fuse to `1 − 0.5⁴ ≈ 0.94`, and the day balanced calibration shipped,
+every multi-detector incident in production landed critical — benign single-user anomalies at
+fused 0.99 beside the real exfiltration, indistinguishable. The rescale makes the fused input
+"evidence above uninformative": 0.5 contributes nothing, 1.0 contributes fully, and a firing the
+calibrator scored *below* its midpoint (more benign-like than not) contributes nothing rather
+than negative evidence.
 
 **No source bonus here.** The old multi-source design applied a bonus at this stage —
 `fused *= 1.25` if an incident spanned proxy and identity signals. With one source, cross-source

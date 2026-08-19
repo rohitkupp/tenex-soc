@@ -20,21 +20,39 @@ def test_fuse_signals_empty_list_is_zero() -> None:
     assert fuse_signals([], []) == 0.0
 
 
-def test_fuse_signals_single_signal_equals_weight_times_confidence() -> None:
-    assert fuse_signals([0.8], [1.0]) == pytest.approx(0.8)
-    assert fuse_signals([0.8], [0.5]) == pytest.approx(0.4)
+def test_fuse_signals_single_signal_equals_weight_times_evidence() -> None:
+    """docs/04 §Fusion: the fused input is `e = max(0, 2c - 1)` — evidence in excess of the
+    class-balanced midpoint — so a lone signal fuses to `w·e`, not `w·c`."""
+    assert fuse_signals([0.8], [1.0]) == pytest.approx(0.6)
+    assert fuse_signals([0.8], [0.5]) == pytest.approx(0.3)
+
+
+def test_the_balanced_midpoint_is_neutral_and_below_it_contributes_nothing() -> None:
+    """The production failure this encodes: balanced calibrators emit 0.5 for "this firing
+    carries no information", and noisy-OR fed 0.5s directly fused four of them to ≈0.94 —
+    every multi-detector incident critical. 0.5 must contribute exactly nothing, and a
+    below-midpoint (more benign-like) score must not count as negative evidence."""
+    assert fuse_signals([0.5], [1.0]) == pytest.approx(0.0)
+    assert fuse_signals([0.5, 0.5, 0.5, 0.5], [1.0, 1.0, 1.0, 1.0]) == pytest.approx(0.0)
+    assert fuse_signals([0.2], [1.0]) == pytest.approx(0.0)
+    # ...while genuine evidence still stacks.
+    assert fuse_signals([0.9, 0.9], [1.0, 1.0]) > fuse_signals([0.9], [1.0]) > 0.5
 
 
 def test_fuse_signals_matches_the_docs_formula() -> None:
     confidences = [0.9, 0.6, 0.3]
     weights = [1.0, 0.8, 1.2]
-    expected = 1 - math.prod(1 - w * c for w, c in zip(weights, confidences, strict=True))
+    expected = 1 - math.prod(
+        1 - min(1.0, w * max(0.0, 2 * c - 1)) for w, c in zip(weights, confidences, strict=True)
+    )
     assert fuse_signals(confidences, weights) == pytest.approx(expected)
 
 
 def test_fuse_signals_is_monotonically_increasing_with_more_evidence() -> None:
-    one = fuse_signals([0.5], [1.0])
-    two = fuse_signals([0.5, 0.5], [1.0, 1.0])
+    # 0.7, not 0.5: the balanced midpoint is deliberately neutral (see the test above), so
+    # monotonicity is asserted on values that carry actual evidence.
+    one = fuse_signals([0.7], [1.0])
+    two = fuse_signals([0.7, 0.7], [1.0, 1.0])
     assert two > one
 
 
@@ -141,13 +159,16 @@ def test_score_incident_graph_bonus_rewards_cross_layer_corroboration() -> None:
     concrete behavior docs/05's `n_distinct_detector_layers` term is supposed to produce."""
     # Low enough confidences that neither case saturates the 0.99 fused-score cap -- otherwise
     # both would clip to the same value and the comparison below would be vacuous.
+    # 0.7, not 0.4: below the balanced midpoint a confidence carries zero evidence now, and
+    # both sides would fuse to 0.0, making the comparison vacuous. 0.7 rescales to 0.4 of
+    # evidence — low enough that neither case saturates the 0.99 cap, as the comment requires.
     same_layer = [
-        FusionInput(detector_key="signal.beaconing", detector_layer="signal", confidence=0.4),
-        FusionInput(detector_key="signal.dga", detector_layer="signal", confidence=0.4),
+        FusionInput(detector_key="signal.beaconing", detector_layer="signal", confidence=0.7),
+        FusionInput(detector_key="signal.dga", detector_layer="signal", confidence=0.7),
     ]
     diff_layer = [
-        FusionInput(detector_key="signal.beaconing", detector_layer="signal", confidence=0.4),
-        FusionInput(detector_key="ml.mahalanobis", detector_layer="ml", confidence=0.4),
+        FusionInput(detector_key="signal.beaconing", detector_layer="signal", confidence=0.7),
+        FusionInput(detector_key="ml.mahalanobis", detector_layer="ml", confidence=0.7),
     ]
     same_result = score_incident(same_layer, community_signal_density=0.5)
     diff_result = score_incident(diff_layer, community_signal_density=0.5)

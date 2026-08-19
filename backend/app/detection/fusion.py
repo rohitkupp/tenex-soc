@@ -79,7 +79,19 @@ def fuse_signals(confidences: list[float], weights: list[float]) -> float:
         )
     product = 1.0
     for c, w in zip(confidences, weights, strict=True):
-        term = max(0.0, min(1.0, w * c))
+        # Balanced-midpoint rescale: `2c - 1`, floored at zero. Calibrated confidences are
+        # class-balanced posteriors (docs/04 §Per-detector calibration), where 0.5 means "this
+        # firing carries no information" — likelihood ratio 1. Noisy-OR's neutral element is 0,
+        # not 0.5: fed the posteriors directly, four completely uninformative detectors fuse to
+        # 1 - 0.5^4 ≈ 0.94 and every multi-detector incident lands critical, which is exactly
+        # what production showed the day balanced calibration shipped (benign single-user
+        # incidents at fused 0.99 beside the real exfiltration, indistinguishable). Rescaling
+        # makes the fused input "evidence in excess of uninformative": 0.5 contributes nothing,
+        # 1.0 contributes fully, and anything the calibrator scored *below* its balanced
+        # midpoint — more benign-like than not — contributes nothing rather than negative
+        # evidence, keeping the noisy-OR's independence semantics intact.
+        evidence = max(0.0, 2.0 * c - 1.0)
+        term = max(0.0, min(1.0, w * evidence))
         product *= 1.0 - term
     return 1.0 - product
 
