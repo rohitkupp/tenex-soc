@@ -239,11 +239,17 @@ def build_files(root: Path, out_dir: Path) -> dict[str, int]:
         emit_profiles("user", email, _USER_METRICS, series)
         for i, n in enumerate(series["n_events"]):
             org_daily[i] += n
-        # Window rows for users only: nothing reads the windows *table* today, but the loader
-        # derives every contact's first/last_seen from this file's bounds, and rows whose stats
-        # actually match the profiles keep the store self-consistent for whoever reads it next.
-        day_indices = [i for i, _ in enumerate(series["n_events"])]
-        for i, idx in enumerate(day_indices):
+        # Two window rows per user — the period bounds — not one per simulated day. Nothing in
+        # the codebase reads the `baseline_windows` *table* (verified: only `baseline_profiles`
+        # and `baseline_contacts` are queried, via `app.baseline.resolve`); the loader needs the
+        # windows *file* solely to derive every contact's first/last_seen from its min/max
+        # `window_start`. The first version emitted all ~170 daily rows per user (~8,000 total)
+        # for self-consistency with the profiles, but after this store's disk-full outage the
+        # write footprint is kept to what the readers actually consume: ~130 bound rows instead.
+        # The full daily series still exists in memory above — the profiles' percentiles and
+        # n_windows are computed from it and remain honest statements about the simulation.
+        first_idx, last_idx = 0, len(series["n_events"]) - 1
+        for i, idx in ((0, first_idx), (last_idx, last_idx)):
             windows.append({
                 "entity_type": "user",
                 "entity_value": email,
