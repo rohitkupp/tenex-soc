@@ -66,4 +66,10 @@ backend/data/demo/
 # a deliberate deliverable — the README tells a reviewer to upload one, so they have to be in the
 # repo. Seeded and reproducible via `datagen` (backend/data/samples/README.md).
 !backend/data/samples/*.log
+# The five-scenario demo corpora. Their .labels.json siblings were committed all along, and every
+# consumer of the pair broke apart on machines that cloned rather than generated: the VM image
+# carried the labels but not the logs, so `seed_demo_baselines` (which needs both) found nothing
+# to read. These are the demo's core assets, 5.3MB total, and belong with their labels.
+!backend/data/demo5/*.log
+!backend/data/demo5_tiny/*.log
 frontend/next-env.d.ts
