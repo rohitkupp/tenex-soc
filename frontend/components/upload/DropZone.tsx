@@ -57,7 +57,7 @@ export function DropZone({ onFileSelected, disabled = false, compact = false }: 
       }`}
     >
       <p className={`font-medium text-[var(--color-text-hi)] ${compact ? "text-xs" : "text-sm"}`}>
-        Click to Browser
+        Click to browse
       </p>
       <p className={`text-[var(--color-text-lo)] ${compact ? "text-xs" : "text-xs"}`}>
         ZScaler web proxy. Up to 200 MB.
