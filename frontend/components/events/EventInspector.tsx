@@ -33,7 +33,16 @@ type LoadState =
  * technique, ahead of the raw-field dump below it — never `JSON.stringify` (docs/13 M15's "no
  * raw JSON" acceptance bar).
  */
-export function EventDetailView({ event }: { event: EventOut }) {
+export function EventDetailView({
+  event,
+  evidenceSlot,
+}: {
+  event: EventOut;
+  /** Rendered between "Why flagged" and "Raw event" — the reading order goes interpretation
+   * before raw material: what fired, what the extractors made of it, then the field dump for
+   * whoever needs to check the underlying values. */
+  evidenceSlot?: React.ReactNode;
+}) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--color-border)] pb-2">
@@ -84,6 +93,8 @@ export function EventDetailView({ event }: { event: EventOut }) {
           </div>
         </div>
       )}
+
+      {evidenceSlot}
 
       <div className="flex flex-col gap-2">
         {event.signals.length > 0 && (
@@ -165,12 +176,14 @@ export function EventFetchFrame({
       )}
 
       {state.status === "ready" && (
-        <>
-          <EventDetailView event={state.event} />
-          {analysisId && (
-            <EventEvidence analysisId={analysisId} rawLineNo={state.event.raw_line_no} />
-          )}
-        </>
+        <EventDetailView
+          event={state.event}
+          evidenceSlot={
+            analysisId ? (
+              <EventEvidence analysisId={analysisId} rawLineNo={state.event.raw_line_no} />
+            ) : undefined
+          }
+        />
       )}
     </div>
   );
@@ -212,11 +225,11 @@ function EventEvidence({ analysisId, rawLineNo }: { analysisId: string; rawLineN
   }, [analysisId, rawLineNo]);
 
   if (state.status === "loading") {
-    return <div className="mt-3 h-3 w-40 animate-pulse rounded bg-[var(--color-surface-2)]" />;
+    return <div className="h-3 w-40 animate-pulse rounded bg-[var(--color-surface-2)]" />;
   }
   if (state.status === "error") {
     return (
-      <p role="alert" className="mt-3 text-xs text-[var(--color-severity-high)]">
+      <p role="alert" className="text-xs text-[var(--color-severity-high)]">
         Evidence failed to load: {state.message}
       </p>
     );
@@ -224,13 +237,13 @@ function EventEvidence({ analysisId, rawLineNo }: { analysisId: string; rawLineN
   if (state.items.length === 0) {
     // A real, common answer: most benign events contribute to no extractor's evidence.
     return (
-      <p className="mt-3 text-xs text-[var(--color-text-lo)]">
+      <p className="text-xs text-[var(--color-text-lo)]">
         No evidence payload cites this event&apos;s log line.
       </p>
     );
   }
   return (
-    <div className="mt-3 flex flex-col gap-2">
+    <div className="flex flex-col gap-2">
       <h3 className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-lo)]">
         Evidence citing line {rawLineNo} ({state.items.length})
       </h3>
