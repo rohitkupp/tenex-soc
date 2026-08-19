@@ -136,3 +136,34 @@ def test_reliability_diagram_bins_cover_the_full_range() -> None:
     assert len(report.bins) == 10
     assert sum(b.n for b in report.bins) == 500
     assert 0.0 <= report.brier_score <= 1.0
+
+
+def test_extreme_class_imbalance_does_not_flatten_the_curve_to_zero() -> None:
+    """The production failure this guards: a funnel detector firing on ~everything benign has a
+    ~0.1% base rate, and an unweighted isotonic fit learns a curve that is ≈0 across the entire
+    raw range — sigma.non_browser_user_agent's shipped calibrator could not output above 0.0001
+    anywhere on its domain (1 positive in 12,418 samples), so every UI surface reading
+    `signals.confidence` rendered 0.00. The class-balanced fit must keep high raw scores
+    meaningfully above zero while leaving ranking monotone."""
+    import numpy as np
+
+    from app.detection.calibration import fit_calibrator
+    from app.detection.calibration import DetectorSample
+
+    rng = np.random.default_rng(42)
+    samples = []
+    # 5,000 benign firings across the low-mid raw range, 8 attacks in the upper tail — the
+    # funnel-detector shape. Base rate 0.16%.
+    for raw in rng.uniform(0.0, 0.7, size=5000):
+        samples.append(DetectorSample(detector_key="t.funnel", raw_score=float(raw), label=0))
+    for raw in rng.uniform(0.6, 1.0, size=8):
+        samples.append(DetectorSample(detector_key="t.funnel", raw_score=float(raw), label=1))
+
+    calibrator = fit_calibrator("t.funnel", samples)
+    assert calibrator is not None
+    low, mid, high = calibrator.calibrate(0.05), calibrator.calibrate(0.5), calibrator.calibrate(0.95)
+    # Monotone (isotonic guarantees it, assert anyway since the display depends on it)...
+    assert low <= mid <= high
+    # ...and the tail must be *visible*: under the unweighted fit `high` was ~0.0016 here.
+    assert high >= 0.5, f"tail flattened to {high}: balanced weighting is not being applied"
+    assert low <= 0.05, f"benign floor rose to {low}: the curve should stay near zero at the bottom"

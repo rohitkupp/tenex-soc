@@ -161,7 +161,29 @@ def fit_calibrator(
         return None
     x = np.nan_to_num(x, nan=0.0, posinf=1e12, neginf=-1e12)
     model = IsotonicRegression(y_min=0.0, y_max=1.0, out_of_bounds="clip", increasing=True)
-    model.fit(x, y)
+    # Class-balanced fit: every positive carries n/(2*n_pos) weight, every negative n/(2*n_neg),
+    # so the two classes contribute equally regardless of the corpus base rate.
+    #
+    # Unweighted isotonic learns P(malicious | score) at the *training base rate*, and on this
+    # corpus that base rate is ~0.1%: the funnel detectors fire on nearly every benign event by
+    # design, so their fitted curves were flat at ≈0 across the entire raw range production
+    # traffic occupies (measured: sigma.non_browser_user_agent could never output above 0.0001
+    # anywhere on its domain — 1 positive in 12,418 samples; signal.rarity capped at 0.0010;
+    # signal.burst at 0.0017). Every UI surface reading `signals.confidence` rendered 0.00, and
+    # noisy-OR fusion over ≈0 inputs made the incident queue bimodal (only detectors *without*
+    # a calibrator, falling back to clamp01, could score at all — pinned at 1.0 instead).
+    #
+    # Balancing rescales the target to P(malicious | score, balanced prior) — a monotone
+    # transform of the likelihood ratio, so ranking is untouched and isotonic's shape guarantees
+    # hold, but the curve now spans (0, 1) and "twice as strong evidence" is visible instead of
+    # rounding to 0.00 at two decimals. The absolute base-rate posterior was never the quantity
+    # fusion or the UI wanted: docs/04 defines fused/anomaly confidence as evidence strength
+    # ("how unusual"), never P(attack), and CLAUDE.md rule 5 keeps priority with the calibrated
+    # fusion either way. docs/04 §Fusion records this alongside the eval re-run.
+    n_pos = float(y.sum())
+    n_neg = float(len(y) - n_pos)
+    sample_weight = np.where(y > 0.5, len(y) / (2.0 * n_pos), len(y) / (2.0 * n_neg))
+    model.fit(x, y, sample_weight=sample_weight)
     return IsotonicCalibrator(
         detector_key=detector_key,
         model=model,

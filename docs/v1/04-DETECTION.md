@@ -560,8 +560,26 @@ migration phase's own report for the reasoning kept alongside the code.
 The brief asks for a confidence score. Make it a real calibrated probability.
 
 ### Per-detector calibration
-Each detector's raw score → probability via isotonic regression fit on held-out labeled eval
-data. Persist the calibrator per detector. `signals.confidence` is always post-calibration.
+Each detector's raw score → probability via **class-balanced** isotonic regression fit on
+held-out labeled eval data (positives weighted `n/(2·n_pos)`, negatives `n/(2·n_neg)`). Persist
+the calibrator per detector. `signals.confidence` is always post-calibration.
+
+**Why balanced, recorded after measuring the alternative.** The first shipped calibrators were
+fit unweighted, learning `P(malicious | score)` at the corpus base rate (~0.1%: the funnel
+detectors fire on nearly every benign event by design). The fitted curves were flat at ≈0 across
+the entire raw range production traffic occupies — `sigma.non_browser_user_agent`'s calibrator
+could not output above **0.0001 anywhere on its domain** (1 positive in 12,418 samples);
+`signal.rarity` capped at 0.0010, `signal.burst` at 0.0017. Every UI surface rendering
+`signals.confidence` showed 0.00, and noisy-OR fusion over ≈0 inputs made the incident queue
+bimodal: 164 incidents at fused ≈0 next to 161 at ≈1 (the ≈1 side being detectors *without* a
+calibrator falling back to `clamp01` of an unbounded raw score).
+
+Balancing rescales the target to `P(malicious | score, balanced prior)` — a monotone transform
+of the likelihood ratio. Ranking is untouched, isotonic's guarantees hold, and the curve spans
+`(0, 1)` so evidence strength is visible instead of rounding to 0.00. The absolute base-rate
+posterior was never the quantity fusion consumes: `fused` is evidence strength ("how unusual"),
+not `P(attack)`, and severity/priority stay with the calibrated fusion (CLAUDE.md rule 5)
+either way. The reliability diagram below is read against the balanced prior accordingly.
 
 ### Incident-level fusion
 ```
