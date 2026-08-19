@@ -12,14 +12,32 @@ interface DayGroup {
   firstObservedAt: string;
 }
 
+/** Midnight of the viewer's local calendar day for an instant — the same day boundary every
+ * rendered date on this page uses (`formatDate`/`formatCompactDate` format in local time). */
+function startOfLocalDay(iso: string): number {
+  const d = new Date(iso);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+}
+
 function groupByDay(observations: FirstSeenResponse["items"][number]["observations"]): {
   groups: DayGroup[];
   maxDayOffset: number;
 } {
-  const earliest = new Date(observations[0]!.first_observed_at).getTime();
+  // Sort locally rather than trusting response order: Day 0 must anchor to the true earliest
+  // observation, and the wire format does not promise sorted observations.
+  const sorted = [...observations].sort((a, b) =>
+    a.first_observed_at.localeCompare(b.first_observed_at)
+  );
+  // Calendar-day offsets, not elapsed-hours rounding. `Math.round(deltaMs / DAY)` bucketed by
+  // 24-hour spans from the anchor's clock time: a tenant first seen at 13:00 on the *same
+  // calendar day* as the anchor rounded to "+1d", while one seen just after midnight the next
+  // day could land on day 0. The Indicator-overlap table right above this chart renders
+  // calendar dates, so the two visibly disagreed about when the same indicator was seen.
+  // Diffing local-midnight epochs makes "day" mean the same thing a rendered date means.
+  const earliestDay = startOfLocalDay(sorted[0]!.first_observed_at);
   const byDay = new Map<number, DayGroup>();
-  for (const obs of observations) {
-    const dayOffset = Math.round((new Date(obs.first_observed_at).getTime() - earliest) / MS_PER_DAY);
+  for (const obs of sorted) {
+    const dayOffset = Math.round((startOfLocalDay(obs.first_observed_at) - earliestDay) / MS_PER_DAY);
     const existing = byDay.get(dayOffset);
     if (existing) {
       existing.tenantHashes.push(obs.tenant_hash);
