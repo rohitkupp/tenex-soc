@@ -101,3 +101,21 @@ into a single incident describing one connected security story rather than prese
 Finally, the calibrated detector confidences within each incident are combined using a weighted **noisy-OR fusion**. Only the strongest signal from each detector is used, and detector weights account for measured reliability. A small graph bonus rewards corroboration across multiple detector layers and communities with a higher concentration of suspicious entities. The resulting fused score determines the incident's anomaly confidence, severity, and queue priority.
 
 The LLM operates **after this entire process**. It does not detect anomalies or change these scores; it uses the already-generated events, signals, incident score, and supporting evidence to explain what happened and why it may matter to a SOC analyst.
+
+## Triage — LLM-Based Incident Analysis
+
+After correlation groups related signals into incidents, the **Triage stage** uses an LLM to interpret the evidence and turn the machine-generated findings into something a SOC analyst can quickly understand.
+
+The important distinction is that the LLM does **not** perform anomaly detection and does **not** change the incident's anomaly score, severity, or queue priority. Those values have already been calculated deterministically by the detection, calibration, and correlation stages. The LLM receives the incident along with its supporting events, signals, confidence scores, and relevant threat-intelligence context.
+
+For each incident, the triage flow includes several steps:
+
+- **Analyst:** Reviews the incident, its underlying events and signals, and relevant threat knowledge to form a security hypothesis and explain what behavior was observed.
+- **RAG / Threat Knowledge:** Retrieves relevant cybersecurity context, primarily from the MITRE ATT&CK knowledge base, so that technique mappings and security explanations are grounded in known detection guidance rather than generated from memory alone.
+- **Verifier:** Programmatically checks that the LLM's claims are supported by the actual evidence, that cited event IDs exist, and that numerical values and citations match the underlying data.
+- **Judge:** Reviews the proposed explanation against a structured rubric, including whether claims are supported, whether observations are clearly separated from conclusions, whether benign alternatives were considered, and whether the stated confidence is appropriate.
+- **Presenter / Summarizer:** Produces the final SOC-facing explanation, including the incident summary, supporting evidence, possible ATT&CK techniques, and a chronological timeline of relevant activity.
+
+The system also keeps **anomaly confidence** separate from **threat confidence**. Anomaly confidence comes from the mathematical detection and fusion pipeline and represents how unusual the behavior is. Threat confidence is the LLM's assessment of how strongly the available evidence supports a malicious security hypothesis. Something can therefore be highly anomalous without the system claiming that it is definitely malicious.
+
+This separation is intentional: the deterministic pipeline answers **"How unusual is this activity?"**, while the Triage stage answers **"What might this activity mean, what evidence supports that interpretation, and what should the analyst look at next?"**
