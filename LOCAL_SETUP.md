@@ -262,7 +262,7 @@ detect → correlate → triage → anonymize.
 
 Everything up to triage finishes in **well under a minute**. Triage is the long pole — it is
 making live LLM calls, roughly **3 minutes per incident** — but on the recommended demo log there
-are only a handful of incidents to triage, so the whole run takes a few minutes.
+are only a handful of incidents to triage, so the whole run takes around 10 to 15 minutes.
 
 `MAX_TRIAGE_INCIDENTS` (shipped at 10) is a **cap, not a target**: the run triages whichever is
 smaller, that number or the incidents the upload actually produced. The recommended demo log

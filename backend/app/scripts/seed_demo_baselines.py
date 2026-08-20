@@ -65,6 +65,8 @@ from pathlib import Path
 from typing import Any, Final
 from urllib.parse import urlsplit
 
+from sqlalchemy import text as sa_text
+
 from app.baseline.loader import load_baseline
 from app.core.db import get_session_factory
 from app.core.logging import get_logger
@@ -310,8 +312,25 @@ def main() -> None:
             return
         session = get_session_factory()()
         try:
-            tenant = get_or_create_live_tenant(session)
-            summary = load_baseline(session, tenant.id, Path(tmp))
+            # The tenant that OWNS the demo data, not the name-lookup "live tenant". These are
+            # the same row on a fresh `make seed` — but production had a 'Demo Tenant' created by
+            # a pre-change-23 seed, and `get_or_create_live_tenant` (which looks up the *new*
+            # name, `northwind`) silently created a second, empty tenant and loaded 415 profiles
+            # into it, where no analysis would ever look: every percentile still rendered
+            # `insufficient history (n=0)` while the loader reported success. Resolving through
+            # the demo user's own tenant_id makes the seeder target wherever the demo data
+            # actually lives; the live-tenant lookup remains only as the fresh-database fallback.
+            demo_tenant_id = session.execute(
+                sa_text("SELECT tenant_id FROM users WHERE email = :e"),
+                {"e": "demo@tenex.local"},
+            ).scalar_one_or_none()
+            if demo_tenant_id is not None:
+                tenant_id = demo_tenant_id
+                log.info("seed.tenant_resolved", via="demo user", tenant_id=str(tenant_id))
+            else:
+                tenant_id = get_or_create_live_tenant(session).id
+                log.info("seed.tenant_resolved", via="live tenant", tenant_id=str(tenant_id))
+            summary = load_baseline(session, tenant_id, Path(tmp))
             session.commit()
         finally:
             session.close()
