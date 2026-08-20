@@ -35,11 +35,32 @@ migrate: ## Apply database migrations
 revision: ## Autogenerate a migration: make revision m="add events"
 	$(BACKEND) alembic revision --autogenerate -m "$(m)"
 
-seed: ## Create the live tenant, demo user, seeded feedback history, Tier 2 peer signatures, and the historical baseline
+# `app.scripts.seed_feedback` is deliberately NOT run here any more. Commit ed9b024
+# ("remove duplicate detection and the learning loop") deleted `app/learning/` — all 23
+# modules — but left that script behind still importing four of them, so `make seed`
+# died with `ModuleNotFoundError: No module named 'app.learning'` on any machine that
+# did not already have the pre-deletion bytecode lying around. Nothing reads seeded
+# feedback now: feedback is one endpoint that writes the analyst's words to a text file
+# and nothing reads it back. The calibrators that script used to refit are optional by
+# design — `CalibratorStore` treats a missing artifact exactly as it treats a detector
+# that was never fitted (`calibrate` falls back to `clamp01`).
+# `backend/app/scripts/seed_feedback.py` itself is now orphaned and can be deleted.
+#
+# `app.scripts.seed_demo_baselines` is the last step and it is load-bearing. `app.baseline.loader`
+# above loads `data/baseline/`, which `make gen-data` builds from `build_split_org(train)` — the
+# *northwind.example* org. Every committed log a reviewer actually uploads (`data/samples/`,
+# `data/demo5/`, `data/demo5_tiny/`) belongs to a different org on *corp.example*, so none of its
+# principals have a single baseline row and every percentile annotation renders
+# `insufficient history (n=0)`. The demo logs' own org cannot be regenerated (their recorded
+# `org_fingerprint` predates today's generator), so this script derives the six-month history
+# from the benign remainder of the demo logs themselves, keyed to the principals those logs
+# actually contain. Both baselines coexist: the loader's rows are keyed by northwind entities,
+# this script's by corp.example ones, and `load_baseline` upserts.
+seed: ## Create the live tenant, demo user, Tier 2 peer signatures, and both historical baselines
 	$(BACKEND) python -m app.scripts.seed
-	$(BACKEND) python -m app.scripts.seed_feedback
 	$(BACKEND) python -m app.scripts.seed_tier2
 	$(BACKEND) python -m app.baseline.loader
+	$(BACKEND) python -m app.scripts.seed_demo_baselines
 
 # `python -m datagen split`, not the old `datagen/generate_corpus.py`. That second generator
 # was deleted: it emitted `"%Y-%m-%d %H:%M:%S"` timestamps while `app/parsers/zscaler.py`
