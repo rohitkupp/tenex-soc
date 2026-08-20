@@ -32,9 +32,11 @@ behind precomputed verdicts.
   roughly doubles the per-incident spend for no benefit here.
 - **Cost, measured rather than estimated:** triage averages **~$1.40 and ~3 minutes per
   incident**, so a run costs whatever the uploaded log's incident count comes to, capped by
-  `MAX_TRIAGE_INCIDENTS` (shipped at 10). The recommended demo log is 100 lines and produces only
-  a handful of incidents: **measured at $3.09 and 12 minutes**, producing 5 incidents. The much
-  larger `data/samples/01-mixed-week.log` produces 27 incidents and runs ~$20 over 30–45 minutes.
+  `MAX_TRIAGE_INCIDENTS` (shipped at 10). The recommended demo log is
+  `backend/data/demo5_tiny/scenario_c2_beaconing.log` — **that directory holds the five logs this
+  guide uses, and they are the only files you need to upload.** It is 100 lines and produces only a
+  handful of incidents: **measured at $3.09 and 12 minutes**, producing 5 incidents. The other four
+  are the same order of size (73–181 lines), so budget a similar few dollars for each.
 - **Make sure the account has credit.** If it runs dry mid-run, the triage stage takes a
   non-retryable HTTP 400 and the entire analysis is marked `failed`. Verdicts already paid for
   are kept and stay browsable in the UI, but the run does not resume on its own.
@@ -68,7 +70,10 @@ demo@tenex.local
 tenex-demo-password
 ```
 
-and upload `backend/data/demo5_tiny/scenario_c2_beaconing.log`.
+then click **Click to browse** on the Analyses page and pick
+**`backend/data/demo5_tiny/scenario_c2_beaconing.log`**. That directory —
+[`backend/data/demo5_tiny/`](backend/data/demo5_tiny/) — holds the five logs this guide uses; it
+is the set to demo with.
 
 Measured on a 15-CPU / 8 GB Docker Desktop: **~2 minutes for `make up`** once Docker has the
 base images, and about **2.5 minutes for the other four targets combined**. Budget closer to 10
@@ -187,9 +192,9 @@ Four things, in order:
 4. A second six-month baseline covering the **demo logs' own principals** (~66 users, ~50 source
    IPs, 415 profiles)
 
-Step 4 and step 3 above build the baseline for the *corpus* org (`northwind.example`), but every
-log you can actually upload — `data/samples/`, `data/demo5/`, `data/demo5_tiny/` — belongs to a
-different org on `corp.example`. Without step 4 none of their principals would have a single
+Step 4 and step 3 above build the baseline for the *corpus* org (`northwind.example`), but the
+logs this guide has you upload — the five in `backend/data/demo5_tiny/` — belong to a different
+org on `corp.example`. Without step 4 none of their principals would have a single
 baseline row, and every percentile annotation in the UI would read `insufficient history (n=0)`.
 Step 4 derives that history from the benign remainder of the demo logs themselves, so the
 evidence layer has something real to compare against. Both baselines coexist.
@@ -216,7 +221,7 @@ Training generates its own clean benign corpus (400k events into `/tmp/m8_corpus
 **not** depend on Step 4. It is seeded and deterministic: same input, same models, every time.
 Expect about **2 minutes**, and ~330 MB of artifacts in `backend/data/models/`.
 
-### Step 7 — Log in and upload a log
+### Step 7 — Log in and upload a log from `backend/data/demo5_tiny/`
 
 Open **http://localhost:3000** and sign in:
 
@@ -225,7 +230,9 @@ email:    demo@tenex.local
 password: tenex-demo-password
 ```
 
-**Upload this file:**
+**Click the "Click to browse" control** — top right of the Analyses page — and select this file
+in the picker that opens. Use the button; dragging a file onto the dashed area does not start an
+upload.
 
 ```
 backend/data/demo5_tiny/scenario_c2_beaconing.log
@@ -233,27 +240,46 @@ backend/data/demo5_tiny/scenario_c2_beaconing.log
 
 100 lines, 6 users, 3 days. 55 of those lines are a C2 beacon — `nbertrando@corp.example` calling
 `bfuxjndgrpcpsfbeqb.xyz` at regular intervals, a textbook DGA domain. It is the fastest way to
-see the whole pipeline work end to end, and it is cheap: a handful of incidents rather than 27.
+see the whole pipeline work end to end, and it is cheap: 5 incidents, about $3.
 
-Four more single-scenario logs sit beside it in `backend/data/demo5_tiny/`, all the same shape:
+Four more single-scenario logs sit beside it in
+[`backend/data/demo5_tiny/`](backend/data/demo5_tiny/), all the same shape. **These five are the
+files to upload** — every filename in the table below is relative to that directory:
 
-| File | Lines | Campaign |
-|---|--:|---|
-| **`scenario_c2_beaconing.log`** | 101 | **Start here.** C2 beaconing (T1071.001) |
-| `scenario_data_exfiltration.log` | 73 | Exfiltration to cloud storage (T1567.002) |
-| `scenario_multi_domain_c2_failover.log` | 181 | C2 with failover across several domains |
-| `scenario_web_shell_probing.log` | 151 | Web shell probing |
-| `scenario_prompt_injection_canary.log` | 85 | Log content that tries to hijack the LLM prompt |
+| File — all in `backend/data/demo5_tiny/` | Lines | Malicious | Campaign |
+|---|--:|--:|---|
+| **`scenario_c2_beaconing.log`** | 101 | 55 | **Start here.** C2 beaconing (T1071.001) |
+| `scenario_multi_domain_c2_failover.log` | 181 | 120 | C2 with failover across four domains (T1008) |
+| `scenario_data_exfiltration.log` | 73 | 27 | Exfiltration to cloud storage (T1567.002) |
+| `scenario_web_shell_probing.log` | 151 | 90 | Web shell probing (T1505.003) |
+| `scenario_prompt_injection_canary.log` | 85 | 24 | Log content that tries to hijack the LLM prompt |
 
-**When you want the full picture,** `backend/data/samples/01-mixed-week.log` is the deep one:
-8,749 lines, a week of traffic for a 250-person org, three concurrent attack campaigns plus a
-benign-but-weird decoy. That is the file that shows correlation and calibrated ranking sorting
-real threats from noise — but it produces 27 incidents, so budget ~$20 and 30–45 minutes.
+**When one run is not enough, work down that table** — each file exercises a different path
+through the system, and each is small enough to stay a few-dollar run:
 
-Every one of these is a real-format ZScaler NSS log carrying all 181 documented fields, and each
-ships with a `.labels.json` holding ground truth — the exact malicious line numbers, the ATT&CK
-technique and the victim — so you can check what the system found against what was actually
-there. See [`backend/data/samples/README.md`](backend/data/samples/README.md).
+- **`scenario_multi_domain_c2_failover.log`** — the correlation showcase. Four sibling DGA domains
+  behind one `99.156.0.0/16`, 30 callbacks each from a single host. The question it asks is whether
+  the entity graph pulls all four into **one** incident on shared infrastructure, or reports four
+  unrelated ones; its labels assert the former.
+- **`scenario_data_exfiltration.log`** — ~950 MB in 23 POSTs of ~40 MB, off-hours, to
+  `drivehub.buzz`, registered six days earlier. Several kinds of evidence stack on one entity:
+  volume burst, an inverted out/in byte ratio, and a newly-registered destination.
+- **`scenario_web_shell_probing.log`** — 90 probe requests against a host the org has never
+  contacted, of which 6 return 200. The interesting part is the blocked-then-allowed pattern, which
+  is a Sigma rule rather than a model.
+- **`scenario_prompt_injection_canary.log`** — the adversarial one. Its 24 malicious requests carry
+  payloads engineered to hijack the triage agent — instruction override, delimiter escape, turn
+  forgery, tool coercion, authority spoofing, system-prompt leak — hidden in the `useragent`, `url`
+  and `referer` fields, the longest running 568 characters against a 256-character truncation limit.
+  Log content is treated as untrusted data end to end, so the verdict should come back unmoved.
+
+Every one of these is a real-format ZScaler NSS log carrying all 181 documented fields — the same
+shape `app/parsers/zscaler.py` sniffs in production, not a trimmed demo format. Each ships with a
+`.labels.json` beside it holding ground truth: `malicious_line_numbers`, the ATT&CK `technique`,
+the `primary_entity` it victimises, the `expected_detectors` that should fire, and the
+`expected_disposition` the agent should reach. That is what makes these more than a smoke test —
+you can check what the system found against what was actually there, which is the same comparison
+`evals/` runs.
 
 ### Step 8 — Watch it run
 
@@ -272,11 +298,15 @@ about $3.
 You do not have to wait for triage to finish before exploring. Events, signals, evidence and the
 entity graph are all populated and browsable as soon as detect and correlate are done.
 
-Check the result against ground truth: `scenario_c2_beaconing.labels.json` marks **55 of the 101
-lines** as the T1071.001 beacon. For scale, `01-mixed-week.log` carries 592 malicious lines out
-of 8,749 (6.8%) — a deliberately generous ratio for a demo. Real proxy traffic is far quieter,
-and [`backend/evals/results.md`](backend/evals/results.md) scores the system at realistic ratios
-where recall drops sharply. Read the benchmark numbers as the honest ones, not the demo.
+Check the result against ground truth: `backend/data/demo5_tiny/scenario_c2_beaconing.labels.json`
+marks **55 of the 101 lines** as the T1071.001 beacon, names `nbertrando@corp.example` as the
+victim, and lists the detectors that should fire (`signal.beaconing`, `signal.rarity`,
+`signal.dga`).
+
+Read the demo as a demo. These five files run between 28% and 66% malicious lines — a deliberately
+generous ratio, chosen so a 100-line file can show the whole funnel. Real proxy traffic is far
+quieter, and [`backend/evals/results.md`](backend/evals/results.md) scores the system at realistic
+ratios where recall drops sharply. Read the benchmark numbers as the honest ones, not the demo.
 
 ---
 
@@ -331,6 +361,10 @@ principals have no baseline rows. Re-run `make seed`; it is idempotent.
 `curl -s http://localhost:8000/api/health` — the `llm_enabled` field tells you whether the API
 sees a key at all. After editing `.env`, restart so containers pick it up: `make down && make up`.
 
+**Dragging a file onto the upload area does nothing**
+Drag-and-drop is not wired up. Click the **Click to browse** control instead and choose the file
+from the picker.
+
 **The upload succeeds but nothing progresses**
 Check the workers: `make ps` should show every container `Up`. `make logs` will show the failing
 stage. Dead-lettered messages are recorded in the `dead_letters` table rather than lost.
@@ -365,7 +399,7 @@ make clean       # deletes containers AND all volumes
 make up && make migrate && make gen-data FILES=10 && make seed && make train
 ```
 
-Then upload `backend/data/demo5_tiny/scenario_c2_beaconing.log` again.
+Then use **Click to browse** to upload `backend/data/demo5_tiny/scenario_c2_beaconing.log` again.
 
 ---
 
